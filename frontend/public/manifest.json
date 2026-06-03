@@ -1,0 +1,27 @@
+{
+  "name": "MediaDL – Download Any Video or Image",
+  "short_name": "MediaDL",
+  "description": "Free downloader for videos and images from 1000+ sites. YouTube, Instagram, TikTok, Twitter, and more.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0a0e1a",
+  "theme_color": "#6366f1",
+  "orientation": "portrait-primary",
+  "scope": "/",
+  "lang": "en",
+  "categories": ["utilities", "productivity"],
+  "icons": [
+    { "src": "/logo.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" },
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png" }
+  ],
+  "screenshots": [
+    { "src": "/og-image.jpg", "sizes": "1200x630", "type": "image/jpeg", "label": "MediaDL home screen" }
+  ],
+  "shortcuts": [
+    { "name": "Download", "url": "/download", "description": "Download a video or image" },
+    { "name": "History",  "url": "/history",  "description": "View your download history" },
+    { "name": "News",     "url": "/news",     "description": "Browse news" },
+    { "name": "Movies",   "url": "/movies",   "description": "Browse movies & TV" }
+  ]
+}

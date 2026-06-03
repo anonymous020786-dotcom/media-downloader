@@ -1,0 +1,1962 @@
+"""
+MediaDL Python Service v3.0
+─────────────────────────────────────────────────────────────────────────────
+Capabilities
+  • Single video / image / page  (yt-dlp + ffmpeg + httpx)
+  • Playlist / Channel           (YouTube, SoundCloud, Spotify …)
+  • Profile / Gallery            (Instagram, TikTok, X/Twitter, Reddit …)
+  • HLS / DASH / AES-128 encrypted streams  (ffmpeg direct)
+  • Unlimited items with --ignoreerrors
+  • Anti-blocking: UA rotation, random delays, cookie injection, proxy
+  • Audio extraction: MP3 / M4A / Opus / OGG
+  • Subtitles: download + embed
+  • Thumbnail embed
+  • Metadata embed
+  • Storage management
+  • Concurrent fragment downloads (16×)
+─────────────────────────────────────────────────────────────────────────────
+"""
+from contextlib import asynccontextmanager
+from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, field_validator
+import yt_dlp
+import httpx
+from PIL import Image
+from bs4 import BeautifulSoup
+import redis.asyncio as aioredis
+import redis as _sync_redis_lib
+import asyncio
+import aiofiles
+import os, json, io, re, random, tempfile, shutil
+from pathlib import Path
+from typing import Optional, Literal
+from urllib.parse import urlparse, urljoin
+
+# ── Config ────────────────────────────────────────────────────────────────────
+DOWNLOAD_DIR    = Path(os.getenv("DOWNLOAD_DIR",    "/downloads"))
+REDIS_URL        = os.getenv("REDIS_URL",            "redis://redis:6379")
+MAX_CONCURRENT   = int(os.getenv("MAX_CONCURRENT_DOWNLOADS", "5"))
+MAX_PAGE_IMAGES  = int(os.getenv("MAX_PAGE_IMAGES",  "2000"))
+VERIFY_SSL       = os.getenv("VERIFY_SSL", "true").lower() not in ("false", "0", "no")
+
+# ── Globals ───────────────────────────────────────────────────────────────────
+_sem:          asyncio.Semaphore
+_aredis:       aioredis.Redis
+_sredis:       _sync_redis_lib.Redis
+
+_UA_POOL = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.4 Safari/605.1.15",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (X11; Linux x86_64; rv:136.0) Gecko/20100101 Firefox/136.0",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (iPhone; CPU iPhone OS 18_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.4 Mobile/15E148 Safari/604.1",
+    "Mozilla/5.0 (Linux; Android 15; Pixel 9) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Mobile Safari/537.36",
+]
+_BASE_HDR = {
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Accept-Encoding": "gzip, deflate, br",
+    "DNT": "1",
+    "Sec-Fetch-Dest": "document",
+    "Sec-Fetch-Mode": "navigate",
+    "Sec-Fetch-Site": "none",
+}
+def _ua() -> str: return random.choice(_UA_POOL)
+
+# ── Lifespan ──────────────────────────────────────────────────────────────────
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    global _sem, _aredis, _sredis
+    _sem    = asyncio.Semaphore(MAX_CONCURRENT)
+    _aredis = await aioredis.from_url(REDIS_URL, decode_responses=True)
+    _sredis = _sync_redis_lib.Redis.from_url(REDIS_URL, decode_responses=True)
+    DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
+    yield
+    await _aredis.aclose()
+    _sredis.close()
+
+app = FastAPI(lifespan=lifespan, title="MediaDL", version="3.0.0")
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+
+# ── Models ────────────────────────────────────────────────────────────────────
+class AnalyzeReq(BaseModel):
+    url: str
+    @field_validator("url")
+    @classmethod
+    def _http(cls, v):
+        v = v.strip()
+        if not v.startswith(("http://","https://","magnet:")):
+            raise ValueError("URL must start with http://, https:// or magnet:")
+        return v
+
+class DownloadReq(BaseModel):
+    url:             str
+    job_id:          str
+    media_type:      Literal["video","image","page","playlist","profile","file","torrent"]
+    format:          str            = "mp4"
+    quality:         Optional[str]  = "best"
+    # Playlist / profile options
+    max_items:       Optional[int]  = None   # None = unlimited
+    start_index:     int            = 1
+    # Output options
+    subtitles:       bool           = False
+    subtitle_langs:  Optional[list] = None   # e.g. ["en", "es"] — defaults to ["en","en-US"]
+    embed_thumbnail: bool           = False
+    embed_metadata:  bool           = True
+    # Anti-blocking
+    cookies:         Optional[str]  = None   # Netscape cookie text
+    proxy:           Optional[str]  = None   # http://... or socks5://...
+    # Screen-capture (record playback) — for blob:/MSE streams with no downloadable URL
+    capture:         bool           = False
+    capture_seconds: Optional[int]  = None   # cap recording length (default: video duration)
+    # Clip extraction — download a time range only
+    start_time:      Optional[str]  = None   # HH:MM:SS or MM:SS
+    end_time:        Optional[str]  = None   # HH:MM:SS or MM:SS
+
+# ── Progress helpers ──────────────────────────────────────────────────────────
+async def _prog(jid: str, d: dict): await _aredis.set(f"job:{jid}:progress", json.dumps(d), ex=86400)
+def _prog_s(jid: str, d: dict):    _sredis.set(f"job:{jid}:progress", json.dumps(d), ex=86400)
+
+# ── Headless-browser rendering (for JS-heavy sites / any website) ──────────────
+_render_sem = asyncio.Semaphore(2)   # chromium is heavy — cap concurrent renders
+
+_JS_EXTRACT = """
+() => {
+  const abs = (u) => { try { return new URL(u, location.href).href } catch { return null } };
+  const images = new Set(), videos = new Set();
+  // <img> + lazy attrs + srcset
+  document.querySelectorAll('img').forEach(img => {
+    ['src','currentSrc','data-src','data-original','data-lazy-src','data-hi-res','data-full-url'].forEach(a => {
+      const v = img[a] || img.getAttribute(a); if (v) { const u = abs(v); if (u) images.add(u); }
+    });
+    const ss = img.getAttribute('srcset'); if (ss) ss.split(',').forEach(p => { const u = abs(p.trim().split(' ')[0]); if (u) images.add(u); });
+  });
+  // <picture><source srcset>
+  document.querySelectorAll('source[srcset]').forEach(s => {
+    s.getAttribute('srcset').split(',').forEach(p => { const u = abs(p.trim().split(' ')[0]); if (u) { (s.type && s.type.startsWith('image') ? images : images).add(u); } });
+  });
+  // CSS background-image
+  document.querySelectorAll('*').forEach(el => {
+    const bg = getComputedStyle(el).backgroundImage;
+    if (bg && bg.includes('url(')) { const m = bg.match(/url\\(["']?([^"')]+)["']?\\)/); if (m) { const u = abs(m[1]); if (u && u.startsWith('http')) images.add(u); } }
+  });
+  // <video> + <source>
+  document.querySelectorAll('video').forEach(v => {
+    if (v.src) { const u = abs(v.src); if (u) videos.add(u); }
+    if (v.currentSrc) { const u = abs(v.currentSrc); if (u) videos.add(u); }
+    v.querySelectorAll('source').forEach(s => { if (s.src) { const u = abs(s.src); if (u) videos.add(u); } });
+  });
+  // og / twitter meta
+  document.querySelectorAll('meta[property="og:image"],meta[name="twitter:image"]').forEach(m => { const u = abs(m.content); if (u) images.add(u); });
+  document.querySelectorAll('meta[property="og:video"],meta[property="og:video:url"],meta[property="og:video:secure_url"]').forEach(m => { const u = abs(m.content); if (u) videos.add(u); });
+  // anchors to media files
+  document.querySelectorAll('a[href]').forEach(a => {
+    const h = a.href || '';
+    if (/\\.(jpe?g|png|gif|webp|avif|bmp|svg|tiff?)(\\?|$)/i.test(h)) images.add(h);
+    if (/\\.(mp4|webm|mkv|mov|m3u8|mpd)(\\?|$)/i.test(h)) videos.add(h);
+  });
+  return { images: [...images].filter(u => u && u.startsWith('http')), videos: [...videos].filter(u => u && u.startsWith('http')) };
+}
+"""
+
+# Streaming hosts / patterns that signal a real (often hidden) media URL
+_VIDEO_HINTS = ("m3u8", "mpd", "/hls/", "/dash/", "videoplayback", "googlevideo",
+                "/manifest", "mime=video", "/segment", ".ts?", "master.json",
+                "cdn", "media", "stream")
+_MEDIA_EXT = (".mp4", ".webm", ".mkv", ".mov", ".m3u8", ".mpd", ".ts", ".m4s", ".flv")
+
+# Captured request headers for found media (so downloads can replay referer/cookies)
+_LAST_MEDIA_HEADERS: dict[str, dict] = {}
+
+async def _render_media(url: str, proxy: Optional[str] = None,
+                        scroll: bool = True, timeout_ms: int = 45000,
+                        want_video: bool = False):
+    """Render a page in headless Chromium and extract image + video URLs.
+       Sniffs ALL network traffic (XHR/fetch/media) — catches hidden HLS/DASH/mp4
+       URLs that only appear in the network tab. Returns (images, videos)."""
+    from playwright.async_api import async_playwright
+    images: set[str] = set()
+    videos: set[str] = set()
+
+    def _classify(u: str, ct: str = "", headers: Optional[dict] = None):
+        if not u or not u.startswith("http"): return
+        base = u.split("?")[0].lower()
+        low = u.lower()
+        if "image/" in ct or base.endswith((".jpg",".jpeg",".png",".gif",".webp",".avif",".bmp",".svg",".tiff")):
+            images.add(u)
+        elif ("video/" in ct or "audio/" in ct or "mpegurl" in ct or "dash+xml" in ct or "octet-stream" in ct
+              or base.endswith(_MEDIA_EXT) or any(h in low for h in _VIDEO_HINTS)):
+            # Avoid obvious non-media even if 'cdn'/'media' substring matched
+            if base.endswith((".js",".css",".json",".woff",".woff2",".svg",".png",".jpg",".jpeg",".gif",".webp",".ico")):
+                if base.endswith((".m3u8",".mpd")): pass
+                else: return
+            videos.add(u)
+            if headers:
+                _LAST_MEDIA_HEADERS[u] = headers
+
+    async with _render_sem:
+        try:
+            async with async_playwright() as p:
+                launch_args = ["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu",
+                               "--autoplay-policy=no-user-gesture-required"]
+                browser = await p.chromium.launch(headless=True, args=launch_args,
+                                                   proxy={"server": proxy} if proxy else None)
+                ctx = await browser.new_context(
+                    user_agent=_ua(), viewport={"width": 1920, "height": 1080},
+                    ignore_https_errors=True,
+                )
+                page = await ctx.new_page()
+
+                def _on_request(req):
+                    try:
+                        _classify(req.url, "", dict(req.headers or {}))
+                    except Exception: pass
+
+                def _on_response(resp):
+                    try:
+                        _classify(resp.url, (resp.headers or {}).get("content-type", ""),
+                                  dict(resp.request.headers or {}))
+                    except Exception: pass
+
+                page.on("request", _on_request)
+                page.on("response", _on_response)
+
+                try:
+                    await page.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
+                except Exception:
+                    pass
+                try:
+                    await page.wait_for_load_state("networkidle", timeout=12000)
+                except Exception:
+                    pass
+
+                # Try to trigger lazy/click-to-play video players (the real URL
+                # often only loads after pressing play)
+                if want_video:
+                    for sel in ("video", "button[aria-label*='lay' i]", ".vjs-big-play-button",
+                                ".play-button", "[class*='play']", ".ytp-large-play-button"):
+                        try:
+                            el = await page.query_selector(sel)
+                            if el:
+                                await el.click(timeout=2500, force=True)
+                                await page.wait_for_timeout(1500)
+                        except Exception:
+                            pass
+                    # Also try to .play() any video element directly
+                    try:
+                        await page.evaluate("document.querySelectorAll('video').forEach(v=>{try{v.muted=true;v.play()}catch(e){}})")
+                        await page.wait_for_timeout(2500)
+                    except Exception:
+                        pass
+
+                if scroll:
+                    # Infinite-scroll + "load more" handling for SPA/social feeds
+                    last_h = 0
+                    for i in range(25):
+                        try:
+                            await page.mouse.wheel(0, 30000)
+                            await page.wait_for_timeout(600)
+                            if i % 4 == 0:
+                                # Click common "load more / show more" buttons
+                                await page.evaluate("""() => {
+                                  const rx = /load more|show more|view more|see more|more photos|next/i;
+                                  document.querySelectorAll('button,a,div[role=button],span[role=button]').forEach(b => {
+                                    if (rx.test((b.textContent||'').trim())) { try { b.click() } catch(e){} }
+                                  });
+                                }""")
+                            h = await page.evaluate("() => document.body.scrollHeight")
+                            if h == last_h and i > 4:
+                                break   # page stopped growing
+                            last_h = h
+                        except Exception:
+                            break
+
+                try:
+                    dom = await page.evaluate(_JS_EXTRACT)
+                    images |= set(dom.get("images", []))
+                    videos |= set(dom.get("videos", []))
+                except Exception:
+                    pass
+
+                # Give late XHR/media requests a moment, then snapshot
+                try:
+                    await page.wait_for_timeout(1500)
+                except Exception:
+                    pass
+
+                await browser.close()
+        except Exception:
+            pass
+
+    # Drop blob: URLs (not downloadable) from videos
+    videos = {v for v in videos if not v.startswith("blob:")}
+    return list(images), list(videos)
+
+
+def _rank_video(urls: list[str]) -> list[str]:
+    """Prefer HLS/DASH manifests, then mp4/webm, then ts."""
+    def score(u: str) -> int:
+        b = u.split("?")[0].lower()
+        if b.endswith(".m3u8"): return 0
+        if b.endswith(".mpd"):  return 1
+        if b.endswith(".mp4"):  return 2
+        if b.endswith(".webm"): return 3
+        if b.endswith((".mkv",".mov")): return 4
+        if b.endswith(".ts"):   return 6
+        return 5
+    return sorted(urls, key=score)
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ROUTES
+# ─────────────────────────────────────────────────────────────────────────────
+@app.get("/health")
+async def health(): return {"status":"ok","version":"3.0.0","max_concurrent":MAX_CONCURRENT}
+
+@app.get("/health/deep")
+async def health_deep():
+    """Deep health — pings dependencies and checks the extractor engines."""
+    checks: dict = {}
+    # Redis
+    try:
+        await _aredis.ping(); checks["redis"] = "ok"
+    except Exception as e:
+        checks["redis"] = f"down: {str(e)[:80]}"
+    # Engines present
+    ev = _engine_versions()
+    checks["engines"] = {k: ("ok" if v else "missing") for k, v in ev.items()}
+    # Downloads dir writable
+    try:
+        t = DOWNLOAD_DIR / ".healthcheck"
+        t.write_text("ok"); t.unlink()
+        checks["downloads_dir"] = "ok"
+    except Exception as e:
+        checks["downloads_dir"] = f"not writable: {str(e)[:60]}"
+    ok = checks.get("redis") == "ok" and checks.get("downloads_dir") == "ok"
+    return {"status": "ok" if ok else "degraded", "checks": checks, "versions": ev}
+
+
+# ── Extraction engine status & one-click self-update ──────────────────────────
+import sys as _sys, subprocess as _sp
+_ENGINE_PKGS = ["yt-dlp", "gallery-dl", "streamlink", "you-get", "ddgs"]
+
+def _engine_versions() -> dict:
+    import importlib.metadata as _md
+    out: dict = {}
+    for pkg in _ENGINE_PKGS:
+        try: out[pkg] = _md.version(pkg)
+        except Exception: out[pkg] = None
+    try:
+        r = _sp.run(["ffmpeg","-version"], capture_output=True, text=True, timeout=10)
+        out["ffmpeg"] = r.stdout.split("\n")[0].split(" ")[2] if r.returncode == 0 else None
+    except Exception:
+        out["ffmpeg"] = None
+    return out
+
+@app.get("/engines")
+async def engines():
+    return {"engines": _engine_versions()}
+
+
+_SITES_CACHE: dict = {}
+
+def _supported_sites() -> dict:
+    """Count the REAL supported-site registries across engines. yt-dlp + gallery-dl
+       name thousands of sites explicitly; the headless-render + generic HEAD-probe
+       fallback then covers everything else — so practical coverage is unbounded."""
+    if _SITES_CACHE:
+        return _SITES_CACHE
+    yt = gd = 0
+    try:
+        from yt_dlp.extractor import gen_extractor_classes
+        yt = sum(1 for e in gen_extractor_classes()
+                 if e.IE_NAME and "generic" not in e.IE_NAME.lower())
+    except Exception:
+        pass
+    try:
+        import gallery_dl.extractor as _gde
+        gd = len({getattr(e, "category", "") for e in _gde.extractors() if getattr(e, "category", "")})
+    except Exception:
+        pass
+    named = yt + gd
+    out = {
+        "named_extractors": named,
+        "by_engine": {"yt-dlp": yt, "gallery-dl": gd},
+        "generic_fallback": True,
+        "note": "Named site extractors across yt-dlp + gallery-dl. Any other site is "
+                "handled by the headless-render + direct HEAD-probe fallback — coverage "
+                "is effectively unlimited for any URL serving media or files.",
+    }
+    _SITES_CACHE.update(out)
+    return out
+
+@app.get("/engines/sites")
+async def engines_sites():
+    return await asyncio.get_event_loop().run_in_executor(None, _supported_sites)
+
+@app.post("/engines/update")
+async def engines_update():
+    """pip install -U the extractor engines. Subprocess engines (gallery-dl/you-get/
+       streamlink) take effect immediately; yt-dlp (imported in-process) applies after
+       the next container restart."""
+    before = _engine_versions()
+    def _upd():
+        try:
+            _sp.run([_sys.executable, "-m", "pip", "install", "-U", "--no-cache-dir", *_ENGINE_PKGS],
+                    capture_output=True, text=True, timeout=600)
+        except Exception:
+            pass
+    await asyncio.get_event_loop().run_in_executor(None, _upd)
+    after = _engine_versions()
+    changed = [p for p in _ENGINE_PKGS if before.get(p) != after.get(p)]
+    return {"before": before, "after": after, "changed": changed,
+            "note": "yt-dlp changes apply after the python-service restarts; other engines are live now."}
+
+
+import hashlib as _hashlib
+ANALYZE_CACHE_TTL = int(os.getenv("ANALYZE_CACHE_TTL", "3600"))
+
+def _cache_key(prefix: str, url: str) -> str:
+    return f"cache:{prefix}:{_hashlib.sha1(url.encode()).hexdigest()}"
+
+async def _cache_get(key: str):
+    try:
+        v = await _aredis.get(key)
+        return json.loads(v) if v else None
+    except Exception:
+        return None
+
+async def _cache_set(key: str, value: dict, ttl: int = ANALYZE_CACHE_TTL):
+    try:
+        await _aredis.set(key, json.dumps(value), ex=ttl)
+    except Exception:
+        pass
+
+
+@app.post("/analyze")
+async def analyze(req: AnalyzeReq):
+    url = req.url
+    # Fast path: cached analysis (skip slow yt-dlp/render for repeat URLs)
+    ck = _cache_key("analyze", url)
+    cached = await _cache_get(ck)
+    if cached:
+        cached["_cached"] = True
+        return cached
+    result = await _do_analyze(url)
+    # Cache everything except the cheap 'page' fallback (we want fresh image scrapes)
+    if result.get("type") != "page":
+        await _cache_set(ck, result)
+    return result
+
+
+async def _do_analyze(url: str) -> dict:
+    # 0. Torrent / magnet
+    if url.startswith("magnet:") or url.split("?")[0].lower().endswith(".torrent"):
+        name = "torrent"
+        if url.startswith("magnet:"):
+            m = re.search(r"dn=([^&]+)", url)
+            if m:
+                from urllib.parse import unquote
+                name = unquote(m.group(1))
+        else:
+            name = url.split("/")[-1].split("?")[0]
+        return {"type":"torrent","url":url,"title":_safe(name),"extractor":"aria2"}
+    # 1. Direct stream detection (m3u8 / mpd / ts)
+    s = _detect_stream(url)
+    if s: return s
+    # 1b. Known non-media file extension (pdf, zip, apk, docs, exe…) → universal file
+    base = url.split("?")[0].lower()
+    if base.endswith(_FILE_EXT):
+        name = url.split("/")[-1].split("?")[0] or "download"
+        size = None; ct = "application/octet-stream"
+        try:
+            async with _client() as c:
+                hr = await c.head(url, timeout=10)
+                size = int(hr.headers.get("content-length",0)) or None
+                ct = (hr.headers.get("content-type","") or ct).split(";")[0].strip()
+                name = _filename_from(url, hr.headers.get("content-disposition",""))
+        except Exception: pass
+        return {"type":"file","url":url,"filename":_safe(name),"content_type":ct,"size":size}
+    # 2. yt-dlp extractor
+    try:
+        info = await asyncio.wait_for(
+            asyncio.get_event_loop().run_in_executor(None, _ytdlp_info, url, False), 35)
+        if info and (info.get("formats") or info.get("url")):
+            heights = sorted({f.get("height") for f in (info.get("formats") or [])
+                              if f.get("height") and f.get("vcodec","none") != "none"}, reverse=True)
+            return {
+                "type": "video",
+                "title": info.get("title") or _url_title(url),
+                "thumbnail": info.get("thumbnail"),
+                "duration": info.get("duration"),
+                "uploader": info.get("uploader",""),
+                "extractor": info.get("extractor",""),
+                "qualities": heights[:10],
+                "video_formats": ["mp4","webm","mkv","avi","mov","mp3","m4a","opus"],
+                "is_live": bool(info.get("is_live")),
+                "is_playlist": bool(info.get("_type") in ("playlist","multi_video")),
+                "playlist_count": info.get("playlist_count"),
+            }
+    except Exception: pass
+    # 3. HEAD probe
+    try:
+        async with _client() as c:
+            r = await c.head(url, timeout=12)
+            ct = (r.headers.get("content-type","") or "").split(";")[0].strip().lower()
+            if "image/" in ct:
+                return {"type":"image","url":url,"content_type":ct,
+                        "size": int(r.headers.get("content-length",0)) or None,
+                        "image_formats":["original","jpg","png","webp","avif","bmp"]}
+            if any(s in ct for s in ("video/","audio/","application/x-mpegurl",
+                                      "application/vnd.apple.mpegurl","application/dash+xml")):
+                return {"type":"video","title":_url_title(url),"thumbnail":None,
+                        "duration":None,"uploader":"","extractor":"direct",
+                        "qualities":[],"video_formats":["mp4","mkv","ts"],"is_stream":True}
+            # Any other direct file (pdf, zip, apk, docs, exe, csv, …) → universal file download
+            cd = (r.headers.get("content-disposition","") or "").lower()
+            looks_like_file = (
+                ("attachment" in cd) or
+                (ct and "text/html" not in ct and ct != "") or
+                bool(re.search(r'\.[a-z0-9]{1,8}(\?|$)', url.split("/")[-1], re.I))
+            )
+            if looks_like_file and "text/html" not in ct:
+                name = _filename_from(url, cd)
+                return {"type":"file","url":url,"filename":name,"content_type":ct or "application/octet-stream",
+                        "size": int(r.headers.get("content-length",0)) or None}
+    except Exception: pass
+    # 4. Headless-render probe — detect JS-loaded videos on arbitrary pages
+    try:
+        imgs, vids = await asyncio.wait_for(
+            _render_media(url, scroll=False, timeout_ms=25000, want_video=True), timeout=45)
+        if vids:
+            return {"type":"video","title":_url_title(url),"thumbnail":(imgs[0] if imgs else None),
+                    "duration":None,"uploader":"","extractor":"rendered",
+                    "qualities":[],"video_formats":["mp4","mkv","ts","webm"],"is_stream":True,
+                    "rendered_images": len(imgs)}
+        # No video, but maybe images — fall through to page (preview will render fully)
+    except Exception:
+        pass
+    # 5. HTML page fallback (image scraping; preview-page renders if needed)
+    return {"type":"page","url":url,"image_formats":["original","jpg","png","webp","avif"]}
+
+
+class SearchReq(BaseModel):
+    query:    str
+    kind:     Literal["web","file","image","video"] = "web"
+    filetype: Optional[str] = None     # e.g. pdf, zip, mp3 (for kind=file)
+    limit:    int = 30                 # results per page
+    page:     int = 1                  # 1-based page index (for infinite pagination)
+
+
+SEARCH_CACHE_TTL = int(os.getenv("SEARCH_CACHE_TTL", "900"))   # 15 min
+
+
+@app.post("/search")
+async def search(req: SearchReq):
+    """Web / file / image / video search via DuckDuckGo (no API key). Paginated &
+       Redis-cached so users can load effectively unlimited results page by page.
+       For kind=file, builds a `filetype:` query to surface real downloadable files."""
+    q = req.query.strip()
+    if not q:
+        raise HTTPException(400, "Empty query")
+
+    per_page = max(1, min(req.limit, 50))
+    page     = max(1, req.page)
+
+    ft = (req.filetype or "").strip().lstrip(".")
+    ck = _cache_key("search", f"{req.kind}|{ft}|{per_page}|{page}|{q}")
+    cached = await _cache_get(ck)
+    if cached:
+        cached["_cached"] = True
+        return cached
+
+    def _run():
+        from ddgs import DDGS
+        results = []
+        with DDGS() as ddgs:
+            if req.kind == "image":
+                for r in ddgs.images(q, max_results=per_page, page=page):
+                    results.append({"title": r.get("title",""), "url": r.get("image"),
+                                    "thumbnail": r.get("thumbnail"), "source": r.get("url"),
+                                    "kind": "image"})
+            elif req.kind == "video":
+                for r in ddgs.videos(q, max_results=per_page, page=page):
+                    results.append({"title": r.get("title",""), "url": r.get("content") or r.get("url"),
+                                    "thumbnail": (r.get("images") or {}).get("medium"),
+                                    "source": r.get("url"), "duration": r.get("duration"),
+                                    "kind": "video"})
+            else:
+                query = q
+                if req.kind == "file" and ft and "filetype:" not in q:
+                    query = f"{q} filetype:{ft}"
+                for r in ddgs.text(query, max_results=per_page, page=page):
+                    results.append({"title": r.get("title",""), "url": r.get("href"),
+                                    "snippet": r.get("body",""), "kind": req.kind})
+        # de-dupe within the page by URL
+        seen, deduped = set(), []
+        for r in results:
+            u = r.get("url")
+            if u and u not in seen:
+                seen.add(u); deduped.append(r)
+        return deduped
+
+    try:
+        results = await asyncio.wait_for(
+            asyncio.get_event_loop().run_in_executor(None, _run), timeout=30)
+        payload = {
+            "query": q, "kind": req.kind, "page": page, "per_page": per_page,
+            "count": len(results), "has_more": len(results) >= per_page,
+            "results": results,
+        }
+        if results:
+            await _cache_set(ck, payload, ttl=SEARCH_CACHE_TTL)
+        return payload
+    except asyncio.TimeoutError:
+        raise HTTPException(504, "Search timed out — try again")
+    except Exception as e:
+        raise HTTPException(502, f"Search failed: {str(e)[:200]}")
+
+
+# ── Social people / profile discovery ─────────────────────────────────────────
+# Platforms whose PUBLIC profiles can be enumerated by handle. Each entry:
+#   url template, a profile-page kind (video|image|mixed), whether login is usually
+#   required to actually DOWNLOAD media (we surface this honestly in the UI).
+SOCIAL_PLATFORMS = [
+    {"id":"instagram","name":"Instagram","url":"https://www.instagram.com/{u}/","kind":"image","login":True},
+    {"id":"tiktok","name":"TikTok","url":"https://www.tiktok.com/@{u}","kind":"video","login":True},
+    {"id":"x","name":"X / Twitter","url":"https://x.com/{u}","kind":"mixed","login":True},
+    {"id":"youtube","name":"YouTube","url":"https://www.youtube.com/@{u}","kind":"video","login":False},
+    {"id":"reddit","name":"Reddit","url":"https://www.reddit.com/user/{u}/","kind":"mixed","login":False},
+    {"id":"pinterest","name":"Pinterest","url":"https://www.pinterest.com/{u}/","kind":"image","login":False},
+    {"id":"tumblr","name":"Tumblr","url":"https://{u}.tumblr.com/","kind":"image","login":False},
+    {"id":"twitch","name":"Twitch","url":"https://www.twitch.tv/{u}","kind":"video","login":False},
+    {"id":"vimeo","name":"Vimeo","url":"https://vimeo.com/{u}","kind":"video","login":False},
+    {"id":"deviantart","name":"DeviantArt","url":"https://www.deviantart.com/{u}","kind":"image","login":False},
+    {"id":"pixiv","name":"Pixiv","url":"https://www.pixiv.net/en/users/{u}","kind":"image","login":True},
+    {"id":"soundcloud","name":"SoundCloud","url":"https://soundcloud.com/{u}","kind":"video","login":False},
+    {"id":"dailymotion","name":"Dailymotion","url":"https://www.dailymotion.com/{u}","kind":"video","login":False},
+    {"id":"github","name":"GitHub","url":"https://github.com/{u}","kind":"image","login":False},
+]
+_HANDLE_RE = re.compile(r"^@?[A-Za-z0-9._-]{2,40}$")
+
+
+class SocialSearchReq(BaseModel):
+    query:     str
+    platforms: Optional[list[str]] = None   # restrict to these platform ids
+
+
+async def _probe_profile(c, plat: dict, handle: str) -> Optional[dict]:
+    url = plat["url"].format(u=handle)
+    item = {"platform": plat["id"], "platform_name": plat["name"], "username": handle,
+            "url": url, "kind": plat["kind"], "login_required": plat["login"], "status": "candidate"}
+    try:
+        r = await c.get(url, timeout=10, follow_redirects=True)
+        body = r.text[:6000].lower() if r.headers.get("content-type","").startswith("text") else ""
+        missing = any(s in body for s in (
+            "page not found","sorry, this page","user not found","doesn't exist",
+            "couldn't find this account","page isn't available","404 not found"))
+        if r.status_code == 200 and not missing:
+            item["status"] = "verified"
+            m = re.search(r'<meta property="og:image" content="([^"]+)"', r.text or "", re.I)
+            if m: item["avatar"] = m.group(1)
+            tm = re.search(r'<meta property="og:title" content="([^"]+)"', r.text or "", re.I)
+            if tm: item["display_name"] = tm.group(1)[:120]
+        elif r.status_code in (401, 403):
+            item["status"] = "blocked"   # exists but bot-walled; still downloadable with cookies
+        else:
+            return None
+    except Exception:
+        return None
+    return item
+
+
+@app.post("/social/search")
+async def social_search(req: SocialSearchReq):
+    """Find a person's public profiles across social platforms.
+       - A handle (e.g. 'nasa') → probes each platform's profile URL directly.
+       - A full name (with spaces) → uses DuckDuckGo to surface matching profiles.
+       Returns candidate profiles you can then preview & download (public media;
+       members-only/private content needs your own session cookies)."""
+    q = req.query.strip().lstrip("@")
+    if not q:
+        raise HTTPException(400, "Empty query")
+    plats = [p for p in SOCIAL_PLATFORMS if not req.platforms or p["id"] in req.platforms]
+
+    ck = _cache_key("social", f"{','.join(sorted(p['id'] for p in plats))}|{q.lower()}")
+    cached = await _cache_get(ck)
+    if cached:
+        cached["_cached"] = True
+        return cached
+
+    profiles: list[dict] = []
+    if _HANDLE_RE.match(q) and " " not in q:
+        async with _client() as c:
+            results = await asyncio.gather(*[_probe_profile(c, p, q) for p in plats])
+        profiles = [r for r in results if r]
+    else:
+        # Full name → DuckDuckGo across the platform domains
+        domains = {p["id"]: p["url"].split("/")[2].replace("www.","") for p in plats}
+        def _run():
+            from ddgs import DDGS
+            out = []
+            sites = " OR ".join(f"site:{d}" for d in domains.values())
+            with DDGS() as ddgs:
+                for r in ddgs.text(f'"{q}" ({sites})', max_results=40):
+                    href = r.get("href","")
+                    pid = next((p["id"] for p in plats if domains[p["id"]] in href), None)
+                    if not pid: continue
+                    out.append({"platform": pid,
+                                "platform_name": next(p["name"] for p in plats if p["id"]==pid),
+                                "url": href, "title": r.get("title",""),
+                                "kind": next(p["kind"] for p in plats if p["id"]==pid),
+                                "login_required": next(p["login"] for p in plats if p["id"]==pid),
+                                "status": "candidate"})
+            # de-dupe by url
+            seen, dd = set(), []
+            for o in out:
+                if o["url"] not in seen: seen.add(o["url"]); dd.append(o)
+            return dd
+        try:
+            profiles = await asyncio.wait_for(
+                asyncio.get_event_loop().run_in_executor(None, _run), timeout=30)
+        except Exception:
+            profiles = []
+
+    profiles.sort(key=lambda p: {"verified":0,"blocked":1,"candidate":2}.get(p.get("status"),3))
+    payload = {"query": q, "count": len(profiles), "platforms_searched": len(plats),
+               "profiles": profiles}
+    if profiles:
+        await _cache_set(ck, payload, ttl=900)
+    return payload
+
+
+@app.get("/social/platforms")
+async def social_platforms():
+    return {"platforms": [{"id":p["id"],"name":p["name"],"kind":p["kind"],
+                           "login_required":p["login"]} for p in SOCIAL_PLATFORMS]}
+
+
+@app.post("/analyze-playlist")
+async def analyze_playlist(req: AnalyzeReq):
+    """Analyse a playlist / channel / profile — returns item count without downloading."""
+    ck = _cache_key("playlist", req.url)
+    cached = await _cache_get(ck)
+    if cached:
+        cached["_cached"] = True
+        return cached
+    try:
+        info = await asyncio.wait_for(
+            asyncio.get_event_loop().run_in_executor(None, _ytdlp_info, req.url, True), 60)
+        entries = list((info or {}).get("entries") or [])
+        if info and entries:
+            result = {
+                "type": "playlist",
+                "title": info.get("title") or info.get("webpage_url_basename","Playlist"),
+                "uploader": info.get("uploader",""),
+                "thumbnail": info.get("thumbnail"),
+                "item_count": len(entries),
+                "extractor": info.get("extractor",""),
+                "is_channel": "channel" in (info.get("webpage_url","") or "").lower(),
+            }
+            await _cache_set(ck, result, ttl=1800)
+            return result
+    except Exception:
+        pass
+    # yt-dlp found no video entries — likely an image-based social profile.
+    # Return a usable profile result so the user can still download via gallery-dl.
+    result = {
+        "type": "playlist",
+        "title": _url_title(req.url),
+        "uploader": "",
+        "thumbnail": None,
+        "item_count": 0,          # unknown ahead of time; gallery-dl streams as it goes
+        "extractor": "gallery-dl",
+        "is_channel": True,
+        "note": "Image/media profile — will be fetched with the gallery engine.",
+    }
+    await _cache_set(ck, result, ttl=600)
+    return result
+
+
+@app.post("/preview-page")
+async def preview_page(req: AnalyzeReq):
+    """Scrape all image URLs from a page (no download) — for user preview before selecting."""
+    try:
+        async with _client() as c:
+            r = await c.get(req.url, timeout=30)
+            r.raise_for_status()
+            soup = BeautifulSoup(r.text, "lxml")
+        title = soup.title.string.strip() if soup.title else ""
+        imgs  = _scrape_imgs(soup, req.url)
+
+        # Follow pagination (up to 5 pages)
+        seen_pages = {req.url}
+        for pg in _next_pages(soup, req.url)[:5]:
+            if pg in seen_pages: continue
+            seen_pages.add(pg)
+            try:
+                async with _client() as c:
+                    r2 = await c.get(pg, timeout=20)
+                    soup2 = BeautifulSoup(r2.text, "lxml")
+                imgs += _scrape_imgs(soup2, pg)
+            except Exception:
+                pass
+
+        # If static scraping found few images, render with headless browser (JS sites)
+        if len(set(imgs)) < 8:
+            try:
+                r_imgs, _ = await asyncio.wait_for(
+                    _render_media(req.url, scroll=True, timeout_ms=45000), timeout=70)
+                imgs += r_imgs
+            except Exception:
+                pass
+
+        seen: set[str] = set(); uniq: list[str] = []
+        for u in imgs:
+            if u not in seen: seen.add(u); uniq.append(u)
+        uniq = uniq[:3000]
+
+        return {
+            "page_title": title,
+            "url": req.url,
+            "total": len(uniq),
+            "items": [{"url": u, "type": "image"} for u in uniq],
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        # Last resort: pure render
+        try:
+            r_imgs, _ = await asyncio.wait_for(_render_media(req.url, scroll=True), timeout=70)
+            uniq = list(dict.fromkeys(r_imgs))[:3000]
+            return {"page_title":"", "url":req.url, "total":len(uniq),
+                    "items":[{"url":u,"type":"image"} for u in uniq]}
+        except Exception:
+            raise HTTPException(400, str(e)[:300])
+
+
+@app.post("/list-playlist")
+async def list_playlist_items(req: AnalyzeReq):
+    """List playlist/profile items with thumbnails for user preview before selecting."""
+    try:
+        info = await asyncio.wait_for(
+            asyncio.get_event_loop().run_in_executor(None, _ytdlp_info, req.url, True),
+            timeout=90,
+        )
+        if not info:
+            raise HTTPException(400, "Could not extract playlist info")
+
+        entries = list(info.get("entries") or [])
+        total   = len(entries)
+        preview = entries[:500]  # Show up to 500 items in preview
+
+        items = []
+        for i, e in enumerate(preview):
+            items.append({
+                "index":     i + 1,
+                "url":       e.get("url") or e.get("webpage_url") or "",
+                "title":     e.get("title") or f"Item {i + 1}",
+                "thumbnail": e.get("thumbnail"),
+                "duration":  e.get("duration"),
+                "uploader":  e.get("uploader"),
+                "type":      "video",
+            })
+
+        return {
+            "title":      info.get("title", "Playlist"),
+            "uploader":   info.get("uploader", ""),
+            "thumbnail":  info.get("thumbnail"),
+            "total":      total,
+            "previewing": len(items),
+            "items":      items,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(400, str(e)[:300])
+
+
+@app.post("/download")
+async def download(req: DownloadReq):
+    job_dir = DOWNLOAD_DIR / req.job_id
+    job_dir.mkdir(parents=True, exist_ok=True)
+    async with _sem:
+        await _prog(req.job_id, {"status":"starting","progress":0})
+        cookie_file: Optional[str] = None
+        try:
+            if req.cookies:
+                cookie_file = _write_cookies(req.cookies)
+            if req.capture and req.media_type == "video":
+                await _dl_capture(req, job_dir)
+            elif req.media_type in ("playlist","profile"):
+                await _dl_playlist(req, job_dir, cookie_file)
+            elif req.media_type == "video":
+                await _dl_video(req, job_dir, cookie_file)
+            elif req.media_type == "image":
+                await _dl_image(req, job_dir)
+            elif req.media_type == "file":
+                await _dl_file(req, job_dir)
+            elif req.media_type == "torrent":
+                await _dl_torrent(req, job_dir)
+            else:
+                await _dl_page(req, job_dir, cookie_file)
+
+            # Guard: if nothing actually landed on disk, this is a failure, not a success
+            saved = [f for f in job_dir.iterdir() if f.is_file()] if job_dir.exists() else []
+            if not saved:
+                await _prog(req.job_id, {"status":"failed","progress":0,
+                    "error":"No file could be downloaded — the source may block direct "
+                            "downloads, require login (add cookies), or be DRM-protected."})
+                raise HTTPException(500, "No files downloaded")
+            return {"success":True}
+        except HTTPException:
+            raise
+        except Exception as e:
+            msg = str(e)[:600]
+            await _prog(req.job_id, {"status":"failed","progress":0,"error":msg})
+            raise HTTPException(500, msg)
+        finally:
+            if cookie_file: _rm(cookie_file)
+
+
+# ── Storage management ────────────────────────────────────────────────────────
+@app.get("/storage")
+async def list_storage():
+    jobs = []
+    if DOWNLOAD_DIR.exists():
+        for job_dir in sorted(DOWNLOAD_DIR.iterdir(), key=lambda p: p.stat().st_mtime, reverse=True):
+            if not job_dir.is_dir(): continue
+            files = [{"name":f.name,"size":f.stat().st_size}
+                     for f in job_dir.iterdir() if f.is_file()]
+            total = sum(f["size"] for f in files)
+            jobs.append({"job_id":job_dir.name,"files":files,
+                         "total_size":total,"file_count":len(files)})
+    total_bytes = sum(j["total_size"] for j in jobs)
+    return {"jobs":jobs,"total_jobs":len(jobs),"total_bytes":total_bytes}
+
+
+@app.delete("/storage/{job_id}")
+async def delete_storage(job_id: str):
+    if not re.match(r'^[0-9a-f\-]{36}$', job_id):
+        raise HTTPException(400,"Invalid job ID")
+    job_dir = DOWNLOAD_DIR / job_id
+    if job_dir.exists():
+        shutil.rmtree(job_dir)
+    return {"success":True}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# DOWNLOAD IMPLEMENTATIONS
+# ─────────────────────────────────────────────────────────────────────────────
+
+_DIRECT_EXT = (".mp4",".webm",".mkv",".mov",".m4v",".avi",".flv",".ts",
+               ".mp3",".m4a",".ogg",".opus",".flac",".wav",".aac")
+
+# Non-media file types → universal file download (documents, archives, apps, data, etc.)
+_FILE_EXT = (
+    ".pdf",".epub",".mobi",".azw3",".djvu",
+    ".zip",".rar",".7z",".tar",".gz",".bz2",".xz",".tgz",
+    ".apk",".exe",".msi",".dmg",".deb",".rpm",".appimage",".iso",".bin",
+    ".doc",".docx",".xls",".xlsx",".ppt",".pptx",".odt",".ods",".odp",".rtf",
+    ".csv",".tsv",".json",".xml",".yaml",".yml",".sql",".txt",".md",".log",
+    ".psd",".ai",".eps",".sketch",".fig",".xd",".indd",
+    ".ttf",".otf",".woff",".woff2",
+    ".stl",".obj",".fbx",".blend",".3ds",".dwg",".dxf",
+    ".heic",".raw",".cr2",".nef",".dng",".arw",".tiff",".ico",
+    ".wmv",".wma",".m4b",".aiff",".mid",".midi",".ogv",".m2ts",
+)
+
+async def _aria2_dl(url: str, out: Path, jid: str,
+                    referer: Optional[str] = None, proxy: Optional[str] = None,
+                    timeout: int = 3600) -> bool:
+    """Fast multi-connection download via aria2c (16 parallel streams + resume).
+       Returns True on success. Used as the fast path for direct media/file URLs."""
+    cmd = [
+        "aria2c", "-x16", "-s16", "-k1M", "--max-tries=10", "--retry-wait=3",
+        "--file-allocation=none", "--auto-file-renaming=false", "--continue=true",
+        "--summary-interval=1", "--console-log-level=warn", "--allow-overwrite=true",
+        "--check-certificate=false", "--max-connection-per-server=16",
+        "-d", str(out.parent), "-o", out.name,
+        "--user-agent", _ua(), "--header", "Accept: */*",
+    ]
+    if referer:
+        cmd += ["--referer", referer, "--header", f"Origin: {_origin(referer)}"]
+    if proxy:
+        cmd += ["--all-proxy", proxy]
+    cmd.append(url)
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
+
+        async def _pump():
+            assert proc.stdout
+            async for raw in proc.stdout:
+                line = raw.decode("utf-8", "ignore")
+                m = re.search(r"\((\d+)%\)", line)
+                if m:
+                    _prog_s(jid, {"status":"downloading","progress":min(95,int(m.group(1)) * 95 // 100)})
+        try:
+            await asyncio.wait_for(_pump(), timeout=timeout)
+            await asyncio.wait_for(proc.wait(), timeout=30)
+        except asyncio.TimeoutError:
+            try: proc.kill()
+            except Exception: pass
+            return False
+        return proc.returncode == 0 and out.exists() and out.stat().st_size >= 1024
+    except FileNotFoundError:
+        return False  # aria2c not installed → caller falls back to httpx
+    except Exception:
+        return False
+
+
+async def _dl_direct(url: str, jid: str, job_dir: Path, fmt: str,
+                     referer: Optional[str] = None, proxy: Optional[str] = None) -> bool:
+    """Download a direct media/file URL (handles URLs pulled straight from the
+       network tab). Tries aria2c (fast, multi-connection, resumable) first, then
+       falls back to a resilient httpx stream. Returns True on success."""
+    raw = url.split("/")[-1].split("?")[0] or "video"
+    if "." not in raw:
+        raw = f"video.{fmt if fmt in ('mp4','webm','mkv') else 'mp4'}"
+    out = _uniq(job_dir, _safe(raw))
+
+    headers = {**_BASE_HDR, "User-Agent": _ua(), "Accept": "*/*"}
+    if referer:
+        headers["Referer"] = referer
+        headers["Origin"] = _origin(referer)
+
+    await _prog(jid, {"status":"downloading","progress":1})
+
+    # Fast path: aria2c (16 connections + resume). Skip for HLS/DASH manifests.
+    if not url.split("?")[0].lower().endswith((".m3u8", ".mpd")):
+        if await _aria2_dl(url, out, jid, referer, proxy):
+            files = [f.name for f in job_dir.iterdir() if f.is_file()]
+            await _prog(jid, {"status":"completed","progress":100,"files":files})
+            return True
+        # aria2 may leave a partial/control file — clean up before httpx retry
+        try:
+            if out.exists() and out.stat().st_size < 1024: out.unlink()
+            ctrl = out.with_suffix(out.suffix + ".aria2")
+            if ctrl.exists(): ctrl.unlink()
+        except Exception: pass
+
+    try:
+        async with httpx.AsyncClient(follow_redirects=True, http2=True, verify=VERIFY_SSL,
+                                     timeout=httpx.Timeout(None, connect=20),
+                                     proxy=proxy or None, headers=headers) as c:
+            async with c.stream("GET", url) as r:
+                if r.status_code not in (200, 206):
+                    return False
+                if "text/html" in (r.headers.get("content-type","") or "").lower():
+                    return False  # error/landing page, not media
+                total = int(r.headers.get("content-length", 0)) or 0
+                done = 0
+                async with aiofiles.open(out, "wb") as f:
+                    async for chunk in r.aiter_bytes(1048576):   # 1 MB chunks
+                        await f.write(chunk)
+                        done += len(chunk)
+                        if total:
+                            _prog_s(jid, {"status":"downloading","progress":min(95,int(done/total*95)),
+                                          "downloaded":done,"total":total})
+        if not out.exists() or out.stat().st_size < 1024:
+            if out.exists(): out.unlink()
+            return False
+        files = [f.name for f in job_dir.iterdir() if f.is_file()]
+        await _prog(jid, {"status":"completed","progress":100,"files":files})
+        return True
+    except Exception:
+        try:
+            if out.exists() and out.stat().st_size < 1024: out.unlink()
+        except Exception: pass
+        return False
+
+
+def _filename_from(url: str, content_disposition: str = "") -> str:
+    """Best-effort filename from Content-Disposition or the URL path."""
+    m = re.search(r"filename\*?=(?:UTF-8'')?\"?([^\";]+)", content_disposition or "", re.I)
+    if m:
+        try:
+            from urllib.parse import unquote
+            return _safe(unquote(m.group(1)))
+        except Exception:
+            return _safe(m.group(1))
+    raw = url.split("/")[-1].split("?")[0] or "download"
+    return _safe(raw) if raw else "download"
+
+
+async def _dl_file(req: DownloadReq, job_dir: Path):
+    """Universal file downloader — streams ANY file type to disk (pdf, zip, apk, docs,
+       exe, csv, epub, anything). Browser-style headers, follows redirects, no media
+       guard. RESUMABLE: writes to <name>.part and uses HTTP Range to continue an
+       interrupted download instead of restarting."""
+    await _prog(req.job_id, {"status":"downloading","progress":1})
+    headers = {**_BASE_HDR, "User-Agent": _ua(), "Accept": "*/*"}
+
+    # Resolve a stable filename first (HEAD), so a retry resumes the same .part file
+    name = _filename_from(req.url, "")
+    try:
+        async with _client(req.proxy) as hc:
+            hr = await hc.head(req.url, timeout=15)
+            cd = hr.headers.get("content-disposition", "")
+            if cd: name = _filename_from(req.url, cd)
+            if "." not in name:
+                ext = (hr.headers.get("content-type","").split(";")[0].split("/")[-1].strip() or "bin")
+                name = f"{name}.{ext[:8]}"
+    except Exception:
+        pass
+
+    final = job_dir / _safe(name)
+    part  = job_dir / (_safe(name) + ".part")
+    resume_from = part.stat().st_size if part.exists() else 0
+
+    h = dict(headers)
+    if resume_from > 0:
+        h["Range"] = f"bytes={resume_from}-"
+
+    async with httpx.AsyncClient(follow_redirects=True, http2=True, verify=VERIFY_SSL,
+                                 timeout=httpx.Timeout(None, connect=20),
+                                 proxy=req.proxy or None, headers=h) as c:
+        async with c.stream("GET", req.url) as r:
+            # If server ignored Range (200 not 206), start fresh
+            if resume_from > 0 and r.status_code == 200:
+                resume_from = 0
+                try: part.unlink()
+                except Exception: pass
+            r.raise_for_status()
+            clen = int(r.headers.get("content-length", 0)) or 0
+            total = (resume_from + clen) if clen else 0
+            done = resume_from
+            mode = "ab" if resume_from > 0 else "wb"
+            async with aiofiles.open(part, mode) as f:
+                async for chunk in r.aiter_bytes(65536):
+                    await f.write(chunk)
+                    done += len(chunk)
+                    if total:
+                        _prog_s(req.job_id, {"status":"downloading","progress":min(95,int(done/total*95)),
+                                              "downloaded":done,"total":total})
+
+    # Finalize: rename .part → unique final name
+    target = _uniq(job_dir, _safe(name))
+    part.rename(target)
+    files = [f.name for f in job_dir.iterdir() if f.is_file()]
+    await _prog(req.job_id, {"status":"completed","progress":100,"files":files})
+
+
+async def _dl_torrent(req: DownloadReq, job_dir: Path):
+    """Download a torrent or magnet link via aria2c (BitTorrent + DHT). Downloads the
+       torrent's files into job_dir; does not seed (seed-time=0)."""
+    await _prog(req.job_id, {"status":"downloading","progress":2})
+    cmd = [
+        "aria2c", req.url,
+        "--dir", str(job_dir),
+        "--seed-time=0",                 # don't seed after completing
+        "--bt-stop-timeout=120",         # give up if no peers for 2 min
+        "--summary-interval=2",
+        "--console-log-level=warn",
+        "--bt-max-peers=80",
+        "--max-connection-per-server=8",
+        "--follow-torrent=mem",
+        "--bt-tracker=udp://tracker.opentrackr.org:1337/announce,udp://open.tracker.cl:1337/announce,udp://tracker.openbittorrent.com:6969/announce",
+    ]
+    if req.proxy:
+        cmd += ["--all-proxy", req.proxy]
+
+    proc = await asyncio.create_subprocess_exec(
+        *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
+
+    pct_re = re.compile(r"\((\d{1,3})%\)")
+    async def _pump():
+        assert proc.stdout
+        async for raw in proc.stdout:
+            line = raw.decode("utf-8","ignore")
+            m = pct_re.search(line)
+            if m:
+                _prog_s(req.job_id, {"status":"downloading","progress":min(95,int(m.group(1)))})
+    try:
+        await asyncio.wait_for(_pump(), timeout=7200)
+        await asyncio.wait_for(proc.wait(), timeout=60)
+    except asyncio.TimeoutError:
+        try: proc.kill()
+        except Exception: pass
+
+    # aria2 leaves .aria2 control files — remove them
+    for ctrl in job_dir.rglob("*.aria2"):
+        try: ctrl.unlink()
+        except Exception: pass
+    # Flatten nested torrent folders so the (flat) file server can serve every file
+    for f in list(job_dir.rglob("*")):
+        if f.is_file() and f.parent != job_dir:
+            dest = _uniq(job_dir, _safe(f.name))
+            try: f.rename(dest)
+            except Exception: pass
+    for d in sorted([p for p in job_dir.rglob("*") if p.is_dir()], reverse=True):
+        try: d.rmdir()
+        except Exception: pass
+    files = [f.name for f in job_dir.iterdir() if f.is_file()]
+    if not files:
+        raise Exception("Torrent download failed — no peers/seeders or invalid magnet.")
+    await _prog(req.job_id, {"status":"completed","progress":100,"files":files})
+
+
+async def _dl_gallery_dl(url: str, jid: str, job_dir: Path,
+                         cookie_file: Optional[str] = None, proxy: Optional[str] = None,
+                         max_items: Optional[int] = None, timeout: int = 1800) -> int:
+    """Run gallery-dl — a mature extractor covering 300+ gallery / social / image-board
+       / adult-image sites (Pixiv, DeviantArt, ArtStation, Twitter media, Instagram,
+       Reddit, Tumblr, booru boards, many adult galleries). Downloads flat into job_dir.
+       Returns the number of files downloaded."""
+    before = {f.name for f in job_dir.iterdir() if f.is_file()} if job_dir.exists() else set()
+    rng = f"1-{max_items}" if max_items else "1-2000"
+    cmd = [
+        "gallery-dl", "-D", str(job_dir), "--no-mtime", "--no-colors",
+        "--range", rng,
+        "-o", f"extractor.user-agent={_ua()}",
+        "-o", "extractor.retries=4",
+        "-o", "extractor.timeout=30",
+    ]
+    if cookie_file: cmd += ["--cookies", cookie_file]
+    if proxy:       cmd += ["--proxy", proxy]
+    cmd.append(url)
+
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
+
+        async def _pump():
+            assert proc.stdout
+            n = 0
+            async for raw in proc.stdout:
+                line = raw.decode("utf-8", "ignore").strip()
+                # gallery-dl prints the path of each downloaded file (not bracketed logs)
+                if line and not line.startswith(("[", "#")):
+                    n += 1
+                    _prog_s(jid, {"status":"downloading","progress":min(92, 8 + n),
+                                  "completed_files": n})
+        try:
+            await asyncio.wait_for(_pump(), timeout=timeout)
+            await asyncio.wait_for(proc.wait(), timeout=30)
+        except asyncio.TimeoutError:
+            try: proc.kill()
+            except Exception: pass
+    except FileNotFoundError:
+        return 0   # gallery-dl not installed
+    except Exception:
+        pass
+
+    after = [f for f in job_dir.iterdir() if f.is_file()] if job_dir.exists() else []
+    new = [f for f in after if f.name not in before]
+    return len(new)
+
+
+async def _subprocess_dl(cmd: list, jid: str, job_dir: Path, timeout: int = 1200) -> int:
+    """Generic subprocess downloader — runs cmd, then counts new files in job_dir."""
+    before = {f.name for f in job_dir.iterdir() if f.is_file()} if job_dir.exists() else set()
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
+        try:
+            await asyncio.wait_for(proc.wait(), timeout=timeout)
+        except asyncio.TimeoutError:
+            try: proc.kill()
+            except Exception: pass
+    except FileNotFoundError:
+        return 0
+    except Exception:
+        pass
+    after = [f for f in job_dir.iterdir() if f.is_file()] if job_dir.exists() else []
+    return len([f for f in after if f.name not in before])
+
+
+async def _dl_youget(url: str, jid: str, job_dir: Path, proxy: Optional[str] = None) -> int:
+    """you-get — strong coverage of Asian sites (Bilibili, Youku, iQiyi, AcFun, Weibo,
+       Tudou, Miaopai…) and many others yt-dlp can miss."""
+    await _prog(jid, {"status":"downloading","progress":12})
+    cmd = ["you-get", "--output-dir", str(job_dir), "--no-caption"]
+    if proxy: cmd += ["--http-proxy", proxy]
+    cmd.append(url)
+    return await _subprocess_dl(cmd, jid, job_dir)
+
+
+async def _dl_streamlink(url: str, jid: str, job_dir: Path, quality: str = "best") -> int:
+    """streamlink — live streams, VODs, sports, Twitch, Picarto, many live-TV plugins."""
+    await _prog(jid, {"status":"downloading","progress":12})
+    out = _uniq(job_dir, f"{_safe(_url_title(url)) or 'stream'}.ts")
+    q = "best" if quality in ("best", "0", "") else f"{quality.replace('p','')}p,best"
+    cmd = ["streamlink", "--force", "--hls-live-restart", "-o", str(out), url, q]
+    return await _subprocess_dl(cmd, jid, job_dir)
+
+
+async def _dl_capture(req: DownloadReq, job_dir: Path):
+    """Record what plays in the headless browser (legal screen-capture for blob:/MSE
+       streams with no downloadable URL). Captures the rendered output, not the
+       encrypted source — so it does NOT circumvent DRM (and headless Chromium has no
+       Widevine CDM, so true Widevine streams will not play here)."""
+    from playwright.async_api import async_playwright
+    import tempfile as _tf
+
+    cap_dir = Path(_tf.mkdtemp(prefix="cap_"))
+    await _prog(req.job_id, {"status":"starting","progress":2})
+
+    width, height = 1280, 720
+    recorded_webm: Optional[Path] = None
+
+    # Hard ceiling so a stalled browser can never hang the worker forever
+    budget = (req.capture_seconds or 120) + 90
+
+    async def _run():
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True,
+                args=["--no-sandbox","--disable-dev-shm-usage","--autoplay-policy=no-user-gesture-required"],
+                proxy={"server": req.proxy} if req.proxy else None)
+            ctx = await browser.new_context(
+                user_agent=_ua(), viewport={"width":width,"height":height},
+                ignore_https_errors=True,
+                record_video_dir=str(cap_dir),
+                record_video_size={"width":width,"height":height},
+            )
+            page = await ctx.new_page()
+            try:
+                await page.goto(req.url, wait_until="domcontentloaded", timeout=30000)
+            except Exception: pass
+            try: await page.wait_for_load_state("load", timeout=8000)
+            except Exception: pass
+
+            # Find a <video>, make it fill the viewport, unmute and play
+            try:
+                dur = await page.evaluate("""async () => {
+                  const v = document.querySelector('video');
+                  if (!v) return 0;
+                  try { v.muted = false; } catch(e){}
+                  v.style.position='fixed'; v.style.left=0; v.style.top=0;
+                  v.style.width='100vw'; v.style.height='100vh'; v.style.zIndex=999999;
+                  v.style.background='black'; v.style.objectFit='contain';
+                  try { await v.play(); } catch(e){}
+                  return v.duration && isFinite(v.duration) ? v.duration : 0;
+                }""")
+            except Exception:
+                dur = 0
+
+            cap = req.capture_seconds or (int(dur) + 3 if dur else 60)
+            cap = max(5, min(cap, 1800))
+            await _prog(req.job_id, {"status":"downloading","progress":10})
+
+            step = max(1, cap // 18)
+            elapsed = 0
+            while elapsed < cap:
+                await page.wait_for_timeout(step * 1000)
+                elapsed += step
+                try:
+                    ended = await page.evaluate("() => { const v=document.querySelector('video'); return v ? v.ended : true }")
+                except Exception:
+                    ended = False
+                _prog_s(req.job_id, {"status":"downloading","progress":min(92, 10 + int(elapsed/cap*82))})
+                if ended: break
+
+            await ctx.close()   # finalizes the video file
+            await browser.close()
+
+    async with _render_sem:
+        try:
+            await asyncio.wait_for(_run(), timeout=budget)
+            webms = list(cap_dir.glob("*.webm"))
+            recorded_webm = webms[0] if webms else None
+        except asyncio.TimeoutError:
+            webms = list(cap_dir.glob("*.webm"))
+            recorded_webm = webms[0] if webms else None  # may have partial recording
+        except Exception as e:
+            raise Exception(f"Screen capture failed: {str(e)[:200]}")
+
+    if not recorded_webm or not recorded_webm.exists() or recorded_webm.stat().st_size < 2048:
+        raise Exception("Nothing was captured — the page may have no playable <video> "
+                        "(DRM streams will not play in this browser, so cannot be captured).")
+
+    await _prog(req.job_id, {"status":"processing","progress":95})
+    # Remux/transcode to the requested format
+    fmt = req.format if req.format in ("mp4","webm","mkv") else "mp4"
+    title = _safe(_url_title(req.url)) or "capture"
+    out = _uniq(job_dir, f"{title}_capture.{fmt}")
+    if fmt == "webm":
+        shutil.move(str(recorded_webm), str(out))
+    else:
+        proc = await asyncio.create_subprocess_exec(
+            "ffmpeg","-y","-i",str(recorded_webm),"-c:v","libx264","-preset","veryfast",
+            "-crf","23","-c:a","aac","-movflags","+faststart", str(out),
+            stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
+        await proc.wait()
+        if proc.returncode != 0 or not out.exists():
+            # fall back to keeping the raw webm
+            out = _uniq(job_dir, f"{title}_capture.webm")
+            shutil.move(str(recorded_webm), str(out))
+
+    try: shutil.rmtree(cap_dir)
+    except Exception: pass
+
+    files = [f.name for f in job_dir.iterdir() if f.is_file()]
+    await _prog(req.job_id, {"status":"completed","progress":100,"files":files})
+
+
+async def _dl_video(req: DownloadReq, job_dir: Path, cookie_file: Optional[str]):
+    # 0. Fast path: a directly-pasted media file URL (e.g. from the network tab)
+    base = req.url.split("?")[0].lower()
+    if base.endswith(_DIRECT_EXT):
+        if await _dl_direct(req.url, req.job_id, job_dir, req.format, proxy=req.proxy):
+            return
+    try:
+        await asyncio.get_event_loop().run_in_executor(
+            None, _ytdlp_dl, req.url, req.job_id, job_dir,
+            req.format, req.quality, cookie_file, req.proxy,
+            req.subtitles, req.embed_thumbnail, req.embed_metadata,
+            False, None, 1,
+            req.start_time, req.end_time, req.subtitle_langs,
+        )
+        return
+    except Exception: pass
+    # ffmpeg fallback for raw HLS/DASH/direct stream URLs
+    lower = req.url.lower()
+    if any(k in lower for k in (".m3u8",".mpd",".ts",".mp4",".webm","hls","dash","stream","/live","manifest")):
+        try:
+            await _ffmpeg_stream(req.url, req.job_id, job_dir, req.format)
+            return
+        except Exception: pass
+    # Final fallback: render page in headless browser and grab the (often hidden) media stream
+    await _prog(req.job_id, {"status":"scraping","progress":3})
+    try:
+        _imgs, vids = await asyncio.wait_for(
+            _render_media(req.url, proxy=req.proxy, scroll=True, timeout_ms=45000, want_video=True), timeout=90)
+    except Exception:
+        vids = []
+    for media_url in _rank_video(vids):
+        hdrs = _LAST_MEDIA_HEADERS.get(media_url) or {}
+        ref = hdrs.get("referer") or req.url
+        mbase = media_url.split("?")[0].lower()
+        # Direct file → reliable httpx stream with page referer; manifests → ffmpeg
+        if mbase.endswith(_DIRECT_EXT) and not mbase.endswith((".m3u8",".mpd")):
+            if await _dl_direct(media_url, req.job_id, job_dir, req.format, referer=ref, proxy=req.proxy):
+                return
+        try:
+            await _ffmpeg_stream(media_url, req.job_id, job_dir, req.format, referer=ref)
+            return
+        except Exception:
+            continue
+
+    # Extra engine tiers — each covers sites the others miss
+    for engine in (
+        lambda: _dl_gallery_dl(req.url, req.job_id, job_dir, cookie_file, req.proxy, max_items=req.max_items),
+        lambda: _dl_youget(req.url, req.job_id, job_dir, req.proxy),
+        lambda: _dl_streamlink(req.url, req.job_id, job_dir, req.quality or "best"),
+    ):
+        try:
+            if await engine() > 0:
+                files = [f.name for f in job_dir.iterdir() if f.is_file()]
+                await _prog(req.job_id, {"status":"completed","progress":100,"files":files})
+                return
+        except Exception:
+            continue
+
+    raise Exception("Could not find a downloadable video on this page (it may be DRM-protected).")
+
+
+async def _dl_playlist(req: DownloadReq, job_dir: Path, cookie_file: Optional[str]):
+    """Download a playlist / channel / social profile.
+
+    yt-dlp handles video channels/playlists. But image-based social profiles
+    (Instagram, Twitter/X media, Pixiv, Reddit, Tumblr, TikTok photo posts…) are
+    NOT video playlists — yt-dlp returns 0 files there. So we try yt-dlp first and,
+    if nothing lands on disk, fall back to gallery-dl, which is purpose-built for
+    profile/gallery scraping. This is the fix for 'profile downloader not working'."""
+    before = {f.name for f in job_dir.iterdir() if f.is_file()} if job_dir.exists() else set()
+
+    # Tier 1 — yt-dlp (videos / channels / playlists)
+    try:
+        await asyncio.get_event_loop().run_in_executor(
+            None, _ytdlp_dl, req.url, req.job_id, job_dir,
+            req.format, req.quality, cookie_file, req.proxy,
+            req.subtitles, req.embed_thumbnail, req.embed_metadata,
+            True, req.max_items, req.start_index,
+            None, None, req.subtitle_langs,
+        )
+    except Exception:
+        pass  # fall through to gallery-dl
+
+    landed = [f for f in job_dir.iterdir() if f.is_file() and f.name not in before] if job_dir.exists() else []
+    if landed:
+        return
+
+    # Tier 2 — gallery-dl (image/media profiles & galleries)
+    await _prog(req.job_id, {"status":"scraping","progress":6,
+                             "filename":"Switching to gallery engine for this profile…"})
+    n = await _dl_gallery_dl(req.url, req.job_id, job_dir, cookie_file, req.proxy,
+                             max_items=req.max_items)
+    if n == 0:
+        # Tier 3 — headless render to harvest media from a JS-driven profile page
+        try:
+            imgs, vids = await asyncio.wait_for(
+                _render_media(req.url, scroll=True, timeout_ms=45000, want_video=True), timeout=75)
+            urls = list(dict.fromkeys((vids or []) + (imgs or [])))
+            if req.max_items: urls = urls[:req.max_items]
+            for u in urls:
+                try:
+                    await _dl_direct(u, req.job_id, job_dir, "original", req.url, req.proxy)
+                except Exception:
+                    continue
+        except Exception:
+            pass
+
+
+def _ytdlp_info(url: str, flat: bool) -> dict:
+    opts = {"quiet":True,"no_warnings":True,"skip_download":True,
+            "socket_timeout":30,"extract_flat":flat,
+            "geo_bypass":True,"nocheckcertificate":True,"age_limit":99,
+            "http_headers":{"User-Agent":_ua()}}
+    with yt_dlp.YoutubeDL(opts) as ydl:
+        return ydl.extract_info(url, download=False)
+
+
+def _ytdlp_dl(
+    url: str, job_id: str, job_dir: Path,
+    fmt: str, quality: str,
+    cookie_file: Optional[str], proxy: Optional[str],
+    subtitles: bool, embed_thumb: bool, embed_meta: bool,
+    is_playlist: bool, max_items: Optional[int], start_idx: int,
+    start_time: Optional[str] = None, end_time: Optional[str] = None,
+    subtitle_langs: Optional[list] = None,
+):
+    fmt = (fmt or "mp4").lower()
+    cap = None if quality in ("best","0","") else quality.replace("p","").strip()
+
+    # Build format string
+    if fmt in ("mp3","m4a","opus","ogg","flac","wav","aac","vorbis"):
+        fstr = "bestaudio/best"
+    elif cap:
+        fstr = (f"bestvideo[height<={cap}][ext=mp4]+bestaudio[ext=m4a]"
+                f"/bestvideo[height<={cap}]+bestaudio/best[height<={cap}]")
+    elif fmt == "mp4":
+        fstr = "bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best"
+    else:
+        fstr = "bestvideo+bestaudio/best"
+
+    # Playlist-aware progress tracking
+    downloaded = [0]
+    total_items = [0]
+
+    def hook(d: dict):
+        if d["status"] == "downloading":
+            tb = d.get("total_bytes") or d.get("total_bytes_estimate") or 0
+            db = d.get("downloaded_bytes",0)
+            pct = int(db/tb*95) if tb else 0
+            if is_playlist and total_items[0] > 0:
+                # Playlist: blend item count + byte progress
+                item_pct  = int(downloaded[0]/total_items[0]*100)
+                pct = max(pct, item_pct)
+            _prog_s(job_id, {
+                "status":"downloading","progress":pct,
+                "speed":d.get("speed"),"eta":d.get("eta"),
+                "downloaded":db,"total":tb,
+                "completed_files":downloaded[0],
+                "total_files":total_items[0] or None,
+                "filename": Path(d.get("filename","")).name,
+            })
+        elif d["status"] == "finished":
+            downloaded[0] += 1
+            pct = int(downloaded[0]/max(total_items[0],1)*95) if is_playlist else 95
+            _prog_s(job_id,{"status":"processing","progress":pct,
+                            "completed_files":downloaded[0],"total_files":total_items[0] or None})
+
+    # Build postprocessors
+    pps: list = []
+    if fmt in ("mp3","m4a","opus","ogg","flac","wav","aac","vorbis"):
+        pps.append({"key":"FFmpegExtractAudio","preferredcodec":fmt,
+                    "preferredquality":"320" if fmt=="mp3" else "0"})
+    elif fmt not in ("mp4","webm","mkv","ts","avi","mov","flv","3gp","original"):
+        pps.append({"key":"FFmpegVideoConvertor","preferedformat":fmt})
+    if subtitles:
+        pps.append({"key":"FFmpegEmbedSubtitle","already_have_subtitle":False})
+    if embed_thumb:
+        pps.append({"key":"EmbedThumbnail","already_have_thumbnail":False})
+    if embed_meta:
+        pps.append({"key":"FFmpegMetadata","add_metadata":True,"add_chapters":True})
+
+    tpl = ("%(playlist_index)03d - %(title)s.%(ext)s"
+           if is_playlist else "%(title)s.%(ext)s")
+
+    opts: dict = {
+        # Core
+        "format": fstr,
+        "outtmpl": str(job_dir / tpl),
+        "progress_hooks": [hook],
+        "quiet": True,
+        "no_warnings": True,
+        "merge_output_format": fmt if fmt in ("mp4","webm","mkv") else "mp4",
+
+        # Retries & reliability
+        "retries": 15,
+        "fragment_retries": 30,
+        "extractor_retries": 10,
+        "file_access_retries": 10,
+        "socket_timeout": 120,
+        "concurrent_fragment_downloads": 16,
+        "continuedl": True,             # resume interrupted downloads
+        "http_chunk_size": 10485760,    # 10 MB chunks — beats per-request throttling
+
+        # Speed: aria2c multi-connection for plain HTTP(S) (YouTube progressive,
+        # direct files); keep yt-dlp's native concurrent fragments for HLS/DASH.
+        "external_downloader": {"http": "aria2c", "https": "aria2c", "ftp": "aria2c"},
+
+        # Access: bypass geo-blocks, SSL issues, and age gates (adult/social sites)
+        "geo_bypass": True,
+        "nocheckcertificate": True,
+        "age_limit": 99,           # confirm-age so adult sites serve content
+        "noplaylist": False,
+        "hls_prefer_native": False,  # use ffmpeg for HLS (more robust)
+
+        # Anti-blocking: randomised delays
+        "sleep_interval": 1,
+        "max_sleep_interval": 5,
+        "sleep_interval_requests": 0.5,
+
+        # Headers (rotate UA each run)
+        "http_headers": {
+            "User-Agent": _ua(),
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Accept-Encoding": "gzip, deflate, br",
+            "DNT": "1",
+        },
+
+        # aria2c: 16 parallel connections per file + resume + retries.
+        # ffmpeg: allow all protocols for HLS/DASH muxing.
+        "external_downloader_args": {
+            "aria2c": ["-x16","-s16","-k1M","--max-tries=10","--retry-wait=3",
+                       "--file-allocation=none","--auto-file-renaming=false",
+                       "--continue=true","--summary-interval=0"],
+            "ffmpeg_i": ["-protocol_whitelist","all"],
+        },
+
+        # Metadata
+        "addmetadata": embed_meta,
+        "writethumbnail": embed_thumb,
+        "writesubtitles": subtitles,
+        "writeautomaticsub": subtitles,
+        "subtitleslangs": (subtitle_langs or ["en","en-US","en-GB"]) if subtitles else [],
+
+        # Playlist
+        "ignoreerrors": True,   # skip unavailable items and continue
+        "playliststart": start_idx,
+        **({"playlistend": start_idx + max_items - 1} if max_items else {}),
+
+        # Post processors
+        "postprocessors": pps,
+    }
+
+    if cookie_file:
+        opts["cookiefile"] = cookie_file
+    if proxy:
+        opts["proxy"] = proxy
+
+    # Clip extraction — download only a time range
+    if start_time or end_time:
+        def _t2s(t: str) -> float:
+            parts = t.strip().split(":")
+            try:
+                if len(parts) == 3:
+                    return int(parts[0]) * 3600 + int(parts[1]) * 60 + float(parts[2])
+                if len(parts) == 2:
+                    return int(parts[0]) * 60 + float(parts[1])
+                return float(parts[0])
+            except (ValueError, IndexError):
+                return 0.0
+        s = _t2s(start_time) if start_time else 0.0
+        e = _t2s(end_time)   if end_time   else float("inf")
+        try:
+            from yt_dlp.utils import download_range_func
+            opts["download_ranges"]       = download_range_func(None, [(s, e)])
+            opts["force_keyframes_at_cuts"] = True
+        except Exception:
+            pass
+
+    with yt_dlp.YoutubeDL(opts) as ydl:
+        # Pre-count playlist
+        if is_playlist:
+            try:
+                info = ydl.extract_info(url, download=False)
+                entries = list(info.get("entries") or [])
+                if max_items:
+                    entries = entries[:max_items]
+                total_items[0] = len(entries)
+                _prog_s(job_id,{"status":"downloading","progress":1,
+                                "total_files":total_items[0],"completed_files":0})
+            except Exception: pass
+        ydl.download([url])
+
+    files = [f.name for f in job_dir.iterdir() if f.is_file()]
+    _prog_s(job_id,{"status":"completed","progress":100,"files":files,
+                    "completed_files":downloaded[0],"total_files":total_items[0] or len(files)})
+
+
+async def _ffmpeg_stream(url: str, jid: str, job_dir: Path, fmt: str, referer: Optional[str] = None):
+    ext = fmt if fmt in ("mp4","mkv","ts","webm") else "mp4"
+    out = job_dir / f"stream.{ext}"
+    await _prog(jid, {"status":"downloading","progress":2})
+
+    # Use the page as Referer/Origin when known (CDNs often require it for hidden URLs)
+    ref = referer or url
+    origin = _origin(ref)
+    cmd = [
+        "ffmpeg","-y",
+        "-user_agent", _ua(),
+        "-headers", f"Accept: */*\r\nOrigin: {origin}\r\nReferer: {ref}\r\n",
+        "-protocol_whitelist","file,crypto,data,http,https,tcp,tls,hls,dash",
+        "-allowed_extensions","ALL",
+        "-i", url,
+        "-c","copy","-movflags","+faststart",
+        str(out),
+    ]
+    proc = await asyncio.create_subprocess_exec(
+        *cmd, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE)
+
+    dur_re  = re.compile(r"Duration:\s*(\d+):(\d+):(\d+\.?\d*)")
+    time_re = re.compile(r"time=(\d+):(\d+):(\d+\.?\d*)")
+    total_s: Optional[float] = None
+
+    async for raw in proc.stderr:   # type: ignore
+        line = raw.decode("utf-8","ignore")
+        if total_s is None:
+            m = dur_re.search(line)
+            if m: total_s = _hms(*m.groups())
+        m = time_re.search(line)
+        if m and total_s:
+            _prog_s(jid,{"status":"downloading","progress":min(94,int(_hms(*m.groups())/total_s*94))})
+
+    await proc.wait()
+    if proc.returncode != 0:
+        raise Exception("FFmpeg stream download failed — may be DRM-protected or geo-blocked.")
+    files = [f.name for f in job_dir.iterdir() if f.is_file()]
+    await _prog(jid,{"status":"completed","progress":100,"files":files})
+
+
+async def _dl_image(req: DownloadReq, job_dir: Path):
+    await _prog(req.job_id,{"status":"downloading","progress":15})
+    async with _client(req.proxy) as c:
+        r = await c.get(req.url, timeout=60)
+        r.raise_for_status()
+    await _prog(req.job_id,{"status":"converting","progress":60})
+    data = r.content
+    ct   = (r.headers.get("content-type","image/jpeg") or "").split(";")[0].strip().lower()
+    orig_ext = _ct_ext(ct)
+    raw_name = req.url.split("/")[-1].split("?")[0] or "image"
+    if "." not in raw_name: raw_name = f"image.{orig_ext}"
+    name = _safe(raw_name); target = req.format.lower()
+    if target in ("original", orig_ext, ""):
+        path = _uniq(job_dir, name)
+        async with aiofiles.open(path,"wb") as f: await f.write(data)
+        files = [path.name]
+    else:
+        out = await asyncio.get_event_loop().run_in_executor(
+            None, _pil_convert, data, job_dir, Path(name).stem, target)
+        files = [out]
+    await _prog(req.job_id,{"status":"completed","progress":100,"files":files})
+
+
+async def _dl_page(req: DownloadReq, job_dir: Path, cookie_file: Optional[str] = None):
+    await _prog(req.job_id,{"status":"scraping","progress":3})
+
+    # Tier 1: gallery-dl — native support for galleries/social/image-boards/adult sites.
+    try:
+        n = await _dl_gallery_dl(req.url, req.job_id, job_dir, cookie_file, req.proxy,
+                                 max_items=req.max_items or MAX_PAGE_IMAGES)
+        if n > 0:
+            files = [f.name for f in job_dir.iterdir() if f.is_file()]
+            await _prog(req.job_id, {"status":"completed","progress":100,
+                                      "files":files, "total_files":len(files)})
+            return
+    except Exception:
+        pass
+
+    # Tier 2: HTML scrape (+ render fallback below)
+    async with _client(req.proxy) as c:
+        r = await c.get(req.url, timeout=30); r.raise_for_status()
+        soup = BeautifulSoup(r.text,"lxml")
+    img_urls = _scrape_imgs(soup, req.url)
+
+    # Follow next-page links (up to 10 pages)
+    visited = {req.url}
+    next_urls = _next_pages(soup, req.url)
+    for nx in next_urls[:10]:
+        if nx in visited: continue
+        visited.add(nx)
+        try:
+            async with _client(req.proxy) as c:
+                r2 = await c.get(nx, timeout=20)
+                extra = BeautifulSoup(r2.text,"lxml")
+            img_urls += _scrape_imgs(extra, nx)
+        except Exception: pass
+
+    # If static scraping found few, render with headless browser (JS sites)
+    if len(set(img_urls)) < 8:
+        try:
+            r_imgs, _ = await asyncio.wait_for(
+                _render_media(req.url, proxy=req.proxy, scroll=True, timeout_ms=45000), timeout=80)
+            img_urls += r_imgs
+        except Exception: pass
+
+    # Deduplicate, cap
+    seen: set[str] = set(); uniq: list[str] = []
+    for u in img_urls:
+        if u not in seen: seen.add(u); uniq.append(u)
+    uniq = uniq[:MAX_PAGE_IMAGES]
+
+    if not uniq:
+        await _prog(req.job_id,{"status":"failed","progress":0,"error":"No images found on page"})
+        return
+
+    total = len(uniq)
+    await _prog(req.job_id,{"status":"downloading","progress":8,"total_files":total,"completed_files":0})
+
+    img_sem = asyncio.Semaphore(15)
+    downloaded: list[str] = []; lock = asyncio.Lock()
+
+    async def _one(i: int, iurl: str):
+        async with img_sem:
+            try:
+                async with _client(req.proxy) as c:
+                    r = await c.get(iurl, timeout=20)
+                if r.status_code==200 and "image/" in (r.headers.get("content-type","") or ""):
+                    raw = iurl.split("/")[-1].split("?")[0] or f"img_{i}"
+                    if "." not in raw: raw = f"img_{i}.jpg"
+                    name = _safe(raw); target = req.format.lower()
+                    if target=="original":
+                        path = _uniq(job_dir,name)
+                        async with aiofiles.open(path,"wb") as f: await f.write(r.content)
+                        async with lock: downloaded.append(path.name)
+                    else:
+                        out = await asyncio.get_event_loop().run_in_executor(
+                            None, _pil_convert, r.content, job_dir, f"{Path(name).stem}_{i}", target)
+                        async with lock: downloaded.append(out)
+            except Exception: pass
+        pct = 8+int((i+1)/total*87)
+        async with lock: done = len(downloaded)
+        _prog_s(req.job_id,{"status":"downloading","progress":pct,
+                             "total_files":total,"completed_files":done})
+
+    await asyncio.gather(*(_one(i,u) for i,u in enumerate(uniq)))
+    await _prog(req.job_id,{"status":"completed","progress":100,
+                            "files":downloaded,"total_files":len(downloaded)})
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# HELPERS
+# ─────────────────────────────────────────────────────────────────────────────
+def _client(proxy: Optional[str] = None) -> httpx.AsyncClient:
+    return httpx.AsyncClient(
+        follow_redirects=True, http2=True, verify=VERIFY_SSL,
+        headers={**_BASE_HDR,"User-Agent":_ua()},
+        timeout=httpx.Timeout(90, connect=20),
+        limits=httpx.Limits(max_connections=50, max_keepalive_connections=20),
+        proxy=proxy or None,
+    )
+
+def _write_cookies(cookies_text: str) -> str:
+    f = tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False)
+    # If not Netscape format, auto-convert header cookie string
+    if not cookies_text.strip().startswith("#"):
+        f.write("# Netscape HTTP Cookie File\n")
+        for part in cookies_text.split(";"):
+            kv = part.strip()
+            if "=" in kv:
+                k,v = kv.split("=",1)
+                f.write(f".generic.domain\tTRUE\t/\tFALSE\t0\t{k.strip()}\t{v.strip()}\n")
+    else:
+        f.write(cookies_text)
+    f.close()
+    return f.name
+
+def _rm(p: str):
+    try: os.unlink(p)
+    except Exception: pass
+
+def _detect_stream(url: str) -> Optional[dict]:
+    lo = url.lower().split("?")[0]
+    is_hls  = lo.endswith(".m3u8") or "/hls/" in lo or "playlist.m3u8" in lo
+    is_dash = lo.endswith(".mpd")  or "/dash/" in lo
+    is_ts   = lo.endswith(".ts")
+    if is_hls or is_dash or is_ts:
+        return {"type":"video","title":_url_title(url),"thumbnail":None,"duration":None,
+                "uploader":"","extractor":"hls" if is_hls else "dash" if is_dash else "direct",
+                "qualities":[],"video_formats":["mp4","mkv","ts"],"is_stream":True}
+    return None
+
+def _scrape_imgs(soup: BeautifulSoup, base: str) -> list[str]:
+    found: list[str] = []
+    for tag in soup.find_all("img"):
+        for attr in ("src","data-src","data-original","data-lazy-src","data-srcset","data-lazy","data-hi-res","data-full-url"):
+            v = tag.get(attr,"")
+            for u in _split_srcset(v): found.append(_abs(u,base))
+    for tag in soup.find_all("source"):
+        for u in _split_srcset(tag.get("srcset","") or tag.get("data-srcset","")): found.append(_abs(u,base))
+    style_re = re.compile(r'url\(\s*["\']?(https?://[^"\')\s]{4,})["\']?\s*\)')
+    for tag in soup.find_all(True):
+        for u in style_re.findall(tag.get("style","")): found.append(u)
+    for tag in soup.find_all("meta", attrs={"property":re.compile(r"og:image|twitter:image")}):
+        v = tag.get("content","")
+        if v.startswith("http"): found.append(v)
+    for tag in soup.find_all("a", href=True):
+        href = tag["href"]
+        if re.search(r'\.(jpe?g|png|gif|webp|svg|bmp|tiff?)(\?|$)',href,re.I): found.append(_abs(href,base))
+    return [u for u in found if u.startswith("http")]
+
+def _next_pages(soup: BeautifulSoup, base: str) -> list[str]:
+    pages=[]
+    for tag in soup.find_all("a",href=True):
+        text=(tag.get_text() or "").strip().lower(); rel=str(tag.get("rel",""))
+        if "next" in text or "next" in rel or "›" in text or "»" in text or "load more" in text:
+            u=_abs(tag["href"],base)
+            if u.startswith("http") and u!=base: pages.append(u)
+    return pages
+
+def _split_srcset(s: str) -> list[str]:
+    if not s: return []
+    parts=[]
+    for chunk in s.split(","):
+        url=chunk.strip().split()[0]
+        if url and (url.startswith("http") or url.startswith("/")): parts.append(url)
+    return parts
+
+def _pil_convert(data:bytes, out_dir:Path, stem:str, target:str)->str:
+    pil_map={"jpg":"JPEG","jpeg":"JPEG","png":"PNG","webp":"WEBP","avif":"AVIF","bmp":"BMP","tiff":"TIFF"}
+    pil_fmt=pil_map.get(target,"JPEG")
+    img=Image.open(io.BytesIO(data))
+    if pil_fmt in ("JPEG","BMP") and img.mode in ("RGBA","LA","P"):
+        bg=Image.new("RGB",img.size,(255,255,255))
+        if img.mode=="P": img=img.convert("RGBA")
+        mask=img.split()[-1] if img.mode in ("RGBA","LA") else None
+        bg.paste(img,mask=mask); img=bg
+    elif img.mode=="P" and pil_fmt=="PNG": img=img.convert("RGBA")
+    elif img.mode not in ("RGB","RGBA","L","LA") and pil_fmt!="PNG": img=img.convert("RGB")
+    ext="jpg" if target=="jpeg" else target
+    path=_uniq(out_dir,f"{stem}.{ext}")
+    kw={}
+    if pil_fmt=="JPEG": kw={"quality":93,"optimize":True,"progressive":True}
+    elif pil_fmt=="WEBP": kw={"quality":90,"method":6}
+    elif pil_fmt=="PNG": kw={"optimize":True}
+    img.save(str(path),format=pil_fmt,**kw)
+    return path.name
+
+def _ct_ext(ct:str)->str:
+    return {"image/jpeg":"jpg","image/jpg":"jpg","image/png":"png","image/gif":"gif",
+            "image/webp":"webp","image/bmp":"bmp","image/tiff":"tiff",
+            "image/svg+xml":"svg","image/avif":"avif"}.get(ct,"jpg")
+
+def _safe(n:str)->str: return re.sub(r'[\\/:*?"<>|]',"_",n)[:200]
+def _uniq(d:Path,n:str)->Path:
+    p=d/n; stem,suf=Path(n).stem,Path(n).suffix; i=1
+    while p.exists(): p=d/f"{stem}_{i}{suf}"; i+=1
+    return p
+def _abs(url:str,base:str)->str:
+    if url.startswith("http"): return url
+    if url.startswith("//"): return "https:"+url
+    return urljoin(base,url)
+def _origin(url:str)->str:
+    p=urlparse(url); return f"{p.scheme}://{p.netloc}"
+def _url_title(url:str)->str: return urlparse(url).path.split("/")[-1].split("?")[0] or "stream"
+def _hms(h,m,s)->float: return float(h)*3600+float(m)*60+float(s)

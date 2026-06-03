@@ -1,0 +1,38 @@
+{
+  "name": "media-downloader-backend",
+  "version": "2.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "start": "tsx src/index.ts",
+    "build": "tsc"
+  },
+  "dependencies": {
+    "@clerk/backend": "^1.21.0",
+    "axios": "^1.9.0",
+    "bullmq": "^5.56.0",
+    "compression": "^1.8.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.5.0",
+    "express": "^5.1.0",
+    "express-rate-limit": "^7.5.0",
+    "helmet": "^8.1.0",
+    "ioredis": "^5.6.1",
+    "uuid": "^11.1.0",
+    "mysql2": "^3.14.0",
+    "archiver": "^7.0.1",
+    "multer": "^2.0.0",
+    "rss-parser": "^3.13.0"
+  },
+  "devDependencies": {
+    "@types/archiver": "^6.0.3",
+    "@types/multer": "^1.4.12",
+    "@types/compression": "^1.7.5",
+    "@types/cors": "^2.8.17",
+    "@types/express": "^5.0.1",
+    "@types/node": "^22.15.0",
+    "@types/uuid": "^10.0.0",
+    "tsx": "^4.19.4",
+    "typescript": "^5.8.3"
+  }
+}

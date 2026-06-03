@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <style>
+    body { width: 300px; margin: 0; font-family: system-ui, sans-serif; background: #0d1117; color: #f1f5f9; }
+    .hdr { display: flex; align-items: center; gap: 8px; padding: 14px; border-bottom: 1px solid #21293a; }
+    .hdr b { font-size: 15px; } .hdr .g { background: linear-gradient(135deg,#6366f1,#8b5cf6); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+    .body { padding: 14px; }
+    label { font-size: 11px; color: #9ca3af; display: block; margin-bottom: 5px; }
+    input { width: 100%; box-sizing: border-box; background: #161b27; border: 1px solid #21293a; color: #f1f5f9; border-radius: 10px; padding: 9px 11px; font-size: 13px; outline: none; }
+    input:focus { border-color: #6366f1; }
+    button { width: 100%; margin-top: 10px; background: #6366f1; color: #fff; border: 0; border-radius: 10px; padding: 10px; font-weight: 700; font-size: 13px; cursor: pointer; }
+    button:hover { background: #4f46e5; }
+    .row { margin-top: 12px; }
+    .save { background: #161b27; border: 1px solid #21293a; color: #9ca3af; font-weight: 600; }
+    .hint { font-size: 10px; color: #4b5563; margin-top: 8px; line-height: 1.5; }
+    .ok { color: #10b981; font-size: 12px; margin-top: 8px; display: none; }
+  </style>
+</head>
+<body>
+  <div class="hdr"><b>Media<span class="g">DL</span></b></div>
+  <div class="body">
+    <label>Paste a URL (video, image, file, magnet…)</label>
+    <input id="url" placeholder="https://… or magnet:…" />
+    <button id="send">⬇ Send to MediaDL</button>
+    <div id="ok" class="ok">Queued ✓ — open MediaDL to manage it.</div>
+
+    <div class="row">
+      <label>MediaDL server URL</label>
+      <input id="api" placeholder="http://localhost:4000" />
+      <button id="save" class="save">Save server URL</button>
+    </div>
+    <p class="hint">Tip: right-click any link, video, image or page on the web and choose "Download … with MediaDL" — no need to copy/paste.</p>
+  </div>
+  <script src="popup.js"></script>
+</body>
+</html>

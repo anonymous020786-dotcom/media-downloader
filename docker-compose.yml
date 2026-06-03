@@ -1,0 +1,168 @@
+services:
+
+  mysql:
+    image: mysql:8.0
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./mysql/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-rootpass123}
+      MYSQL_DATABASE: mediadl
+      MYSQL_USER: mediadl
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-mediadlpass}
+    command: >
+      --character-set-server=utf8mb4
+      --collation-server=utf8mb4_unicode_ci
+      --default-authentication-plugin=mysql_native_password
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-prootpass123"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options: { max-size: "5m", max-file: "3" }
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: >
+      redis-server
+      --maxmemory 512mb
+      --maxmemory-policy noeviction
+      --save 60 1000
+      --loglevel warning
+      --tcp-keepalive 60
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options: { max-size: "5m", max-file: "2" }
+
+  python-service:
+    build:
+      context: ./python-service
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./downloads:/downloads
+    environment:
+      REDIS_URL: redis://redis:6379
+      DOWNLOAD_DIR: /downloads
+      MAX_CONCURRENT_DOWNLOADS: "5"
+      MAX_PAGE_IMAGES: "2000"
+      VERIFY_SSL: "true"
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    ports:
+      - "4000:4000"
+    volumes:
+      - ./downloads:/downloads
+    environment:
+      REDIS_URL: redis://redis:6379
+      PYTHON_SERVICE_URL: http://python-service:8000
+      DOWNLOAD_DIR: /downloads
+      PORT: "4000"
+      WORKER_CONCURRENCY: "5"
+      NODE_ENV: production
+      MYSQL_HOST: mysql
+      MYSQL_PORT: "3306"
+      MYSQL_DATABASE: mediadl
+      MYSQL_USER: mediadl
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-mediadlpass}
+      # Admin auth: verify Clerk session tokens server-side
+      CLERK_SECRET_KEY: ${CLERK_SECRET_KEY}
+      ADMIN_EMAILS: ${ADMIN_EMAILS:-}
+      TMDB_API_KEY: ${TMDB_API_KEY:-}
+      TMDB_ACCESS_TOKEN: ${TMDB_ACCESS_TOKEN:-}
+    depends_on:
+      redis:
+        condition: service_healthy
+      python-service:
+        condition: service_healthy
+      mysql:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:4000/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: http://localhost:4000
+        NEXT_PUBLIC_SITE_URL: http://localhost:3000
+        NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY}
+        NEXT_PUBLIC_GA_ID: ${NEXT_PUBLIC_GA_ID:-}
+        NEXT_PUBLIC_RECAPTCHA_SITE_KEY: ${NEXT_PUBLIC_RECAPTCHA_SITE_KEY:-}
+        NEXT_PUBLIC_ADSENSE_CLIENT: ${NEXT_PUBLIC_ADSENSE_CLIENT:-}
+        NEXT_PUBLIC_TAWK_PROPERTY_ID: ${NEXT_PUBLIC_TAWK_PROPERTY_ID:-}
+        NEXT_PUBLIC_WHATSAPP_NUMBER: ${NEXT_PUBLIC_WHATSAPP_NUMBER:-+1234567890}
+    ports:
+      - "3000:3000"
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:4000
+      BACKEND_INTERNAL_URL: http://backend:4000
+      NEXT_PUBLIC_SITE_URL: http://localhost:3000
+      NODE_ENV: production
+      CLERK_SECRET_KEY: ${CLERK_SECRET_KEY}
+      NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY}
+      ADMIN_EMAILS: ${ADMIN_EMAILS:-}
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+  nginx:
+    image: nginx:1.27-alpine
+    ports:
+      - "8080:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - frontend
+      - backend
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options: { max-size: "5m", max-file: "2" }
+
+volumes:
+  mysql_data:
+  redis_data:

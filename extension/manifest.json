@@ -1,0 +1,15 @@
+{
+  "manifest_version": 3,
+  "name": "MediaDL — Send to Downloader",
+  "version": "1.0.0",
+  "description": "Right-click any link, video, image, or page and send it to your MediaDL server to download.",
+  "permissions": ["contextMenus", "activeTab", "storage", "notifications"],
+  "host_permissions": ["http://localhost:4000/*", "https://*/*", "http://*/*"],
+  "background": { "service_worker": "background.js" },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Send to MediaDL",
+    "default_icon": { "48": "icon.png", "128": "icon.png" }
+  },
+  "icons": { "48": "icon.png", "128": "icon.png" }
+}
