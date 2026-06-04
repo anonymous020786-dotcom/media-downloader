@@ -9,6 +9,7 @@ import TawkChat from '@/components/widgets/TawkChat'
 import AuthSync from '@/components/auth/AuthSync'
 import LanguageProvider from '@/components/i18n/LanguageProvider'
 import PWAInstall from '@/components/widgets/PWAInstall'
+import CookieBanner from '@/components/widgets/CookieBanner'
 import './globals.css'
 
 const SITE  = process.env.NEXT_PUBLIC_SITE_URL  ?? 'https://mediadl.app'
@@ -27,13 +28,13 @@ export const metadata: Metadata = {
     siteName:    'MediaDL',
     title:       'MediaDL — Download Any Video or Image from Any Website',
     description: 'Free online downloader. 1000+ sites, unlimited downloads, HD/4K/8K, MP4/MP3/WebM, playlists, bulk scraping.',
-    images: [{ url: '/og-image.jpg', width: 1200, height: 630, alt: 'MediaDL' }],
+    images: [{ url: '/og-image.svg', width: 1200, height: 630, alt: 'MediaDL' }],
   },
   twitter: {
     card:        'summary_large_image',
     title:       'MediaDL — Download Any Video or Image',
     description: 'Free online downloader. 1000+ sites, unlimited, no limits.',
-    images:      ['/og-image.jpg'],
+    images:      ['/og-image.svg'],
   },
   robots:  { index: true, follow: true, googleBot: { index: true, follow: true, 'max-image-preview': 'large' } },
   icons:   { icon: '/logo.svg', shortcut: '/logo.svg', apple: '/logo.svg' },
@@ -99,14 +100,33 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         )}
       </head>
       <body>
-        {/* Google Analytics */}
+        {/* Google Analytics — loads only after analytics consent granted */}
         {GA_ID && (
-          <>
-            <Script src={`https://www.googletagmanager.com/gtag/js?id=${GA_ID}`} strategy="afterInteractive" />
-            <Script id="ga" strategy="afterInteractive">
-              {`window.dataLayer=window.dataLayer||[];function gtag(){dataLayer.push(arguments);}gtag('js',new Date());gtag('config','${GA_ID}',{page_path:window.location.pathname});`}
-            </Script>
-          </>
+          <Script id="ga-consent" strategy="afterInteractive">
+            {`
+              (function(){
+                function loadGA(){
+                  if(window.__ga_loaded) return;
+                  window.__ga_loaded=true;
+                  var s=document.createElement('script');
+                  s.src='https://www.googletagmanager.com/gtag/js?id=${GA_ID}';
+                  s.async=true; document.head.appendChild(s);
+                  window.dataLayer=window.dataLayer||[];
+                  function gtag(){dataLayer.push(arguments);}
+                  window.gtag=gtag;
+                  gtag('js',new Date());
+                  gtag('config','${GA_ID}',{page_path:window.location.pathname});
+                }
+                try{
+                  var c=JSON.parse(localStorage.getItem('cookie_consent')||'{}');
+                  if(c.analytics) loadGA();
+                }catch(e){}
+                window.addEventListener('cookie-consent',function(e){
+                  if(e.detail&&e.detail.analytics) loadGA();
+                });
+              })();
+            `}
+          </Script>
         )}
 
         {/* Service worker registration */}
@@ -130,6 +150,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             toastOptions={{ style: { fontSize: '13px' } }}
           />
           <PWAInstall />
+          <CookieBanner />
           </LanguageProvider>
         </ThemeProvider>
       </body>

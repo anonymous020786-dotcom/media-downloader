@@ -1,0 +1,67 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#0a0e1a"/>
+      <stop offset="100%" style="stop-color:#111827"/>
+    </linearGradient>
+    <linearGradient id="brand" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#6366f1"/>
+      <stop offset="50%" style="stop-color:#8b5cf6"/>
+      <stop offset="100%" style="stop-color:#06b6d4"/>
+    </linearGradient>
+    <filter id="glow">
+      <feGaussianBlur stdDeviation="40" result="blur"/>
+      <feComposite in="SourceGraphic" in2="blur" operator="over"/>
+    </filter>
+  </defs>
+
+  <!-- Background -->
+  <rect width="1200" height="630" fill="url(#bg)"/>
+
+  <!-- Glow blobs -->
+  <circle cx="200" cy="200" r="200" fill="#6366f1" opacity="0.12" filter="url(#glow)"/>
+  <circle cx="1050" cy="450" r="180" fill="#8b5cf6" opacity="0.10" filter="url(#glow)"/>
+  <circle cx="650" cy="580" r="150" fill="#06b6d4" opacity="0.07" filter="url(#glow)"/>
+
+  <!-- Border frame -->
+  <rect x="40" y="40" width="1120" height="550" rx="24" fill="none" stroke="#1f2d42" stroke-width="1.5"/>
+
+  <!-- Logo icon -->
+  <rect x="80" y="80" width="64" height="64" rx="16" fill="#6366f1"/>
+  <text x="112" y="122" font-family="system-ui,sans-serif" font-size="32" font-weight="900" fill="white" text-anchor="middle">▼</text>
+
+  <!-- Brand name -->
+  <text x="160" y="122" font-family="system-ui,sans-serif" font-size="36" font-weight="900" fill="white">Media</text>
+  <text x="296" y="122" font-family="system-ui,sans-serif" font-size="36" font-weight="900" fill="url(#brand)">DL</text>
+
+  <!-- Main headline -->
+  <text x="80" y="250" font-family="system-ui,sans-serif" font-size="72" font-weight="900" fill="white">Download Any</text>
+  <text x="80" y="340" font-family="system-ui,sans-serif" font-size="72" font-weight="900" fill="url(#brand)">Video or Image</text>
+
+  <!-- Subline -->
+  <text x="80" y="410" font-family="system-ui,sans-serif" font-size="28" fill="#9ca3af">Free · 1,000+ Sites · No Registration · HD / 4K / 8K</text>
+
+  <!-- Platform pills -->
+  <g font-family="system-ui,sans-serif" font-size="18" font-weight="700">
+    <rect x="80" y="450" width="130" height="38" rx="10" fill="#1f2d42"/>
+    <text x="145" y="473" fill="#f9fafb" text-anchor="middle">▶ YouTube</text>
+
+    <rect x="224" y="450" width="148" height="38" rx="10" fill="#1f2d42"/>
+    <text x="298" y="473" fill="#f9fafb" text-anchor="middle">📷 Instagram</text>
+
+    <rect x="386" y="450" width="126" height="38" rx="10" fill="#1f2d42"/>
+    <text x="449" y="473" fill="#f9fafb" text-anchor="middle">♪ TikTok</text>
+
+    <rect x="526" y="450" width="134" height="38" rx="10" fill="#1f2d42"/>
+    <text x="593" y="473" fill="#f9fafb" text-anchor="middle">𝕏 Twitter</text>
+
+    <rect x="674" y="450" width="150" height="38" rx="10" fill="#1f2d42"/>
+    <text x="749" y="473" fill="#f9fafb" text-anchor="middle">f Facebook</text>
+
+    <rect x="838" y="450" width="152" height="38" rx="10" fill="#1f2d42"/>
+    <text x="914" y="473" fill="#6366f1" text-anchor="middle">+ 1,000 more</text>
+  </g>
+
+  <!-- URL badge -->
+  <text x="1120" y="590" font-family="system-ui,sans-serif" font-size="20" fill="#4b5563" text-anchor="end">mediadl.app</text>
+</svg>
