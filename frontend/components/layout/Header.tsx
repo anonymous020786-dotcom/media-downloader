@@ -8,6 +8,7 @@ import ThemeChanger from '@/components/widgets/ThemeChanger'
 import LanguageSwitcher from '@/components/i18n/LanguageSwitcher'
 import NotifBell from '@/components/widgets/NotifBell'
 import AccessibilityPanel from '@/components/widgets/AccessibilityPanel'
+import CountrySwitcher from '@/components/widgets/CountrySwitcher'
 
 const NAV = [
   { label: 'Downloaders', href: '#', children: [
@@ -46,7 +47,7 @@ export default function Header() {
 
         {/* Logo */}
         <Link href="/" className="flex items-center gap-2.5 shrink-0">
-          <Image src="/logo.svg" alt="MediaDL" width={32} height={32} className="rounded-xl" />
+          <Image src="/logo.svg" alt="MediaDL" width={32} height={32} className="rounded-xl" priority />
           <span className="font-black text-[var(--text)] text-lg tracking-tight">
             Media<span className="gradient-text">DL</span>
           </span>
@@ -64,7 +65,7 @@ export default function Header() {
                   {item.label}<ChevronDown size={13} />
                 </button>
                 {dropdown && (
-                  <div className="absolute top-full left-0 mt-1 w-52 bg-[var(--bg-card)] border border-[var(--border)] rounded-2xl shadow-2xl py-1.5 z-50">
+                  <div className="absolute top-full left-0 mt-1 w-52 bg-[var(--bg-card)] border border-[var(--border)] rounded-2xl shadow-2xl py-1.5 z-50 max-h-[60vh] overflow-y-auto">
                     {item.children.map((c) => (
                       <Link key={c.href} href={c.href}
                         className="block px-4 py-2 text-sm text-[var(--text-2)] hover:text-[var(--text)] hover:bg-[var(--bg-hover)] transition-colors">
@@ -86,6 +87,7 @@ export default function Header() {
         {/* Right actions */}
         <div className="ml-auto flex items-center gap-2">
           <LanguageSwitcher />
+          <CountrySwitcher />
           <AccessibilityPanel />
           <NotifBell />
           <ThemeChanger />
@@ -107,15 +109,18 @@ export default function Header() {
           )}
 
           <button onClick={() => setMobileOpen(!mobileOpen)}
+            aria-label={mobileOpen ? 'Close menu' : 'Open menu'}
+            aria-expanded={mobileOpen}
+            aria-controls="mobile-menu"
             className="md:hidden p-2 rounded-xl border border-[var(--border)] text-[var(--text-2)]">
-            {mobileOpen ? <X size={18} /> : <Menu size={18} />}
+            {mobileOpen ? <X size={18} aria-hidden="true" /> : <Menu size={18} aria-hidden="true" />}
           </button>
         </div>
       </div>
 
       {/* Mobile menu */}
       {mobileOpen && (
-        <div className="md:hidden border-t border-[var(--border)] bg-[var(--bg-surface)] px-4 py-4 space-y-1">
+        <div id="mobile-menu" className="md:hidden border-t border-[var(--border)] bg-[var(--bg-surface)] px-4 py-4 space-y-1">
           {NAV.map((item) =>
             item.children ? (
               <div key={item.label}>

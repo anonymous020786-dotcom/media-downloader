@@ -1,3 +1,4 @@
+@import url('https://fonts.googleapis.com/css2?family=Lexend:wght@300;400;500;600;700;800;900&display=swap');
 @import "tailwindcss";
 
 /* ── Design tokens ─────────────────────────────────────────────────────────── */
@@ -83,8 +84,7 @@ html[data-focus-visible="true"] :focus-visible {
   box-shadow: 0 0 0 6px rgba(250, 204, 21, 0.25) !important;
 }
 
-/* Dyslexia-friendly font (OpenDyslexic via Google Fonts fallback) */
-@import url('https://fonts.googleapis.com/css2?family=Lexend:wght@300;400;500;600;700;800;900&display=swap');
+/* Dyslexia-friendly font */
 html[data-dyslexia-font="true"],
 html[data-dyslexia-font="true"] body,
 html[data-dyslexia-font="true"] * {

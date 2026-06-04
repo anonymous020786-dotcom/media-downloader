@@ -14,6 +14,7 @@ import SearchPanel from './download/SearchPanel'
 import type { AnalyzeResult, PlaylistInfo, DownloadMode, Job, AdvancedOptions as Opts } from '@/lib/types'
 import { DEFAULT_ADVANCED } from '@/lib/types'
 import { analyzeUrl, analyzePlaylist, queueDownload, previewPage, listPlaylist, fmtDuration, fmtBytes } from '@/lib/api'
+import { getRecaptchaToken } from '@/lib/recaptcha'
 import { FileDown, SearchCheck } from 'lucide-react'
 import { toast } from 'sonner'
 
@@ -118,6 +119,7 @@ export default function URLInputSection({ onQueued, initialUrl = '' }: Props) {
     if (!u) return
     setQueueing(true)
     try {
+      const recaptchaToken = await getRecaptchaToken('download')
       const mediaType = isPlaylistMode ? (mode === 'profile' ? 'profile' : 'playlist')
                       : info?.type === 'image'   ? 'image'
                       : info?.type === 'file'    ? 'file'
@@ -126,6 +128,7 @@ export default function URLInputSection({ onQueued, initialUrl = '' }: Props) {
                       : 'video'
       const { jobId } = await queueDownload({
         url: u, mediaType, format,
+        recaptchaToken: recaptchaToken ?? undefined,
         quality: mediaType === 'video' || isPlaylistMode ? quality : undefined,
         title: plInfo?.title ?? info?.title, thumbnail: plInfo?.thumbnail ?? info?.thumbnail,
         maxItems: opts.maxItems, startIndex: 1,

@@ -54,6 +54,7 @@ export const searchWeb = (query: string, kind: 'web'|'file'|'image'|'video' = 'w
 export const queueDownload = (payload: {
   url: string; mediaType: string; format: string; quality?: string
   title?: string; thumbnail?: string; delaySeconds?: number; repeatEvery?: string
+  recaptchaToken?: string
 } & Partial<AdvancedOptions & { maxItems: number | null; startIndex: number }>) =>
   _f<{ jobId: string; scheduled?: boolean; recurring?: string }>('/api/download', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -180,7 +181,7 @@ export const fetchTestimonials= () => _f<Testimonial[]>('/api/content/testimonia
 export const fetchContentStats= () => _f<{total_downloads:string|number; total_sites:string}>('/api/content/stats')
 export interface SupportedSites { named_extractors:number; by_engine:Record<string,number>; generic_fallback:boolean; note:string }
 export const fetchSupportedSites = () => _f<SupportedSites>('/api/content/sites')
-export const submitContact    = (data: {name:string;email:string;subject?:string;message:string}) =>
+export const submitContact    = (data: {name:string;email:string;subject?:string;message:string;recaptchaToken?:string}) =>
   _f<{success:boolean;message:string}>('/api/content/contact', {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data),
   })
