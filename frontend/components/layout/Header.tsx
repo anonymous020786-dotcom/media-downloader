@@ -7,6 +7,7 @@ import { UserButton, useUser } from '@clerk/nextjs'
 import ThemeChanger from '@/components/widgets/ThemeChanger'
 import LanguageSwitcher from '@/components/i18n/LanguageSwitcher'
 import NotifBell from '@/components/widgets/NotifBell'
+import AccessibilityPanel from '@/components/widgets/AccessibilityPanel'
 
 const NAV = [
   { label: 'Downloaders', href: '#', children: [
@@ -85,6 +86,7 @@ export default function Header() {
         {/* Right actions */}
         <div className="ml-auto flex items-center gap-2">
           <LanguageSwitcher />
+          <AccessibilityPanel />
           <NotifBell />
           <ThemeChanger />
 

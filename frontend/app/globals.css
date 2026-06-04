@@ -44,6 +44,67 @@
   --text-ghost: #d1d5db;
 }
 
+/* ── Accessibility defaults ─────────────────────────────────────────────────── */
+:root {
+  --a11y-font-size:      16px;
+  --a11y-line-height:    1.5;
+  --a11y-letter-spacing: normal;
+}
+
+/* Font size */
+html { font-size: var(--a11y-font-size); }
+
+/* Reduce motion */
+html[data-reduce-motion="true"] *,
+html[data-reduce-motion="true"] *::before,
+html[data-reduce-motion="true"] *::after {
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
+  scroll-behavior: auto !important;
+}
+
+/* High contrast */
+html[data-high-contrast="true"] {
+  --text:   #ffffff;
+  --text-2: #e5e7eb;
+  --text-3: #d1d5db;
+  --border: #6b7280;
+  --bg-card: #000000;
+  --bg-hover: #111111;
+  filter: contrast(1.15);
+}
+
+/* Focus visible highlight */
+html[data-focus-visible="true"] :focus-visible {
+  outline: 3px solid #facc15 !important;
+  outline-offset: 3px !important;
+  border-radius: 4px !important;
+  box-shadow: 0 0 0 6px rgba(250, 204, 21, 0.25) !important;
+}
+
+/* Dyslexia-friendly font (OpenDyslexic via Google Fonts fallback) */
+@import url('https://fonts.googleapis.com/css2?family=Lexend:wght@300;400;500;600;700;800;900&display=swap');
+html[data-dyslexia-font="true"],
+html[data-dyslexia-font="true"] body,
+html[data-dyslexia-font="true"] * {
+  font-family: 'Lexend', sans-serif !important;
+  letter-spacing: 0.05em;
+  word-spacing: 0.1em;
+}
+
+/* Large cursor */
+html[data-cursor-large="true"],
+html[data-cursor-large="true"] * {
+  cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='32' height='32' viewBox='0 0 32 32'%3E%3Cpath d='M4 2l20 12-8 2-4 8z' fill='white' stroke='black' stroke-width='2'/%3E%3C/svg%3E") 4 2, auto !important;
+}
+
+/* Line height + letter spacing applied via body */
+body {
+  line-height: var(--a11y-line-height);
+  letter-spacing: var(--a11y-letter-spacing);
+}
+
 /* ── Base ──────────────────────────────────────────────────────────────────── */
 html {
   background: var(--bg);
