@@ -79,7 +79,9 @@ async def lifespan(app: FastAPI):
     _sredis.close()
 
 app = FastAPI(lifespan=lifespan, title="MediaDL", version="3.0.0")
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+_raw_origins = os.getenv("ALLOWED_ORIGINS", "*")
+_cors_origins = ["*"] if _raw_origins == "*" else [o.strip() for o in _raw_origins.split(",") if o.strip()]
+app.add_middleware(CORSMiddleware, allow_origins=_cors_origins, allow_methods=["POST", "GET"], allow_headers=["*"])
 
 # ── Models ────────────────────────────────────────────────────────────────────
 class AnalyzeReq(BaseModel):

@@ -1,0 +1,61 @@
+# Production overrides — used on Hostinger VPS:
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+#
+# What this file does:
+#   • Closes all internal ports (mysql, redis, python-service, backend)
+#   • Opens 80 + 443 on nginx only
+#   • Mounts Let's Encrypt certs into nginx
+#   • Uses the production nginx config
+#   • Injects real domain URLs into frontend build args + environment
+#   • Uses production Clerk keys (pk_live_ / sk_live_) from .env.prod
+
+services:
+
+  mysql:
+    ports: !reset []
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "mediadl", "-p${MYSQL_PASSWORD}"]
+
+  redis:
+    ports: !reset []
+
+  python-service:
+    ports: !reset []
+    environment:
+      ALLOWED_ORIGINS: "https://${DOMAIN}"
+
+  backend:
+    ports: !reset []
+    environment:
+      NODE_ENV: production
+      FRONTEND_URL: "https://${DOMAIN}"
+
+  frontend:
+    ports: !reset []
+    build:
+      args:
+        NEXT_PUBLIC_API_URL: "https://${DOMAIN}"
+        NEXT_PUBLIC_SITE_URL: "https://${DOMAIN}"
+    environment:
+      NEXT_PUBLIC_API_URL: "https://${DOMAIN}"
+      NEXT_PUBLIC_SITE_URL: "https://${DOMAIN}"
+
+  nginx:
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.prod.conf:/etc/nginx/nginx.conf:ro
+      - /etc/letsencrypt:/etc/letsencrypt:ro
+      - certbot_www:/var/www/certbot:ro
+
+  certbot:
+    image: certbot/certbot:latest
+    volumes:
+      - /etc/letsencrypt:/etc/letsencrypt
+      - certbot_www:/var/www/certbot
+    entrypoint: /bin/sh -c "trap exit TERM; while :; do certbot renew --webroot -w /var/www/certbot --quiet; sleep 12h & wait $${!}; done"
+    restart: unless-stopped
+
+volumes:
+  certbot_www:
