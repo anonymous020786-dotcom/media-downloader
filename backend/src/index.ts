@@ -14,6 +14,7 @@ import contentRouter  from './routes/content.js'
 import tmdbRouter     from './routes/tmdb.js'
 import newsRouter     from './routes/news.js'
 import { startWorker } from './workers/downloadWorker.js'
+import { runMigrations } from './db.js'
 
 const app  = express()
 const PORT = Number(process.env.PORT ?? 4000)
@@ -33,7 +34,7 @@ app.use(helmet({
 }))
 app.use(cors({
   origin: '*',
-  methods: ['GET', 'POST', 'DELETE', 'OPTIONS'],
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'X-Request-Id', 'X-User-Id', 'Authorization'],
   maxAge: 86400,
 }))
@@ -125,8 +126,9 @@ app.use((err: Error, _req: express.Request, res: express.Response, _next: expres
   res.status(500).json({ error: ENV === 'production' ? 'Internal server error' : err.message })
 })
 
-const server = app.listen(PORT, () => {
+const server = app.listen(PORT, async () => {
   console.log(`[server] v3.0.0 (${ENV}) → http://localhost:${PORT}`)
+  try { await runMigrations(); console.log('[db] migrations ok') } catch (e: any) { console.error('[db] migration failed:', e.message) }
   startWorker()
 })
 

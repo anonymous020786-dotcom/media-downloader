@@ -192,8 +192,16 @@ export const fetchHealthDeep = () => _f<DeepHealth>('/health/deep')
 export const adminEngines = () => _f<{ engines: Record<string,string|null> }>('/api/content/admin/engines')
 export const adminUpdateEngines = () => _f<{ before: Record<string,string|null>; after: Record<string,string|null>; changed: string[]; note: string }>('/api/content/admin/engines/update', { method: 'POST' })
 export const adminDownloads = () => _f<any>('/api/content/admin/downloads')
-export const adminMessages  = () => _f<any[]>('/api/content/admin/messages')
+export const adminMessages      = () => _f<{ messages: any[]; unread: number }>('/api/content/admin/messages')
 export const adminDeleteMessage = (id: number) => _f(`/api/content/admin/messages/${id}`, { method: 'DELETE' })
+export const adminMarkMessage   = (id: number, status: 'read' | 'unread') =>
+  _f(`/api/content/admin/messages/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status }) })
+export const adminReplyMessage  = (id: number, replyText: string) =>
+  _f<{ success: boolean }>(`/api/content/admin/messages/${id}/reply`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ replyText }) })
+export const adminEmailConfig   = () => _f<{ configured: boolean; provider: string; from: string; admin_to: string }>('/api/content/admin/email-config')
+export const adminTestEmail     = (to?: string) =>
+  _f<{ success: boolean }>('/api/content/admin/email-test', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ to }) })
+export const adminAnalytics     = (days = 30) => _f<any>(`/api/content/admin/analytics?days=${days}`)
 
 export const adminSettings = () => _f<{key_name:string;value:string;updated_at:string}[]>('/api/content/admin/settings')
 export const adminUpdateSettings = (updates: Record<string,string>) =>

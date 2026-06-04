@@ -6,6 +6,7 @@ import fs from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { query } from '../db.js'
 import { requireAdmin } from '../middleware/requireAdmin.js'
+import { sendEmail, isEmailConfigured, tplNewMessage, tplReply, tplAutoReply } from '../services/email.js'
 
 const router = Router()
 const PYTHON = process.env.PYTHON_SERVICE_URL ?? 'http://localhost:8000'
@@ -29,7 +30,7 @@ const upload = multer({
       cb(null, `${Date.now()}-${randomUUID().slice(0, 8)}${ext}`)
     },
   }),
-  limits: { fileSize: 50 * 1024 * 1024 }, // 50 MB
+  limits: { fileSize: 50 * 1024 * 1024 },
   fileFilter: (_r, file, cb) =>
     ALLOWED_UPLOAD.has(file.mimetype)
       ? cb(null, true)
@@ -46,7 +47,7 @@ router.post('/admin/upload', upload.single('file'), (req, res) => {
   })
 })
 
-// ── Download engines: versions + one-click self-update ────────────────────────
+// ── Download engines ──────────────────────────────────────────────────────────
 router.get('/admin/engines', async (_req, res) => {
   try {
     const { data } = await axios.get(`${PYTHON}/engines`, { timeout: 15_000 })
@@ -54,7 +55,6 @@ router.get('/admin/engines', async (_req, res) => {
   } catch (e: any) { res.status(502).json({ error: e.message }) }
 })
 
-// Public: live count of supported sites (real extractor registries + generic fallback)
 let _sitesCache: { data: any; at: number } | null = null
 router.get('/sites', async (_req, res) => {
   try {
@@ -73,8 +73,6 @@ router.post('/admin/engines/update', async (_req, res) => {
 })
 
 // ── Blog ──────────────────────────────────────────────────────────────────────
-// Paginated + searchable + filterable. Backward-compatible: with no params it
-// returns the first page. Query: ?q=&category=&tag=&sort=&page=&limit=
 router.get('/blog', async (req, res) => {
   try {
     const q        = String(req.query.q ?? '').trim()
@@ -105,11 +103,7 @@ router.get('/blog', async (req, res) => {
     const cats = await query<any>(
       'SELECT category, COUNT(*) AS count FROM blog_posts WHERE published=1 GROUP BY category ORDER BY count DESC'
     )
-    res.json({
-      posts, total, page, limit,
-      pages: Math.max(1, Math.ceil(total / limit)),
-      categories: cats,
-    })
+    res.json({ posts, total, page, limit, pages: Math.max(1, Math.ceil(total / limit)), categories: cats })
   } catch (e: any) { res.status(500).json({ error: e.message }) }
 })
 
@@ -168,23 +162,44 @@ router.post('/contact', async (req, res) => {
   if (!name || !email || !message) {
     res.status(400).json({ error: 'name, email and message are required' }); return
   }
-  // Basic email validation
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
     res.status(400).json({ error: 'Invalid email address' }); return
   }
   try {
-    await query(
+    const result = await query<any>(
       'INSERT INTO contact_messages (name,email,subject,message) VALUES (?,?,?,?)',
       [name.slice(0,150), email.slice(0,200), (subject||'').slice(0,300), message.slice(0,5000)]
     )
-    res.json({ success: true, message: 'Message sent. We\'ll reply within 24 hours.' })
+    const msgId = (result as any).insertId
+
+    // Notify admin
+    const adminEmail = process.env.SMTP_ADMIN_TO || process.env.SMTP_USER
+    if (adminEmail && isEmailConfigured()) {
+      sendEmail({
+        to:      adminEmail,
+        subject: `[MediaDL] New message from ${name}${subject ? `: ${subject}` : ''}`,
+        html:    tplNewMessage({ name, email, subject, message }),
+      }).catch(() => {}) // fire-and-forget
+    }
+
+    // Auto-reply to sender
+    if (isEmailConfigured()) {
+      sendEmail({
+        to:      email,
+        subject: `We received your message — MediaDL Support`,
+        html:    tplAutoReply({ name }),
+        replyTo: process.env.SMTP_ADMIN_TO || process.env.SMTP_USER,
+      }).catch(() => {})
+    }
+
+    res.json({ success: true, id: msgId, message: "Message sent. We'll reply within 24 hours." })
   } catch (e: any) { res.status(500).json({ error: e.message }) }
 })
 
 // ── Per-user download history ─────────────────────────────────────────────────
 router.get('/history', async (req, res) => {
   const userId = req.header('X-User-Id')
-  if (!userId) { res.json([]); return }   // not signed in → empty history
+  if (!userId) { res.json([]); return }
   try {
     const rows = await query(
       'SELECT id, url, media_type, format, quality, status, created_at FROM download_stats WHERE user_id=? ORDER BY created_at DESC LIMIT 200',
@@ -203,7 +218,6 @@ router.delete('/history', async (req, res) => {
   } catch (e: any) { res.status(500).json({ error: e.message }) }
 })
 
-// ── Record download stat ──────────────────────────────────────────────────────
 router.post('/track', async (req, res) => {
   const { url, media_type, format, quality, status } = req.body
   try {
@@ -212,15 +226,99 @@ router.post('/track', async (req, res) => {
       [url?.slice(0,2000), media_type, format, quality, status || 'queued']
     )
     res.json({ success: true })
-  } catch { res.json({ success: false }) }  // non-critical, silently ignore
+  } catch { res.json({ success: false }) }
 })
 
-// ── Admin: list messages ──────────────────────────────────────────────────────
-router.get('/admin/messages', async (_req, res) => {
+// ── Admin: list messages (with unread count) ──────────────────────────────────
+router.get('/admin/messages', async (req, res) => {
   try {
-    const msgs = await query('SELECT * FROM contact_messages ORDER BY created_at DESC LIMIT 100')
-    res.json(msgs)
+    const status = req.query.status as string | undefined
+    const where  = status ? 'WHERE status = ?' : ''
+    const params = status ? [status] : []
+    const msgs   = await query(`SELECT * FROM contact_messages ${where} ORDER BY created_at DESC LIMIT 200`, params)
+    const [{ unread }] = await query<any>("SELECT COUNT(*) AS unread FROM contact_messages WHERE status='unread'")
+    res.json({ messages: msgs, unread: unread ?? 0 })
   } catch (e: any) { res.status(500).json({ error: e.message }) }
+})
+
+// ── Admin: mark message read/unread ──────────────────────────────────────────
+router.patch('/admin/messages/:id', async (req, res) => {
+  const { status, admin_note } = req.body as { status?: string; admin_note?: string }
+  try {
+    const sets: string[] = []
+    const vals: any[]    = []
+    if (status) {
+      sets.push('status=?')
+      vals.push(status)
+      if (status === 'read') { sets.push('read_at=COALESCE(read_at,NOW())'); }
+    }
+    if (admin_note !== undefined) { sets.push('admin_note=?'); vals.push(admin_note.slice(0,2000)) }
+    if (sets.length === 0) { res.status(400).json({ error: 'Nothing to update' }); return }
+    vals.push(req.params.id)
+    await query(`UPDATE contact_messages SET ${sets.join(',')} WHERE id=?`, vals)
+    res.json({ success: true })
+  } catch (e: any) { res.status(500).json({ error: e.message }) }
+})
+
+// ── Admin: reply to message via email ────────────────────────────────────────
+router.post('/admin/messages/:id/reply', async (req, res) => {
+  const { replyText } = req.body as { replyText: string }
+  if (!replyText?.trim()) { res.status(400).json({ error: 'replyText is required' }); return }
+  if (!isEmailConfigured()) { res.status(503).json({ error: 'Email not configured. Add SMTP_USER + SMTP_PASS to .env' }); return }
+
+  try {
+    const [msg] = await query<any>('SELECT * FROM contact_messages WHERE id=?', [req.params.id])
+    if (!msg) { res.status(404).json({ error: 'Message not found' }); return }
+
+    const adminId = (req as any).adminUserId ?? 'admin'
+    const result  = await sendEmail({
+      to:      msg.email,
+      subject: `Re: ${msg.subject || 'Your message to MediaDL Support'}`,
+      html:    tplReply({ name: msg.name, originalMessage: msg.message, replyText }),
+      replyTo: process.env.SMTP_ADMIN_TO || process.env.SMTP_USER,
+    })
+
+    if (!result.ok) { res.status(502).json({ error: result.error }); return }
+
+    await query(
+      'UPDATE contact_messages SET status=?, replied_at=NOW(), replied_by=? WHERE id=?',
+      ['replied', adminId, req.params.id]
+    )
+    res.json({ success: true })
+  } catch (e: any) { res.status(500).json({ error: e.message }) }
+})
+
+// ── Admin: delete message ────────────────────────────────────────────────────
+router.delete('/admin/messages/:id', async (req, res) => {
+  try {
+    await query('DELETE FROM contact_messages WHERE id=?', [req.params.id])
+    res.json({ success: true })
+  } catch (e: any) { res.status(500).json({ error: e.message }) }
+})
+
+// ── Admin: email config status ───────────────────────────────────────────────
+router.get('/admin/email-config', (_req, res) => {
+  res.json({
+    configured: isEmailConfigured(),
+    provider:   process.env.SMTP_PROVIDER ?? 'custom',
+    from:       process.env.SMTP_FROM || process.env.SMTP_USER || '',
+    admin_to:   process.env.SMTP_ADMIN_TO || process.env.SMTP_USER || '',
+    // never expose password
+  })
+})
+
+// ── Admin: test email ────────────────────────────────────────────────────────
+router.post('/admin/email-test', async (req, res) => {
+  const { to } = req.body as { to?: string }
+  const recipient = (to || process.env.SMTP_ADMIN_TO || process.env.SMTP_USER || '').trim()
+  if (!recipient) { res.status(400).json({ error: 'No recipient. Pass { to: "email" } or set SMTP_ADMIN_TO' }); return }
+  const result = await sendEmail({
+    to:      recipient,
+    subject: 'MediaDL — Email Test',
+    html:    '<p style="font-family:sans-serif">✅ Email is working! Your MediaDL admin email notifications are configured correctly.</p>',
+  })
+  if (result.ok) res.json({ success: true })
+  else res.status(502).json({ error: result.error })
 })
 
 // ── Admin: download stats ─────────────────────────────────────────────────────
@@ -235,11 +333,111 @@ router.get('/admin/downloads', async (_req, res) => {
   } catch (e: any) { res.status(500).json({ error: e.message }) }
 })
 
+// ── Admin: analytics ─────────────────────────────────────────────────────────
+router.get('/admin/analytics', async (req, res) => {
+  try {
+    const days = Math.min(90, Math.max(7, parseInt(String(req.query.days ?? '30')) || 30))
+
+    const [dlTotal]    = await query<any>('SELECT COUNT(*) AS cnt FROM download_stats')
+    const [dlToday]    = await query<any>('SELECT COUNT(*) AS cnt FROM download_stats WHERE DATE(created_at)=CURDATE()')
+    const [dlWeek]     = await query<any>('SELECT COUNT(*) AS cnt FROM download_stats WHERE created_at >= NOW() - INTERVAL 7 DAY')
+    const [dlMonth]    = await query<any>('SELECT COUNT(*) AS cnt FROM download_stats WHERE created_at >= NOW() - INTERVAL 30 DAY')
+    const [dlSuccess]  = await query<any>("SELECT COUNT(*) AS cnt FROM download_stats WHERE status='completed'")
+    const [dlFailed]   = await query<any>("SELECT COUNT(*) AS cnt FROM download_stats WHERE status='failed'")
+
+    // Downloads per day (last N days)
+    const dlByDay = await query<any>(`
+      SELECT DATE(created_at) AS day, COUNT(*) AS cnt,
+             SUM(CASE WHEN status='completed' THEN 1 ELSE 0 END) AS ok,
+             SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END) AS fail
+      FROM download_stats
+      WHERE created_at >= NOW() - INTERVAL ${days} DAY
+      GROUP BY DATE(created_at)
+      ORDER BY day ASC
+    `)
+
+    // Downloads per hour today
+    const dlByHour = await query<any>(`
+      SELECT HOUR(created_at) AS hour, COUNT(*) AS cnt
+      FROM download_stats
+      WHERE DATE(created_at)=CURDATE()
+      GROUP BY HOUR(created_at)
+      ORDER BY hour ASC
+    `)
+
+    // Top domains
+    const topDomains = await query<any>(`
+      SELECT
+        REGEXP_SUBSTR(url, '[a-z0-9\\.\\-]+\\.[a-z]{2,}', 1, 1, 'ic') AS domain,
+        COUNT(*) AS cnt
+      FROM download_stats
+      WHERE url IS NOT NULL AND url != '' AND created_at >= NOW() - INTERVAL ${days} DAY
+      GROUP BY domain
+      ORDER BY cnt DESC
+      LIMIT 10
+    `)
+
+    // Media type breakdown
+    const byType = await query<any>('SELECT media_type, COUNT(*) AS cnt FROM download_stats GROUP BY media_type ORDER BY cnt DESC')
+
+    // Format breakdown
+    const byFormat = await query<any>('SELECT format, COUNT(*) AS cnt FROM download_stats GROUP BY format ORDER BY cnt DESC LIMIT 10')
+
+    // Quality breakdown
+    const byQuality = await query<any>('SELECT quality, COUNT(*) AS cnt FROM download_stats WHERE quality IS NOT NULL GROUP BY quality ORDER BY cnt DESC LIMIT 10')
+
+    // Messages stats
+    const [msgTotal]   = await query<any>('SELECT COUNT(*) AS cnt FROM contact_messages')
+    const [msgUnread]  = await query<any>("SELECT COUNT(*) AS cnt FROM contact_messages WHERE status='unread'")
+    const [msgReplied] = await query<any>("SELECT COUNT(*) AS cnt FROM contact_messages WHERE status='replied'")
+
+    // Messages per day (last 30 days)
+    const msgByDay = await query<any>(`
+      SELECT DATE(created_at) AS day, COUNT(*) AS cnt
+      FROM contact_messages
+      WHERE created_at >= NOW() - INTERVAL 30 DAY
+      GROUP BY DATE(created_at) ORDER BY day ASC
+    `)
+
+    // Blog stats
+    const [blogTotal]     = await query<any>('SELECT COUNT(*) AS cnt FROM blog_posts')
+    const [blogPublished] = await query<any>('SELECT COUNT(*) AS cnt FROM blog_posts WHERE published=1')
+
+    // Registered user count estimate (from download_stats unique user_ids)
+    const [uniqueUsers] = await query<any>('SELECT COUNT(DISTINCT user_id) AS cnt FROM download_stats WHERE user_id IS NOT NULL')
+
+    res.json({
+      summary: {
+        dl_total:    dlTotal?.cnt ?? 0,
+        dl_today:    dlToday?.cnt ?? 0,
+        dl_week:     dlWeek?.cnt ?? 0,
+        dl_month:    dlMonth?.cnt ?? 0,
+        dl_success:  dlSuccess?.cnt ?? 0,
+        dl_failed:   dlFailed?.cnt ?? 0,
+        success_rate: dlTotal?.cnt > 0 ? Math.round((dlSuccess?.cnt / dlTotal?.cnt) * 100) : 0,
+        msg_total:   msgTotal?.cnt ?? 0,
+        msg_unread:  msgUnread?.cnt ?? 0,
+        msg_replied: msgReplied?.cnt ?? 0,
+        blog_total:  blogTotal?.cnt ?? 0,
+        blog_published: blogPublished?.cnt ?? 0,
+        unique_users: uniqueUsers?.cnt ?? 0,
+      },
+      dl_by_day:    dlByDay,
+      dl_by_hour:   dlByHour,
+      top_domains:  topDomains,
+      by_type:      byType,
+      by_format:    byFormat,
+      by_quality:   byQuality,
+      msg_by_day:   msgByDay,
+    })
+  } catch (e: any) { res.status(500).json({ error: e.message }) }
+})
+
 // ── Admin: CRUD blog ──────────────────────────────────────────────────────────
 router.post('/admin/blog', async (req, res) => {
   const { title, slug, excerpt, content, author, cover_image, tags, category } = req.body
   try {
-    const words = String(content ?? '').split(/\s+/).filter(Boolean).length
+    const words  = String(content ?? '').split(/\s+/).filter(Boolean).length
     const result = await query<any>(
       'INSERT INTO blog_posts (title,slug,excerpt,content,author,cover_image,tags,category,read_minutes) VALUES (?,?,?,?,?,?,?,?,?)',
       [title, slug, excerpt, content, author || 'Admin', cover_image, tags, category || 'General', Math.max(3, Math.round(words/200))]
@@ -313,14 +511,6 @@ router.put('/admin/faq/:id', async (req, res) => {
 router.delete('/admin/faq/:id', async (req, res) => {
   try {
     await query('DELETE FROM faq_items WHERE id=?', [req.params.id])
-    res.json({ success: true })
-  } catch (e: any) { res.status(500).json({ error: e.message }) }
-})
-
-// ── Admin: message status / delete ────────────────────────────────────────────
-router.delete('/admin/messages/:id', async (req, res) => {
-  try {
-    await query('DELETE FROM contact_messages WHERE id=?', [req.params.id])
     res.json({ success: true })
   } catch (e: any) { res.status(500).json({ error: e.message }) }
 })

@@ -1,7 +1,8 @@
 'use client'
 import { useState, useTransition } from 'react'
-import { Shield, ShieldCheck, User as UserIcon, Crown } from 'lucide-react'
+import { Shield, ShieldCheck, User as UserIcon, Crown, Lock } from 'lucide-react'
 import { toast } from 'sonner'
+import { useUser } from '@clerk/nextjs'
 import { changeRole } from './actions'
 import type { AppUser, Role } from '@/lib/auth'
 
@@ -12,6 +13,7 @@ const ROLE_META: Record<Role, { label: string; icon: React.ReactNode; cls: strin
 }
 
 export default function UserTable({ users }: { users: AppUser[] }) {
+  const { user: me } = useUser()
   const [pending, startTransition] = useTransition()
   const [busyId, setBusyId] = useState<string | null>(null)
 
@@ -27,6 +29,15 @@ export default function UserTable({ users }: { users: AppUser[] }) {
 
   return (
     <div className="rounded-2xl bg-[var(--bg-card)] border border-[var(--border)] overflow-hidden">
+      {/* Security note */}
+      <div className="flex items-start gap-2.5 px-4 py-3 bg-amber-950/30 border-b border-amber-800/30">
+        <Shield size={14} className="text-amber-400 mt-0.5 shrink-0" />
+        <p className="text-xs text-amber-300/80 leading-relaxed">
+          Role changes are permanent and apply immediately. You cannot change your own role.
+          Only one super admin should exist — grant carefully.
+        </p>
+      </div>
+
       <table className="w-full text-sm">
         <thead className="bg-[var(--bg-hover)] text-[var(--text-3)] text-[11px] uppercase tracking-wide">
           <tr>
@@ -37,16 +48,20 @@ export default function UserTable({ users }: { users: AppUser[] }) {
         </thead>
         <tbody>
           {users.map((u) => {
-            const meta = ROLE_META[u.role]
+            const meta   = ROLE_META[u.role]
+            const isSelf = me?.id === u.id
             return (
-              <tr key={u.id} className="border-t border-[var(--border)]">
+              <tr key={u.id} className={`border-t border-[var(--border)] ${isSelf ? 'opacity-60' : ''}`}>
                 <td className="px-4 py-3">
                   <div className="flex items-center gap-3">
                     {u.imageUrl
                       ? <img src={u.imageUrl} alt="" className="w-8 h-8 rounded-full" />
                       : <div className="w-8 h-8 rounded-full bg-[var(--brand)]/30" />}
                     <div className="min-w-0">
-                      <p className="font-semibold text-[var(--text)] truncate">{u.name}</p>
+                      <div className="flex items-center gap-1.5">
+                        <p className="font-semibold text-[var(--text)] truncate">{u.name}</p>
+                        {isSelf && <span className="text-[10px] text-[var(--text-3)] bg-[var(--bg-hover)] px-1.5 rounded">you</span>}
+                      </div>
                       <p className="text-xs text-[var(--text-3)] truncate">{u.email}</p>
                     </div>
                   </div>
@@ -57,16 +72,22 @@ export default function UserTable({ users }: { users: AppUser[] }) {
                   </span>
                 </td>
                 <td className="px-4 py-3">
-                  <select
-                    value={u.role}
-                    disabled={pending && busyId === u.id}
-                    onChange={(e) => onChange(u.id, e.target.value as Role)}
-                    className="bg-[var(--bg)] border border-[var(--border)] focus:border-[var(--brand)] rounded-lg px-2.5 py-1.5 text-xs text-[var(--text)] outline-none disabled:opacity-50"
-                  >
-                    <option value="individual">Individual</option>
-                    <option value="admin">Admin</option>
-                    <option value="super_admin">Super Admin</option>
-                  </select>
+                  {isSelf ? (
+                    <span className="inline-flex items-center gap-1.5 text-xs text-[var(--text-3)]">
+                      <Lock size={11} /> Cannot change own role
+                    </span>
+                  ) : (
+                    <select
+                      value={u.role}
+                      disabled={(pending && busyId === u.id)}
+                      onChange={(e) => onChange(u.id, e.target.value as Role)}
+                      className="bg-[var(--bg)] border border-[var(--border)] focus:border-[var(--brand)] rounded-lg px-2.5 py-1.5 text-xs text-[var(--text)] outline-none disabled:opacity-50"
+                    >
+                      <option value="individual">Individual</option>
+                      <option value="admin">Admin</option>
+                      <option value="super_admin">Super Admin</option>
+                    </select>
+                  )}
                 </td>
               </tr>
             )
