@@ -19,9 +19,16 @@ export interface DownloadJob {
   proxy?:         string
   capture?:       boolean
   captureSeconds?: number
-  startTime?:     string
-  endTime?:       string
-  subtitleLangs?: string[]
+  startTime?:          string
+  endTime?:            string
+  subtitleLangs?:      string[]
+  sponsorBlock?:       boolean
+  splitChapters?:      boolean
+  normalizeAudio?:     boolean
+  writeThumbnail?:     boolean
+  outputTemplate?:     string
+  speedLimit?:         string
+  concurrentFragments?: number
 }
 
 export interface JobProgress {

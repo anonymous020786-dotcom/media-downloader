@@ -71,14 +71,21 @@ export const queueDownload = (payload: {
       embedMetadata:  payload.embedMetadata ?? true,
       cookies:        payload.cookies || null,
       proxy:          payload.proxy   || null,
-      capture:        payload.capture ?? false,
-      startTime:      payload.startTime  || undefined,
-      endTime:        payload.endTime    || undefined,
-      subtitleLangs:  payload.subtitleLang
-                        ? [payload.subtitleLang, 'en', 'en-US'].filter((v, i, a) => a.indexOf(v) === i)
-                        : undefined,
-      delaySeconds:   payload.delaySeconds ?? undefined,
-      repeatEvery:    payload.repeatEvery || undefined,
+      capture:             payload.capture ?? false,
+      startTime:           payload.startTime  || undefined,
+      endTime:             payload.endTime    || undefined,
+      subtitleLangs:       payload.subtitleLang
+                             ? [payload.subtitleLang, 'en', 'en-US'].filter((v, i, a) => a.indexOf(v) === i)
+                             : undefined,
+      sponsorBlock:        payload.sponsorBlock        ?? false,
+      splitChapters:       payload.splitChapters       ?? false,
+      normalizeAudio:      payload.normalizeAudio      ?? false,
+      writeThumbnail:      payload.writeThumbnail      ?? false,
+      outputTemplate:      payload.outputTemplate      || undefined,
+      speedLimit:          payload.speedLimit          || undefined,
+      concurrentFragments: payload.concurrentFragments ?? 16,
+      delaySeconds:        payload.delaySeconds        ?? undefined,
+      repeatEvery:         payload.repeatEvery         || undefined,
     }),
   })
 
@@ -140,6 +147,12 @@ export interface Testimonial { id:number; name:string; role:string; avatar?:stri
 export interface HistoryRow { id:number; url:string; media_type:string; format:string; quality?:string; status:string; created_at:string }
 export const fetchHistory  = () => _f<HistoryRow[]>('/api/content/history')
 export const clearHistory  = () => _f('/api/content/history', { method: 'DELETE' })
+
+// ── Recurring schedules ───────────────────────────────────────────────────────
+export interface ScheduleRow { key: string; name: string; pattern: string; next: number }
+export const fetchSchedules  = () => _f<ScheduleRow[]>('/api/download/schedules')
+export const deleteSchedule  = (key: string) =>
+  _f(`/api/download/schedules/${encodeURIComponent(key)}`, { method: 'DELETE' })
 
 export const fetchBlogList    = (qy: BlogQuery = {}) => {
   const sp = new URLSearchParams()

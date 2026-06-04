@@ -66,33 +66,54 @@ export interface Job {
 }
 
 export interface AdvancedOptions {
-  maxItems?:       number | null
-  subtitles:       boolean
-  subtitleLang:    string
-  embedThumbnail:  boolean
-  embedMetadata:   boolean
-  cookies:         string
-  proxy:           string
-  capture:         boolean
-  scheduleMinutes: number | null
-  repeatEvery:     '' | 'hourly' | 'daily' | 'weekly'
-  startTime:       string
-  endTime:         string
+  // Playlist
+  maxItems?:            number | null
+  // Subtitles
+  subtitles:            boolean
+  subtitleLang:         string
+  // Output
+  embedThumbnail:       boolean
+  embedMetadata:        boolean
+  writeThumbnail:       boolean        // save thumbnail as separate file
+  outputTemplate:       string         // custom yt-dlp outtmpl
+  // Post-processing
+  sponsorBlock:         boolean        // remove YouTube sponsor/intro/outro segments
+  splitChapters:        boolean        // split video into per-chapter files
+  normalizeAudio:       boolean        // FFmpeg loudnorm equalisation
+  // Network
+  speedLimit:           string         // e.g. "5M" = 5 MB/s, empty = unlimited
+  concurrentFragments:  number         // 1-16 parallel HLS/DASH fragments
+  cookies:              string
+  proxy:                string
+  capture:              boolean
+  // Scheduling
+  scheduleMinutes:      number | null
+  repeatEvery:          '' | 'hourly' | 'daily' | 'weekly'
+  // Clip extraction
+  startTime:            string
+  endTime:              string
 }
 
 export const DEFAULT_ADVANCED: AdvancedOptions = {
-  maxItems:       null,
-  subtitles:      false,
-  subtitleLang:   'en',
-  embedThumbnail: false,
-  embedMetadata:  true,
-  cookies:        '',
-  proxy:          '',
-  capture:        false,
-  scheduleMinutes: null,
-  repeatEvery:    '',
-  startTime:      '',
-  endTime:        '',
+  maxItems:            null,
+  subtitles:           false,
+  subtitleLang:        'en',
+  embedThumbnail:      false,
+  embedMetadata:       true,
+  writeThumbnail:      false,
+  outputTemplate:      '',
+  sponsorBlock:        false,
+  splitChapters:       false,
+  normalizeAudio:      false,
+  speedLimit:          '',
+  concurrentFragments: 16,
+  cookies:             '',
+  proxy:               '',
+  capture:             false,
+  scheduleMinutes:     null,
+  repeatEvery:         '',
+  startTime:           '',
+  endTime:             '',
 }
 
 export interface StorageJob {

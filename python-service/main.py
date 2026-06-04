@@ -113,8 +113,17 @@ class DownloadReq(BaseModel):
     capture:         bool           = False
     capture_seconds: Optional[int]  = None   # cap recording length (default: video duration)
     # Clip extraction — download a time range only
-    start_time:      Optional[str]  = None   # HH:MM:SS or MM:SS
-    end_time:        Optional[str]  = None   # HH:MM:SS or MM:SS
+    start_time:          Optional[str]  = None   # HH:MM:SS or MM:SS
+    end_time:            Optional[str]  = None   # HH:MM:SS or MM:SS
+    # Post-processing
+    sponsor_block:        bool           = False  # remove YouTube sponsor/intro/outro segments
+    split_chapters:       bool           = False  # split into per-chapter files
+    normalize_audio:      bool           = False  # FFmpeg loudnorm equalisation
+    write_thumbnail:      bool           = False  # save thumbnail as separate file
+    output_template:      Optional[str]  = None   # custom yt-dlp outtmpl
+    # Network
+    speed_limit:          Optional[str]  = None   # e.g. "5M" = 5 MB/s
+    concurrent_fragments: int            = 16     # parallel HLS/DASH fragments
 
 # ── Progress helpers ──────────────────────────────────────────────────────────
 async def _prog(jid: str, d: dict): await _aredis.set(f"job:{jid}:progress", json.dumps(d), ex=86400)
@@ -1409,6 +1418,9 @@ async def _dl_video(req: DownloadReq, job_dir: Path, cookie_file: Optional[str])
             req.subtitles, req.embed_thumbnail, req.embed_metadata,
             False, None, 1,
             req.start_time, req.end_time, req.subtitle_langs,
+            req.sponsor_block, req.split_chapters, req.normalize_audio,
+            req.write_thumbnail, req.output_template,
+            req.speed_limit, req.concurrent_fragments,
         )
         return
     except Exception: pass
@@ -1475,6 +1487,9 @@ async def _dl_playlist(req: DownloadReq, job_dir: Path, cookie_file: Optional[st
             req.subtitles, req.embed_thumbnail, req.embed_metadata,
             True, req.max_items, req.start_index,
             None, None, req.subtitle_langs,
+            req.sponsor_block, req.split_chapters, req.normalize_audio,
+            req.write_thumbnail, req.output_template,
+            req.speed_limit, req.concurrent_fragments,
         )
     except Exception:
         pass  # fall through to gallery-dl
@@ -1521,6 +1536,13 @@ def _ytdlp_dl(
     is_playlist: bool, max_items: Optional[int], start_idx: int,
     start_time: Optional[str] = None, end_time: Optional[str] = None,
     subtitle_langs: Optional[list] = None,
+    sponsor_block: bool = False,
+    split_chapters: bool = False,
+    normalize_audio: bool = False,
+    write_thumbnail: bool = False,
+    output_template: Optional[str] = None,
+    speed_limit: Optional[str] = None,
+    concurrent_fragments: int = 16,
 ):
     fmt = (fmt or "mp4").lower()
     cap = None if quality in ("best","0","") else quality.replace("p","").strip()
@@ -1576,9 +1598,20 @@ def _ytdlp_dl(
         pps.append({"key":"EmbedThumbnail","already_have_thumbnail":False})
     if embed_meta:
         pps.append({"key":"FFmpegMetadata","add_metadata":True,"add_chapters":True})
+    if normalize_audio:
+        pps.append({"key":"FFmpegPostProcessor",
+                    "preferedformat": fmt if fmt in ("mp3","m4a","opus","flac","wav","aac","ogg") else "mp4",
+                    "preferredcodec": None,
+                    "postprocessor_args": ["-filter:a", "loudnorm=I=-16:TP=-1.5:LRA=11"]})
+    if split_chapters:
+        pps.append({"key":"FFmpegSplitChapters","force_keyframes":True})
 
-    tpl = ("%(playlist_index)03d - %(title)s.%(ext)s"
-           if is_playlist else "%(title)s.%(ext)s")
+    if output_template:
+        tpl = output_template
+    elif is_playlist:
+        tpl = "%(playlist_index)03d - %(title)s.%(ext)s"
+    else:
+        tpl = "%(title)s.%(ext)s"
 
     opts: dict = {
         # Core
@@ -1595,7 +1628,7 @@ def _ytdlp_dl(
         "extractor_retries": 10,
         "file_access_retries": 10,
         "socket_timeout": 120,
-        "concurrent_fragment_downloads": 16,
+        "concurrent_fragment_downloads": max(1, min(16, concurrent_fragments)),
         "continuedl": True,             # resume interrupted downloads
         "http_chunk_size": 10485760,    # 10 MB chunks — beats per-request throttling
 
@@ -1635,10 +1668,15 @@ def _ytdlp_dl(
 
         # Metadata
         "addmetadata": embed_meta,
-        "writethumbnail": embed_thumb,
+        "writethumbnail": embed_thumb or write_thumbnail,
         "writesubtitles": subtitles,
         "writeautomaticsub": subtitles,
         "subtitleslangs": (subtitle_langs or ["en","en-US","en-GB"]) if subtitles else [],
+        # SponsorBlock
+        **({"sponsorblock_remove": ["sponsor","intro","outro","selfpromo","preview","filler","music_offtopic"]}
+           if sponsor_block else {}),
+        # Speed throttle
+        **({"ratelimit": speed_limit} if speed_limit else {}),
 
         # Playlist
         "ignoreerrors": True,   # skip unavailable items and continue

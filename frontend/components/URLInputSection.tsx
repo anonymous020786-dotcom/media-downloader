@@ -131,8 +131,14 @@ export default function URLInputSection({ onQueued, initialUrl = '' }: Props) {
         maxItems: opts.maxItems, startIndex: 1,
         subtitles: opts.subtitles, subtitleLang: opts.subtitleLang,
         embedThumbnail: opts.embedThumbnail, embedMetadata: opts.embedMetadata,
+        writeThumbnail: opts.writeThumbnail,
+        outputTemplate: opts.outputTemplate || undefined,
         cookies: opts.cookies || undefined, proxy: opts.proxy || undefined,
         capture: opts.capture,
+        sponsorBlock: opts.sponsorBlock, splitChapters: opts.splitChapters,
+        normalizeAudio: opts.normalizeAudio,
+        speedLimit: opts.speedLimit || undefined,
+        concurrentFragments: opts.concurrentFragments,
         startTime: opts.startTime || undefined, endTime: opts.endTime || undefined,
         delaySeconds: opts.scheduleMinutes ? opts.scheduleMinutes * 60 : undefined,
         repeatEvery: opts.repeatEvery || undefined,
@@ -250,18 +256,35 @@ export default function URLInputSection({ onQueued, initialUrl = '' }: Props) {
       {/* URL bar */}
       {mode !== 'batch' && mode !== 'search' && (
         <div className="flex flex-col sm:flex-row gap-2">
-          <div className="relative flex-1">
+          <div
+          className="relative flex-1"
+          onDragOver={(e) => e.preventDefault()}
+          onDrop={(e) => {
+            e.preventDefault()
+            const dropped = e.dataTransfer.getData('text/plain').trim() || e.dataTransfer.getData('text/uri-list').trim()
+            if (dropped.startsWith('http')) { setUrl(dropped); reset(); setTimeout(() => analyze(dropped), 50) }
+          }}
+        >
             <Link2 size={14} className="absolute left-4 top-1/2 -translate-y-1/2 text-[var(--text-3)] pointer-events-none" />
             <input
               ref={inputRef}
               value={url}
               onChange={(e) => { setUrl(e.target.value); reset() }}
-              onKeyDown={(e) => e.key === 'Enter' && analyze()}
+              onKeyDown={(e) => { if (e.key === 'Enter') analyze(); if (e.key === 'Escape') { setUrl(''); reset() } }}
               onPaste={(e) => {
                 const p = e.clipboardData.getData('text').trim()
-                if (p.startsWith('http') && !url) { e.preventDefault(); setUrl(p); reset(); setTimeout(() => analyze(p), 50) }
+                const lines = p.split(/\r?\n/).map(l => l.trim()).filter(l => l.startsWith('http'))
+                if (lines.length > 1) {
+                  // Multi-URL paste — switch to batch mode
+                  e.preventDefault()
+                  setMode('batch')
+                  setShowBulk(true)
+                  setTimeout(() => handleBulk(lines), 100)
+                } else if (lines.length === 1 && !url) {
+                  e.preventDefault(); setUrl(lines[0]); reset(); setTimeout(() => analyze(lines[0]), 50)
+                }
               }}
-              placeholder={placeholder || (isPlaylistMode ? 'Paste playlist, channel, or profile URL…' : 'Paste any video or image URL — auto-analyzes on paste')}
+              placeholder={placeholder || (isPlaylistMode ? 'Paste playlist, channel, or profile URL…' : 'Paste a URL or drag it here — auto-analyzes on paste')}
               className="w-full bg-[var(--bg-card)] border border-[var(--border)] focus:border-[var(--brand)] hover:border-[var(--border-hover)] rounded-xl pl-10 pr-10 py-3.5 text-sm text-[var(--text)] placeholder-[var(--text-3)] outline-none transition-colors"
             />
             <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-1.5">

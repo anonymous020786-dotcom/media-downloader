@@ -54,27 +54,66 @@ export default function AdminDashboard() {
       {/* System health */}
       <SystemHealth />
 
-      {/* Breakdown */}
+      {/* Breakdown charts */}
       <div className="grid md:grid-cols-2 gap-6 mb-8">
+        {/* By media type */}
         <div className="p-5 rounded-2xl bg-[var(--bg-card)] border border-[var(--border)]">
           <h2 className="text-sm font-bold text-[var(--text)] mb-4">By Media Type</h2>
-          {(dl.by_type ?? []).length === 0 ? <p className="text-sm text-[var(--text-3)]">No data yet</p> :
-            dl.by_type.map((r: any) => (
-              <div key={r.media_type} className="flex items-center justify-between py-1.5 text-sm">
-                <span className="text-[var(--text-2)] capitalize">{r.media_type || 'unknown'}</span>
-                <span className="font-bold text-[var(--text)]">{r.cnt}</span>
-              </div>
-            ))}
+          {(dl.by_type ?? []).length === 0
+            ? <p className="text-sm text-[var(--text-3)]">No data yet</p>
+            : (() => {
+                const max = Math.max(...dl.by_type.map((r: any) => r.cnt), 1)
+                const COLORS: Record<string,string> = { video:'bg-blue-500', image:'bg-cyan-500', playlist:'bg-violet-500', profile:'bg-pink-500', page:'bg-slate-500', file:'bg-amber-500', torrent:'bg-orange-500' }
+                return (
+                  <div className="space-y-3">
+                    {dl.by_type.map((r: any) => (
+                      <div key={r.media_type}>
+                        <div className="flex justify-between text-xs mb-1">
+                          <span className="text-[var(--text-2)] capitalize">{r.media_type || 'unknown'}</span>
+                          <span className="font-bold text-[var(--text)] tabular-nums">{r.cnt.toLocaleString()}</span>
+                        </div>
+                        <div className="h-2 rounded-full bg-[var(--bg-hover)] overflow-hidden">
+                          <div
+                            className={`h-full rounded-full transition-all duration-700 ${COLORS[r.media_type] ?? 'bg-indigo-500'}`}
+                            style={{ width: `${Math.round((r.cnt / max) * 100)}%` }}
+                          />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )
+              })()
+          }
         </div>
+
+        {/* By format */}
         <div className="p-5 rounded-2xl bg-[var(--bg-card)] border border-[var(--border)]">
           <h2 className="text-sm font-bold text-[var(--text)] mb-4">Top Formats</h2>
-          {(dl.by_format ?? []).length === 0 ? <p className="text-sm text-[var(--text-3)]">No data yet</p> :
-            dl.by_format.map((r: any) => (
-              <div key={r.format} className="flex items-center justify-between py-1.5 text-sm">
-                <span className="text-[var(--text-2)] uppercase">{r.format || 'n/a'}</span>
-                <span className="font-bold text-[var(--text)]">{r.cnt}</span>
-              </div>
-            ))}
+          {(dl.by_format ?? []).length === 0
+            ? <p className="text-sm text-[var(--text-3)]">No data yet</p>
+            : (() => {
+                const max = Math.max(...dl.by_format.map((r: any) => r.cnt), 1)
+                const FMT_COLORS: Record<string,string> = { mp4:'bg-blue-500', mp3:'bg-pink-500', webm:'bg-violet-500', mkv:'bg-indigo-500', m4a:'bg-rose-500', original:'bg-slate-500' }
+                return (
+                  <div className="space-y-3">
+                    {dl.by_format.slice(0, 8).map((r: any) => (
+                      <div key={r.format}>
+                        <div className="flex justify-between text-xs mb-1">
+                          <span className="text-[var(--text-2)] uppercase font-mono">{r.format || 'n/a'}</span>
+                          <span className="font-bold text-[var(--text)] tabular-nums">{r.cnt.toLocaleString()}</span>
+                        </div>
+                        <div className="h-2 rounded-full bg-[var(--bg-hover)] overflow-hidden">
+                          <div
+                            className={`h-full rounded-full transition-all duration-700 ${FMT_COLORS[r.format] ?? 'bg-emerald-500'}`}
+                            style={{ width: `${Math.round((r.cnt / max) * 100)}%` }}
+                          />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )
+              })()
+          }
         </div>
       </div>
 

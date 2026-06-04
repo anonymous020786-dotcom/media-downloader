@@ -4,7 +4,7 @@ import Image from 'next/image'
 import {
   Trash2, RotateCcw, Film, ImageIcon, Globe, Music,
   CheckCircle2, XCircle, Clock, Loader2, Wifi,
-  Download, FolderOpen, FileVideo, FileImage, File, HardDriveDownload, Play,
+  Download, FolderOpen, FileVideo, FileImage, File, HardDriveDownload, Play, Copy, Link2,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import type { Job, JobStatus } from '@/lib/types'
@@ -266,6 +266,12 @@ function JobCardInner({ job, onDelete, onRetry }: Props) {
 
       {/* Hover action buttons */}
       <div className="absolute top-2 right-2 hidden group-hover:flex items-center gap-1">
+        <button
+          onClick={() => { navigator.clipboard?.writeText(job.url).catch(() => {}); toast.success('URL copied') }}
+          title="Copy URL"
+          className="p-1.5 rounded-lg bg-[#21293a] hover:bg-slate-600 text-[#94a3b8] hover:text-white transition-colors">
+          <Copy size={12} />
+        </button>
         {isFail && (
           <button onClick={() => onRetry(job.bullId)} title="Retry"
             className="p-1.5 rounded-lg bg-[#21293a] hover:bg-amber-700 text-[#94a3b8] hover:text-white transition-colors">

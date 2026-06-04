@@ -59,9 +59,16 @@ router.post('/', async (req, res) => {
     proxy:          body.proxy,
     capture:        body.capture         ?? false,
     captureSeconds: body.captureSeconds,
-    startTime:      body.startTime,
-    endTime:        body.endTime,
-    subtitleLangs:  body.subtitleLangs,
+    startTime:          body.startTime,
+    endTime:            body.endTime,
+    subtitleLangs:      body.subtitleLangs,
+    sponsorBlock:       body.sponsorBlock       ?? false,
+    splitChapters:      body.splitChapters      ?? false,
+    normalizeAudio:     body.normalizeAudio     ?? false,
+    writeThumbnail:     body.writeThumbnail     ?? false,
+    outputTemplate:     body.outputTemplate,
+    speedLimit:         body.speedLimit,
+    concurrentFragments: body.concurrentFragments ?? 16,
   }
 
   // Recurring (cron) schedule
