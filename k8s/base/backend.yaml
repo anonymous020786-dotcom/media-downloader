@@ -1,0 +1,108 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+  namespace: mediadl
+  labels:
+    app: backend
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: backend
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: { maxSurge: 1, maxUnavailable: 0 }
+  template:
+    metadata:
+      labels:
+        app: backend
+    spec:
+      containers:
+        - name: backend
+          image: mediadl-backend:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 4000
+          envFrom:
+            - configMapRef:
+                name: mediadl-config
+          env:
+            - name: MYSQL_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: mediadl-secrets, key: MYSQL_PASSWORD }
+            - name: CLERK_SECRET_KEY
+              valueFrom:
+                secretKeyRef: { name: mediadl-secrets, key: CLERK_SECRET_KEY }
+            - name: ADMIN_EMAILS
+              valueFrom:
+                secretKeyRef: { name: mediadl-secrets, key: ADMIN_EMAILS }
+            - name: TMDB_API_KEY
+              valueFrom:
+                secretKeyRef: { name: mediadl-secrets, key: TMDB_API_KEY }
+            - name: TMDB_ACCESS_TOKEN
+              valueFrom:
+                secretKeyRef: { name: mediadl-secrets, key: TMDB_ACCESS_TOKEN }
+            - name: SMTP_USER
+              valueFrom:
+                secretKeyRef: { name: mediadl-secrets, key: SMTP_USER }
+            - name: SMTP_PASS
+              valueFrom:
+                secretKeyRef: { name: mediadl-secrets, key: SMTP_PASS }
+            - name: FIREBASE_SERVICE_ACCOUNT_JSON
+              valueFrom:
+                secretKeyRef: { name: mediadl-secrets, key: FIREBASE_SERVICE_ACCOUNT_JSON }
+          volumeMounts:
+            - name: downloads
+              mountPath: /downloads
+          resources:
+            requests: { memory: 256Mi, cpu: 100m  }
+            limits:   { memory: 1Gi,   cpu: 750m  }
+          livenessProbe:
+            httpGet: { path: /health, port: 4000 }
+            initialDelaySeconds: 20
+            periodSeconds: 15
+          readinessProbe:
+            httpGet: { path: /health, port: 4000 }
+            initialDelaySeconds: 10
+            periodSeconds: 10
+      volumes:
+        - name: downloads
+          persistentVolumeClaim:
+            claimName: downloads-pvc
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend-service
+  namespace: mediadl
+spec:
+  selector:
+    app: backend
+  ports:
+    - name: http
+      port: 4000
+      targetPort: 4000
+
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: backend-hpa
+  namespace: mediadl
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: backend
+  minReplicas: 2
+  maxReplicas: 8
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 65

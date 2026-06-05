@@ -1,13 +1,17 @@
 'use client'
-import { useEffect, useState } from 'react'
-import { Download, CheckCircle2, XCircle, Clock, TrendingUp, RefreshCw } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
+import { Download, CheckCircle2, XCircle, Clock, TrendingUp, RefreshCw, Wifi, WifiOff } from 'lucide-react'
 import { fetchStats, adminDownloads } from '@/lib/api'
+import { getSocket, joinAdminRoom, leaveAdminRoom, isSocketConnected } from '@/lib/socket'
 import SystemHealth from '@/components/admin/SystemHealth'
 
 export default function AdminDashboard() {
-  const [queue, setQueue] = useState({ waiting:0, active:0, completed:0, failed:0, total:0 })
-  const [dl, setDl] = useState<any>({ total:0, today:0, by_type:[], by_format:[], recent:[] })
-  const [loading, setLoading] = useState(true)
+  const [queue,    setQueue]    = useState({ waiting:0, active:0, completed:0, failed:0, total:0 })
+  const [dl,       setDl]       = useState<any>({ total:0, today:0, by_type:[], by_format:[], recent:[] })
+  const [loading,  setLoading]  = useState(true)
+  const [wsLive,   setWsLive]   = useState(false)
+
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   const load = async () => {
     setLoading(true)
@@ -17,15 +21,76 @@ export default function AdminDashboard() {
       if (d) setDl(d)
     } finally { setLoading(false) }
   }
-  useEffect(() => { load(); const t = setInterval(load, 8000); return () => clearInterval(t) }, [])
+
+  // ── Socket.io admin room ────────────────────────────────────────────────────
+  useEffect(() => {
+    // Trigger socket init
+    getSocket()
+
+    let checkInterval: ReturnType<typeof setInterval>
+
+    const tryJoin = () => {
+      const s = getSocket()
+      if (!s) return
+      if (s.connected) {
+        joinAdminRoom()
+        setWsLive(true)
+
+        s.on('admin:stats', (data: any) => {
+          if (data?.queue) setQueue(data.queue)
+        })
+        s.on('disconnect', () => setWsLive(false))
+        s.on('connect',    () => { joinAdminRoom(); setWsLive(true) })
+      }
+    }
+
+    // Poll until socket connects (it's lazy — may take a few cycles)
+    checkInterval = setInterval(() => {
+      if (isSocketConnected()) {
+        clearInterval(checkInterval)
+        tryJoin()
+      }
+    }, 500)
+
+    // Initial HTTP load
+    load()
+
+    // HTTP fallback poll — 8s when WebSocket is live (just for recent dl list),
+    // 4s when WebSocket is not connected (queue stats come from HTTP)
+    const startPoll = () => {
+      if (pollRef.current) clearInterval(pollRef.current)
+      pollRef.current = setInterval(() => {
+        if (!isSocketConnected()) {
+          // full refresh if WS down
+          fetchStats().then((q) => q && setQueue(q)).catch(()=>{})
+        }
+        adminDownloads().then((d) => d && setDl(d)).catch(()=>{})
+      }, 8000)
+    }
+
+    startPoll()
+
+    return () => {
+      clearInterval(checkInterval)
+      if (pollRef.current) clearInterval(pollRef.current)
+      leaveAdminRoom()
+      const s = getSocket()
+      if (s) {
+        s.off('admin:stats')
+        s.off('disconnect')
+        s.off('connect')
+      }
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   const CARDS = [
-    { label: 'Total Downloads', value: dl.total ?? 0,        icon: <Download size={18} />,     color: 'text-blue-400 bg-blue-900/20' },
-    { label: 'Today',           value: dl.today ?? 0,        icon: <TrendingUp size={18} />,   color: 'text-emerald-400 bg-emerald-900/20' },
-    { label: 'Active Now',      value: queue.active,         icon: <Clock size={18} />,        color: 'text-cyan-400 bg-cyan-900/20' },
-    { label: 'In Queue',        value: queue.waiting,        icon: <Clock size={18} />,        color: 'text-violet-400 bg-violet-900/20' },
-    { label: 'Completed',       value: queue.completed,      icon: <CheckCircle2 size={18} />, color: 'text-emerald-400 bg-emerald-900/20' },
-    { label: 'Failed',          value: queue.failed,         icon: <XCircle size={18} />,      color: 'text-red-400 bg-red-900/20' },
+    { label: 'Total Downloads', value: dl.total ?? 0,   icon: <Download size={18} />,     color: 'text-blue-400 bg-blue-900/20' },
+    { label: 'Today',           value: dl.today ?? 0,   icon: <TrendingUp size={18} />,   color: 'text-emerald-400 bg-emerald-900/20' },
+    { label: 'Active Now',      value: queue.active,    icon: <Clock size={18} />,        color: 'text-cyan-400 bg-cyan-900/20' },
+    { label: 'In Queue',        value: queue.waiting,   icon: <Clock size={18} />,        color: 'text-violet-400 bg-violet-900/20' },
+    { label: 'Completed',       value: queue.completed, icon: <CheckCircle2 size={18} />, color: 'text-emerald-400 bg-emerald-900/20' },
+    { label: 'Failed',          value: queue.failed,    icon: <XCircle size={18} />,      color: 'text-red-400 bg-red-900/20' },
   ]
 
   return (
@@ -35,9 +100,20 @@ export default function AdminDashboard() {
           <h1 className="text-2xl font-black text-[var(--text)]">Dashboard</h1>
           <p className="text-sm text-[var(--text-3)]">Real-time overview of MediaDL</p>
         </div>
-        <button onClick={load} className={`p-2 rounded-xl border border-[var(--border)] text-[var(--text-2)] hover:text-[var(--text)] ${loading ? 'animate-spin' : ''}`}>
-          <RefreshCw size={15} />
-        </button>
+        <div className="flex items-center gap-3">
+          {/* WebSocket live indicator */}
+          <div className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-[11px] font-medium ${
+            wsLive
+              ? 'border-emerald-800/50 bg-emerald-900/20 text-emerald-400'
+              : 'border-[var(--border)] bg-[var(--bg-card)] text-[var(--text-3)]'
+          }`}>
+            {wsLive ? <Wifi size={11} /> : <WifiOff size={11} />}
+            {wsLive ? 'Live' : 'Polling'}
+          </div>
+          <button onClick={load} className={`p-2 rounded-xl border border-[var(--border)] text-[var(--text-2)] hover:text-[var(--text)] ${loading ? 'animate-spin' : ''}`}>
+            <RefreshCw size={15} />
+          </button>
+        </div>
       </div>
 
       {/* Stat cards */}

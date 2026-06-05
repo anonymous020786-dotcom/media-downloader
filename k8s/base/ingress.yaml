@@ -1,0 +1,81 @@
+---
+# nginx-ingress controller with WebSocket + Socket.io support
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: mediadl-ingress
+  namespace: mediadl
+  annotations:
+    kubernetes.io/ingress.class: nginx
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    nginx.ingress.kubernetes.io/proxy-body-size: "200m"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    # WebSocket support for Socket.io
+    nginx.ingress.kubernetes.io/proxy-http-version: "1.1"
+    nginx.ingress.kubernetes.io/configuration-snippet: |
+      proxy_set_header Upgrade $http_upgrade;
+      proxy_set_header Connection "upgrade";
+    # SSE support (no buffering)
+    nginx.ingress.kubernetes.io/proxy-buffering: "off"
+    # Security
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/limit-rpm: "300"
+    nginx.ingress.kubernetes.io/enable-cors: "true"
+    nginx.ingress.kubernetes.io/cors-allow-origin: "https://YOUR_DOMAIN"
+spec:
+  tls:
+    - hosts:
+        - YOUR_DOMAIN
+      secretName: mediadl-tls
+  rules:
+    - host: YOUR_DOMAIN
+      http:
+        paths:
+          # Socket.io — must be first (most specific)
+          - path: /socket.io
+            pathType: Prefix
+            backend:
+              service:
+                name: backend-service
+                port:
+                  number: 4000
+          # Backend API + health
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: backend-service
+                port:
+                  number: 4000
+          - path: /health
+            pathType: Prefix
+            backend:
+              service:
+                name: backend-service
+                port:
+                  number: 4000
+          # Frontend (catch-all)
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: frontend-service
+                port:
+                  number: 3000
+
+---
+# Certificate (requires cert-manager)
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: mediadl-cert
+  namespace: mediadl
+spec:
+  secretName: mediadl-tls
+  issuerRef:
+    name: letsencrypt-prod
+    kind: ClusterIssuer
+  dnsNames:
+    - YOUR_DOMAIN

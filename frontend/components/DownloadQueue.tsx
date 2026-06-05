@@ -1,9 +1,10 @@
 'use client'
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Inbox, Trash2 } from 'lucide-react'
+import { Inbox, Trash2, Wifi, WifiOff } from 'lucide-react'
 import JobCard from './JobCard'
 import type { Job, JobProgress } from '@/lib/types'
 import { fetchJobs, deleteJob, retryJob, clearJobs, subscribeProgress } from '@/lib/api'
+import { getSocket, isSocketConnected } from '@/lib/socket'
 
 type Filter = 'all' | 'active' | 'done' | 'failed'
 
@@ -14,9 +15,30 @@ interface Props {
 }
 
 function DownloadQueueInner({ newJobId, newJob, onJobAdded }: Props) {
-  const [jobs,   setJobs]   = useState<Job[]>([])
-  const [filter, setFilter] = useState<Filter>('all')
+  const [jobs,    setJobs]    = useState<Job[]>([])
+  const [filter,  setFilter]  = useState<Filter>('all')
+  const [wsState, setWsState] = useState<'connecting' | 'connected' | 'disconnected'>('connecting')
   const subs = useRef<Map<string, () => void>>(new Map())
+
+  // Track Socket.io connection state
+  useEffect(() => {
+    getSocket() // ensure init
+    const check = setInterval(() => {
+      const connected = isSocketConnected()
+      setWsState(connected ? 'connected' : 'disconnected')
+    }, 1000)
+    // Also subscribe to socket events when available
+    const s = getSocket()
+    if (s) {
+      s.on('connect',    () => setWsState('connected'))
+      s.on('disconnect', () => setWsState('disconnected'))
+    }
+    return () => {
+      clearInterval(check)
+      const sock = getSocket()
+      if (sock) { sock.off('connect'); sock.off('disconnect') }
+    }
+  }, [])
 
   // ── Load existing jobs once on mount ─────────────────────────────────────
   useEffect(() => {
@@ -129,7 +151,8 @@ function DownloadQueueInner({ newJobId, newJob, onJobAdded }: Props) {
     <div className="space-y-3">
       {/* Tab bar + clear buttons */}
       <div className="flex items-center justify-between gap-2 flex-wrap">
-        {/* Tabs */}
+        {/* Tabs + WS badge */}
+        <div className="flex items-center gap-2">
         <div className="flex gap-0.5 bg-[#161b27] border border-[#21293a] rounded-xl p-1 overflow-x-auto scrollbar-none">
           {tabs.map((t) => (
             <button key={t.key} onClick={() => setFilter(t.key)}
@@ -144,6 +167,22 @@ function DownloadQueueInner({ newJobId, newJob, onJobAdded }: Props) {
               )}
             </button>
           ))}
+        </div>
+
+        {/* Socket.io connection badge */}
+        <div title={wsState === 'connected' ? 'Real-time via WebSocket' : wsState === 'connecting' ? 'Connecting…' : 'Using SSE fallback'}
+          className={`flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-medium transition-colors ${
+            wsState === 'connected'
+              ? 'text-emerald-400 bg-emerald-900/20 border border-emerald-800/40'
+              : wsState === 'connecting'
+              ? 'text-amber-400 bg-amber-900/20 border border-amber-800/40'
+              : 'text-[#475569] bg-[#161b27] border border-[#21293a]'
+          }`}>
+          {wsState === 'connected' ? <Wifi size={9} /> : <WifiOff size={9} />}
+          <span className="hidden sm:inline">
+            {wsState === 'connected' ? 'Live' : wsState === 'connecting' ? '…' : 'SSE'}
+          </span>
+        </div>
         </div>
 
         {/* Clear actions */}

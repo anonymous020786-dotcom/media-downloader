@@ -18,6 +18,20 @@ import { getRecaptchaToken } from '@/lib/recaptcha'
 import { FileDown, SearchCheck } from 'lucide-react'
 import { toast } from 'sonner'
 
+const RECENT_KEY = 'mediadl_recent_urls'
+const MAX_RECENT = 10
+
+function loadRecentUrls(): string[] {
+  if (typeof window === 'undefined') return []
+  try { return JSON.parse(localStorage.getItem(RECENT_KEY) ?? '[]') } catch { return [] }
+}
+
+function saveRecentUrl(url: string) {
+  if (typeof window === 'undefined') return
+  const prev = loadRecentUrls().filter((u) => u !== url)
+  localStorage.setItem(RECENT_KEY, JSON.stringify([url, ...prev].slice(0, MAX_RECENT)))
+}
+
 interface Props {
   onQueued: (jobId: string, job: Omit<Job, 'progress' | 'bullId'>) => void
   initialUrl?: string
@@ -80,10 +94,25 @@ export default function URLInputSection({ onQueued, initialUrl = '' }: Props) {
   const [previewTotal,setPreviewTotal]= useState(0)
   const [previewTitle,setPreviewTitle]= useState('')
   const [showPreview, setShowPreview] = useState(false)
-  const inputRef = useRef<HTMLInputElement>(null)
+  const [recentUrls,  setRecentUrls]  = useState<string[]>([])
+  const [showRecent,  setShowRecent]  = useState(false)
+  const inputRef    = useRef<HTMLInputElement>(null)
+  const recentRef   = useRef<HTMLDivElement>(null)
 
   const reset = useCallback(() => { setInfo(null); setPlInfo(null); setError('') }, [])
   const isPlaylistMode = mode === 'playlist' || mode === 'profile'
+
+  // Load recent URLs on mount + close dropdown on outside click
+  useEffect(() => {
+    setRecentUrls(loadRecentUrls())
+    const handler = (e: MouseEvent) => {
+      if (recentRef.current && !recentRef.current.contains(e.target as Node)) {
+        setShowRecent(false)
+      }
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [])
 
   const analyze = useCallback(async (targetUrl?: string) => {
     const u = (targetUrl ?? url).trim()
@@ -104,6 +133,9 @@ export default function URLInputSection({ onQueued, initialUrl = '' }: Props) {
           setPlInfo(pl); setInfo(null)
         }
       }
+      // Save to history after successful analyze
+      saveRecentUrl(u)
+      setRecentUrls(loadRecentUrls())
     } catch (e: any) { setError(e.message) }
     finally { setAnalyzing(false) }
   }, [url, isPlaylistMode])
@@ -261,6 +293,7 @@ export default function URLInputSection({ onQueued, initialUrl = '' }: Props) {
         <div className="flex flex-col sm:flex-row gap-2">
           <div
           className="relative flex-1"
+          ref={recentRef}
           onDragOver={(e) => e.preventDefault()}
           onDrop={(e) => {
             e.preventDefault()
@@ -273,7 +306,12 @@ export default function URLInputSection({ onQueued, initialUrl = '' }: Props) {
               ref={inputRef}
               value={url}
               onChange={(e) => { setUrl(e.target.value); reset() }}
-              onKeyDown={(e) => { if (e.key === 'Enter') analyze(); if (e.key === 'Escape') { setUrl(''); reset() } }}
+              onFocus={() => { if (recentUrls.length > 0 && !url) setShowRecent(true) }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') { setShowRecent(false); analyze() }
+                if (e.key === 'Escape') { setUrl(''); reset(); setShowRecent(false) }
+                if (e.key === 'ArrowDown' && showRecent) e.preventDefault()
+              }}
               onPaste={(e) => {
                 const p = e.clipboardData.getData('text').trim()
                 const lines = p.split(/\r?\n/).map(l => l.trim()).filter(l => l.startsWith('http'))
@@ -303,6 +341,42 @@ export default function URLInputSection({ onQueued, initialUrl = '' }: Props) {
                 </button>
               )}
             </div>
+
+            {/* Recent URLs dropdown */}
+            {showRecent && recentUrls.length > 0 && (
+              <div className="absolute top-full left-0 right-0 mt-1.5 z-50 bg-[var(--bg-card)] border border-[var(--border)] rounded-xl shadow-xl overflow-hidden">
+                <div className="flex items-center justify-between px-3 py-2 border-b border-[var(--border)]">
+                  <span className="text-[10px] font-bold text-[var(--text-3)] uppercase tracking-wider flex items-center gap-1.5">
+                    <Clock size={10} /> Recent
+                  </span>
+                  <button
+                    onClick={() => {
+                      localStorage.removeItem(RECENT_KEY)
+                      setRecentUrls([])
+                      setShowRecent(false)
+                    }}
+                    className="text-[10px] text-[var(--text-3)] hover:text-red-400 transition-colors px-1">
+                    Clear all
+                  </button>
+                </div>
+                {recentUrls.map((u) => {
+                  let host = u
+                  try { host = new URL(u).hostname.replace('www.', '') } catch {}
+                  return (
+                    <button key={u}
+                      onClick={() => {
+                        setUrl(u); reset(); setShowRecent(false)
+                        setTimeout(() => analyze(u), 50)
+                      }}
+                      className="w-full flex items-center gap-2.5 px-3 py-2.5 hover:bg-[var(--bg-hover)] text-left transition-colors group border-b border-[var(--border)] last:border-0">
+                      <Clock size={11} className="text-[var(--text-3)] shrink-0" />
+                      <span className="text-[11px] text-[var(--text-3)] shrink-0 w-28 truncate">{host}</span>
+                      <span className="text-[11px] text-[var(--text-2)] truncate flex-1">{u}</span>
+                    </button>
+                  )
+                })}
+              </div>
+            )}
           </div>
           {/* Audio-only quick button */}
           {url.trim() && info?.type === 'video' && (

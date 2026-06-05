@@ -1,0 +1,25 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mediadl-config
+  namespace: mediadl
+data:
+  # Service URLs (internal cluster DNS)
+  REDIS_URL: "redis://redis-service:6379"
+  PYTHON_SERVICE_URL: "http://python-service:8000"
+  BACKEND_INTERNAL_URL: "http://backend-service:4000"
+  MYSQL_HOST: "mysql-service"
+  MYSQL_PORT: "3306"
+  MYSQL_DATABASE: "mediadl"
+  MYSQL_USER: "mediadl"
+  KAFKA_BROKER: "kafka-service:9092"
+  DOWNLOAD_DIR: "/downloads"
+  NODE_ENV: "production"
+  PORT: "4000"
+  WORKER_CONCURRENCY: "5"
+  # Next.js public vars (set per-environment in overlays)
+  NEXT_PUBLIC_API_URL: "https://YOUR_DOMAIN/api"
+  NEXT_PUBLIC_SITE_URL: "https://YOUR_DOMAIN"
+  SMTP_PROVIDER: "custom"
+  SMTP_PORT: "587"
+  SMTP_SECURE: "false"

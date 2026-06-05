@@ -1,0 +1,36 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+bases:
+  - ../../base
+
+namespace: mediadl-staging
+
+namePrefix: staging-
+
+images:
+  - name: mediadl-backend
+    newName: ghcr.io/YOUR_ORG/mediadl-backend
+    newTag: develop
+  - name: mediadl-frontend
+    newName: ghcr.io/YOUR_ORG/mediadl-frontend
+    newTag: develop
+  - name: mediadl-python-service
+    newName: ghcr.io/YOUR_ORG/mediadl-python-service
+    newTag: develop
+
+patches:
+  # Single replica in staging
+  - patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 1
+    target:
+      kind: Deployment
+
+configMapGenerator:
+  - name: mediadl-config
+    behavior: merge
+    literals:
+      - NODE_ENV=staging
+      - WORKER_CONCURRENCY=3
