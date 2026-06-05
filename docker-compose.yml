@@ -101,12 +101,29 @@ services:
       ADMIN_EMAILS: ${ADMIN_EMAILS:-}
       TMDB_API_KEY: ${TMDB_API_KEY:-}
       TMDB_ACCESS_TOKEN: ${TMDB_ACCESS_TOKEN:-}
+      # Socket.io is always on (same port as HTTP)
+      # Kafka — optional; remove or leave empty to disable
+      KAFKA_BROKER: kafka:9092
+      # Firebase Admin — optional push notifications
+      FIREBASE_SERVICE_ACCOUNT_JSON: ${FIREBASE_SERVICE_ACCOUNT_JSON:-}
+      FIREBASE_PROJECT_ID: ${FIREBASE_PROJECT_ID:-}
+      # SMTP (email)
+      SMTP_PROVIDER: ${SMTP_PROVIDER:-custom}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_SECURE: ${SMTP_SECURE:-false}
+      SMTP_FROM: ${SMTP_FROM:-}
+      SMTP_ADMIN_TO: ${SMTP_ADMIN_TO:-}
     depends_on:
       redis:
         condition: service_healthy
       python-service:
         condition: service_healthy
       mysql:
+        condition: service_healthy
+      kafka:
         condition: service_healthy
     restart: unless-stopped
     healthcheck:
@@ -131,6 +148,12 @@ services:
         NEXT_PUBLIC_ADSENSE_CLIENT: ${NEXT_PUBLIC_ADSENSE_CLIENT:-}
         NEXT_PUBLIC_TAWK_PROPERTY_ID: ${NEXT_PUBLIC_TAWK_PROPERTY_ID:-}
         NEXT_PUBLIC_WHATSAPP_NUMBER: ${NEXT_PUBLIC_WHATSAPP_NUMBER:-+1234567890}
+        NEXT_PUBLIC_FIREBASE_API_KEY: ${NEXT_PUBLIC_FIREBASE_API_KEY:-}
+        NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN: ${NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN:-}
+        NEXT_PUBLIC_FIREBASE_PROJECT_ID: ${NEXT_PUBLIC_FIREBASE_PROJECT_ID:-}
+        NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID: ${NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID:-}
+        NEXT_PUBLIC_FIREBASE_APP_ID: ${NEXT_PUBLIC_FIREBASE_APP_ID:-}
+        NEXT_PUBLIC_FIREBASE_VAPID_KEY: ${NEXT_PUBLIC_FIREBASE_VAPID_KEY:-}
     ports:
       - "3000:3000"
     environment:
@@ -145,6 +168,37 @@ services:
       backend:
         condition: service_healthy
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+  kafka:
+    image: apache/kafka:3.7.1
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      CLUSTER_ID: MkU3OEVBNTcwNTJENDM2Qk
+    healthcheck:
+      test: ["CMD", "/opt/kafka/bin/kafka-topics.sh", "--bootstrap-server", "localhost:9092", "--list"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+    volumes:
+      - kafka_data:/var/lib/kafka/data
     logging:
       driver: json-file
       options: { max-size: "10m", max-file: "3" }
@@ -166,3 +220,4 @@ services:
 volumes:
   mysql_data:
   redis_data:
+  kafka_data:

@@ -3,8 +3,8 @@ import IORedis from 'ioredis'
 import axios from 'axios'
 import type { DownloadJob } from '../types.js'
 
-const REDIS_URL  = process.env.REDIS_URL          ?? 'redis://localhost:6379'
-const PYTHON_URL = process.env.PYTHON_SERVICE_URL  ?? 'http://localhost:8000'
+const REDIS_URL   = process.env.REDIS_URL            ?? 'redis://localhost:6379'
+const PYTHON_URL  = process.env.PYTHON_SERVICE_URL    ?? 'http://localhost:8000'
 const CONCURRENCY = Number(process.env.WORKER_CONCURRENCY ?? 5)
 
 export const redisConnection = new IORedis(REDIS_URL, {
@@ -26,7 +26,21 @@ export function startWorker() {
     'downloads',
     async (job) => {
       const d = job.data
-      await axios.post(`${PYTHON_URL}/download`, {
+
+      // ── Notify socket + kafka of job start ──────────────────────────────────
+      const { watchJob }        = await import('../socket.js')
+      const { kafka: kfk }      = await import('../services/kafka.js')
+      watchJob(d.jobId)
+      kfk.downloadStarted(d.jobId, d.url).catch(() => {})
+
+      // ── Set initial progress ─────────────────────────────────────────────────
+      await redisConnection.set(
+        `job:${d.jobId}:progress`,
+        JSON.stringify({ status: 'starting', progress: 0 }),
+        'EX', 86400
+      ).catch(() => {})
+
+      const result = await axios.post(`${PYTHON_URL}/download`, {
         url:              d.url,
         job_id:           d.jobId,
         media_type:       d.mediaType,
@@ -52,6 +66,24 @@ export function startWorker() {
         speed_limit:          d.speedLimit           ?? null,
         concurrent_fragments: d.concurrentFragments  ?? 16,
       }, { timeout: 0 })
+
+      // ── On success: emit done event + FCM push ───────────────────────────────
+      const files: string[] = result.data?.files ?? []
+      const { emitJobDone } = await import('../socket.js')
+      emitJobDone(d.jobId, { files })
+      kfk.downloadCompleted(d.jobId, d.url, files).catch(() => {})
+
+      // ── Push notification to user (if signed in and token registered) ────────
+      if (d.userId) {
+        const { notifyUser } = await import('../services/fcm.js')
+        const label = d.title ?? (() => { try { return new URL(d.url).hostname } catch { return 'download' } })()
+        notifyUser(
+          d.userId,
+          'Download complete ✓',
+          `${label}${files.length > 1 ? ` · ${files.length} files` : ''}`,
+          '/download'
+        ).catch(() => {})
+      }
     },
     {
       connection: new IORedis(REDIS_URL, { maxRetriesPerRequest: null, enableReadyCheck: false }),
@@ -59,13 +91,17 @@ export function startWorker() {
     }
   )
 
-  worker.on('failed', (job, err) => {
+  worker.on('failed', async (job, err) => {
     if (!job) return
-    redisConnection.set(
-      `job:${job.data.jobId}:progress`,
-      JSON.stringify({ status: 'failed', progress: 0, error: err.message.slice(0, 300) }),
-      'EX', 86400
-    ).catch(() => {})
+    const progress = JSON.stringify({ status: 'failed', progress: 0, error: err.message.slice(0, 300) })
+    redisConnection.set(`job:${job.data.jobId}:progress`, progress, 'EX', 86400).catch(() => {})
+
+    // Emit via socket + kafka
+    const { emitJobFailed } = await import('../socket.js')
+    const { kafka: kfk }    = await import('../services/kafka.js')
+    emitJobFailed(job.data.jobId, err.message.slice(0, 300))
+    kfk.downloadFailed(job.data.jobId, job.data.url, err.message.slice(0, 300)).catch(() => {})
+
     console.error(`[worker] job ${job.id} failed: ${err.message}`)
   })
 

@@ -11,6 +11,7 @@ import LanguageProvider from '@/components/i18n/LanguageProvider'
 import { CountryProvider } from '@/components/widgets/CountrySwitcher'
 import PWAInstall from '@/components/widgets/PWAInstall'
 import CookieBanner from '@/components/widgets/CookieBanner'
+import WelcomeBanner from '@/components/widgets/WelcomeBanner'
 import './globals.css'
 
 const SITE  = process.env.NEXT_PUBLIC_SITE_URL  ?? 'https://mediadl.app'
@@ -192,6 +193,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           />
           <PWAInstall />
           <CookieBanner />
+          <WelcomeBanner />
           </CountryProvider>
           </LanguageProvider>
         </ThemeProvider>

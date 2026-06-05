@@ -9,6 +9,7 @@ export interface DownloadJob {
   title?:         string
   thumbnail?:     string
   addedAt:        number
+  userId?:        string   // Clerk user id — used for FCM push notifications
   // Advanced options
   maxItems?:      number
   startIndex?:    number

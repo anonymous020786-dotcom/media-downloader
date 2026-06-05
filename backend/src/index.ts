@@ -13,8 +13,11 @@ import storageRouter  from './routes/storage.js'
 import contentRouter  from './routes/content.js'
 import tmdbRouter     from './routes/tmdb.js'
 import newsRouter     from './routes/news.js'
+import { createServer } from 'node:http'
 import { startWorker } from './workers/downloadWorker.js'
 import { runMigrations } from './db.js'
+import { initSocket } from './socket.js'
+import notifRouter from './routes/notifications.js'
 
 const app  = express()
 const PORT = Number(process.env.PORT ?? 4000)
@@ -78,6 +81,7 @@ app.use('/api/storage',  storageRouter)
 app.use('/api/content',  contentRouter)
 app.use('/api/tmdb',     tmdbRouter)
 app.use('/api/news',     newsRouter)
+app.use('/api/notifications', notifRouter)
 
 // Serve uploaded media (images/files embedded in blog posts)
 import { UPLOAD_DIR } from './routes/content.js'
@@ -126,9 +130,18 @@ app.use((err: Error, _req: express.Request, res: express.Response, _next: expres
   res.status(500).json({ error: ENV === 'production' ? 'Internal server error' : err.message })
 })
 
-const server = app.listen(PORT, async () => {
+// ── HTTP server (wraps Express so Socket.io can share the same port) ──────────
+const httpServer = createServer(app)
+initSocket(httpServer)
+
+const server = httpServer.listen(PORT, async () => {
   console.log(`[server] v3.0.0 (${ENV}) → http://localhost:${PORT}`)
   try { await runMigrations(); console.log('[db] migrations ok') } catch (e: any) { console.error('[db] migration failed:', e.message) }
+  // Start Kafka producer (non-blocking; skipped if KAFKA_BROKER not set)
+  import('./services/kafka.js').then(({ isEnabled }) => {
+    if (isEnabled()) console.log('[kafka] enabled →', process.env.KAFKA_BROKER)
+    else console.log('[kafka] disabled (set KAFKA_BROKER to enable)')
+  }).catch(() => {})
   startWorker()
 })
 

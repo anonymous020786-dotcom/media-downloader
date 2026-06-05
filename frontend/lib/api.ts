@@ -215,15 +215,57 @@ export const adminDeleteBlog = (id: number) =>
   _f(`/api/content/admin/blog/${id}`, { method:'DELETE' })
 
 export function subscribeProgress(jobId: string, onUpdate: (p: JobProgress) => void, onDone: () => void): () => void {
+  // Try Socket.io first; if not connected yet, fall back to SSE
+  // (socket.ts lazy-connects, so may not be ready on the first job)
+  let socketUnsub: (() => void) | null = null
+  let esClosed = false
+
+  // Socket.io path (non-blocking attempt)
+  if (typeof window !== 'undefined') {
+    import('./socket').then(({ subscribeJobSocket, getSocket }) => {
+      getSocket() // trigger init
+      // Give socket 400 ms to connect before giving up and using SSE only
+      setTimeout(() => {
+        if (esClosed) return
+        const unsub = subscribeJobSocket(jobId, onUpdate, onDone)
+        if (unsub) {
+          socketUnsub = unsub
+          // Socket connected — SSE is also running as backup; let both work
+        }
+      }, 400)
+    }).catch(() => {})
+  }
+
+  // SSE always starts immediately as a reliable baseline
   const es = new EventSource(`${BASE}/api/jobs/${jobId}/progress`)
   es.onmessage = (e) => {
     const d: JobProgress = JSON.parse(e.data)
     onUpdate(d)
-    if (d.status === 'completed' || d.status === 'failed') { es.close(); onDone() }
+    if (d.status === 'completed' || d.status === 'failed') { es.close(); esClosed = true; onDone() }
   }
-  es.onerror = () => { es.close(); onDone() }
-  return () => es.close()
+  es.onerror = () => { es.close(); esClosed = true; onDone() }
+
+  return () => {
+    esClosed = true
+    es.close()
+    socketUnsub?.()
+  }
 }
+
+// ── Push notification token registration ─────────────────────────────────────
+export const registerPushToken  = (token: string, deviceId?: string) => {
+  const headers: Record<string,string> = { 'Content-Type': 'application/json' }
+  if (deviceId) headers['X-Device-Id'] = deviceId
+  return _f<{ success: boolean; enabled: boolean }>('/api/notifications/register', {
+    method: 'POST', headers, body: JSON.stringify({ token }),
+  })
+}
+export const unregisterPushToken = (deviceId?: string) => {
+  const headers: Record<string,string> = {}
+  if (deviceId) headers['X-Device-Id'] = deviceId
+  return _f('/api/notifications/unregister', { method: 'DELETE', headers })
+}
+export const notificationStatus  = () => _f<{ fcm_enabled: boolean }>('/api/notifications/status')
 
 // ── Formatters ────────────────────────────────────────────────────────────────
 export const fmtBytes = (b?: number | null) => {
