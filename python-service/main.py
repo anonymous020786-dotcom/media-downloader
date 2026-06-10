@@ -555,79 +555,242 @@ async def _do_analyze(url: str) -> dict:
 
 class SearchReq(BaseModel):
     query:    str
-    kind:     Literal["web","file","image","video"] = "web"
+    kind:     Literal["web","file","image","video","torrent","news"] = "web"
     filetype: Optional[str] = None     # e.g. pdf, zip, mp3 (for kind=file)
     limit:    int = 30                 # results per page
     page:     int = 1                  # 1-based page index (for infinite pagination)
 
 
-SEARCH_CACHE_TTL = int(os.getenv("SEARCH_CACHE_TTL", "900"))   # 15 min
+SEARCH_CACHE_TTL   = int(os.getenv("SEARCH_CACHE_TTL",    "1800"))  # 30 min
+SEARCH_BATCH_SIZE  = int(os.getenv("SEARCH_BATCH_SIZE",   "200"))   # pre-fetch
+
+
+# ── Torrent scraper: 1337x + Nyaa.si ─────────────────────────────────────────
+async def _scrape_1337x(query: str, page: int) -> list[dict]:
+    q = query.strip().replace(' ', '+')
+    url = f"https://1337x.to/search/{q}/{page}/"
+    try:
+        async with httpx.AsyncClient(headers={"User-Agent": _ua(), **_BASE_HDR},
+                                     timeout=18, follow_redirects=True) as c:
+            r = await c.get(url)
+        if r.status_code != 200:
+            return []
+        soup = BeautifulSoup(r.text, "html.parser")
+        rows = soup.select("table.table-list tbody tr")
+        out = []
+        for row in rows:
+            tds = row.find_all("td")
+            if len(tds) < 5:
+                continue
+            links = tds[0].find_all("a")
+            if not links:
+                continue
+            detail = links[-1]
+            title = detail.get_text(strip=True)
+            href  = detail.get("href", "")
+            detail_url = f"https://1337x.to{href}" if href.startswith("/") else href
+            seeds   = tds[1].get_text(strip=True)
+            leeches = tds[2].get_text(strip=True)
+            size    = tds[4].get_text(strip=True).split("\n")[0].strip()
+            out.append({"title": title, "url": detail_url, "kind": "torrent",
+                        "seeds": seeds, "leechers": leeches, "size": size, "source": "1337x"})
+        return out
+    except Exception:
+        return []
+
+
+async def _scrape_nyaa(query: str, page: int) -> list[dict]:
+    q = query.strip().replace(' ', '+')
+    url = f"https://nyaa.si/?f=0&c=0_0&q={q}&p={page}"
+    try:
+        async with httpx.AsyncClient(headers={"User-Agent": _ua(), **_BASE_HDR},
+                                     timeout=18, follow_redirects=True) as c:
+            r = await c.get(url)
+        if r.status_code != 200:
+            return []
+        soup = BeautifulSoup(r.text, "html.parser")
+        rows = soup.select("table.torrent-list tbody tr")
+        out = []
+        for row in rows:
+            tds = row.find_all("td")
+            if len(tds) < 7:
+                continue
+            a = tds[1].find("a", href=lambda h: h and "/view/" in h)
+            if not a:
+                continue
+            title = a.get_text(strip=True)
+            href  = a.get("href", "")
+            detail_url = f"https://nyaa.si{href}" if href.startswith("/") else href
+            magnet_a = tds[2].find("a", href=lambda h: h and h.startswith("magnet:"))
+            magnet   = magnet_a.get("href", "") if magnet_a else ""
+            size    = tds[3].get_text(strip=True)
+            seeds   = tds[5].get_text(strip=True)
+            leeches = tds[6].get_text(strip=True)
+            out.append({"title": title, "url": detail_url, "kind": "torrent",
+                        "magnet": magnet, "seeds": seeds, "leechers": leeches,
+                        "size": size, "source": "nyaa"})
+        return out
+    except Exception:
+        return []
+
+
+async def _fetch_torrent_results(query: str, page: int) -> list[dict]:
+    r1, r2 = await asyncio.gather(_scrape_1337x(query, page), _scrape_nyaa(query, page))
+    combined = r1 + r2
+    seen, deduped = set(), []
+    for item in combined:
+        u = item.get("url")
+        if u and u not in seen:
+            seen.add(u); deduped.append(item)
+    return deduped
+
+
+# ── Bing text fallback (used when DDG returns 0 results) ─────────────────────
+async def _bing_fallback(query: str, kind: str, ft: str, limit: int) -> list[dict]:
+    q = f"{query} filetype:{ft}" if kind == "file" and ft else query
+    url = f"https://www.bing.com/search?q={q.replace(' ', '+')}&count={limit}"
+    try:
+        async with httpx.AsyncClient(
+            headers={"User-Agent": _ua(), "Accept-Language": "en-US,en;q=0.9"},
+            timeout=18, follow_redirects=True
+        ) as c:
+            r = await c.get(url)
+        if r.status_code != 200:
+            return []
+        soup = BeautifulSoup(r.text, "html.parser")
+        out = []
+        for li in soup.select("#b_results > li.b_algo"):
+            a = li.find("a")
+            if not a:
+                continue
+            href = a.get("href", "")
+            title = a.get_text(strip=True)
+            caption = li.select_one(".b_caption p") or li.find("p")
+            snippet = caption.get_text(strip=True) if caption else ""
+            if href and href.startswith("http"):
+                out.append({"title": title, "url": href, "snippet": snippet, "kind": kind})
+        return out
+    except Exception:
+        return []
 
 
 @app.post("/search")
 async def search(req: SearchReq):
-    """Web / file / image / video search via DuckDuckGo (no API key). Paginated &
-       Redis-cached so users can load effectively unlimited results page by page.
-       For kind=file, builds a `filetype:` query to surface real downloadable files."""
+    """Multi-engine search: DuckDuckGo (web/file/image/video/news), 1337x+Nyaa (torrent).
+       Pre-fetches up to 200 results on first request, stores in Redis, serves pages from
+       cache — giving true infinite pagination with no extra DDG calls per page."""
     q = req.query.strip()
     if not q:
         raise HTTPException(400, "Empty query")
 
     per_page = max(1, min(req.limit, 50))
     page     = max(1, req.page)
+    ft       = (req.filetype or "").strip().lstrip(".")
 
-    ft = (req.filetype or "").strip().lstrip(".")
-    ck = _cache_key("search", f"{req.kind}|{ft}|{per_page}|{page}|{q}")
-    cached = await _cache_get(ck)
-    if cached:
-        cached["_cached"] = True
-        return cached
-
-    def _run():
-        from ddgs import DDGS
-        results = []
-        with DDGS() as ddgs:
-            if req.kind == "image":
-                for r in ddgs.images(q, max_results=per_page, page=page):
-                    results.append({"title": r.get("title",""), "url": r.get("image"),
-                                    "thumbnail": r.get("thumbnail"), "source": r.get("url"),
-                                    "kind": "image"})
-            elif req.kind == "video":
-                for r in ddgs.videos(q, max_results=per_page, page=page):
-                    results.append({"title": r.get("title",""), "url": r.get("content") or r.get("url"),
-                                    "thumbnail": (r.get("images") or {}).get("medium"),
-                                    "source": r.get("url"), "duration": r.get("duration"),
-                                    "kind": "video"})
-            else:
-                query = q
-                if req.kind == "file" and ft and "filetype:" not in q:
-                    query = f"{q} filetype:{ft}"
-                for r in ddgs.text(query, max_results=per_page, page=page):
-                    results.append({"title": r.get("title",""), "url": r.get("href"),
-                                    "snippet": r.get("body",""), "kind": req.kind})
-        # de-dupe within the page by URL
-        seen, deduped = set(), []
-        for r in results:
-            u = r.get("url")
-            if u and u not in seen:
-                seen.add(u); deduped.append(r)
-        return deduped
-
-    try:
-        results = await asyncio.wait_for(
-            asyncio.get_event_loop().run_in_executor(None, _run), timeout=30)
+    # ── Torrent: scrape per-page (results change; don't pre-batch) ────────────
+    if req.kind == "torrent":
+        ck = _cache_key("search", f"torrent|{page}|{q}")
+        cached = await _cache_get(ck)
+        if cached:
+            cached["_cached"] = True
+            return cached
+        try:
+            results = await asyncio.wait_for(_fetch_torrent_results(q, page), timeout=30)
+        except asyncio.TimeoutError:
+            raise HTTPException(504, "Torrent search timed out — try again")
+        except Exception as e:
+            raise HTTPException(502, f"Torrent search failed: {str(e)[:200]}")
         payload = {
-            "query": q, "kind": req.kind, "page": page, "per_page": per_page,
-            "count": len(results), "has_more": len(results) >= per_page,
-            "results": results,
+            "query": q, "kind": "torrent", "page": page, "per_page": per_page,
+            "count": len(results), "total": None, "has_more": len(results) >= 20,
+            "results": results[:per_page],
         }
         if results:
             await _cache_set(ck, payload, ttl=SEARCH_CACHE_TTL)
         return payload
-    except asyncio.TimeoutError:
-        raise HTTPException(504, "Search timed out — try again")
-    except Exception as e:
-        raise HTTPException(502, f"Search failed: {str(e)[:200]}")
+
+    # ── DDG kinds: pre-fetch 200 results once, cache, serve pages from cache ──
+    all_ck = _cache_key("search_all", f"{req.kind}|{ft}|{q}")
+    all_cached = await _cache_get(all_ck)
+
+    if all_cached:
+        all_results = all_cached["results"]
+    else:
+        def _run_ddg():
+            from ddgs import DDGS
+            results: list[dict] = []
+            with DDGS() as ddgs:
+                if req.kind == "image":
+                    for r in ddgs.images(q, max_results=SEARCH_BATCH_SIZE):
+                        url_v = r.get("image")
+                        if url_v:
+                            results.append({"title": r.get("title", ""), "url": url_v,
+                                            "thumbnail": r.get("thumbnail"), "source": r.get("url"),
+                                            "kind": "image"})
+                elif req.kind == "video":
+                    for r in ddgs.videos(q, max_results=SEARCH_BATCH_SIZE):
+                        url_v = r.get("content") or r.get("url")
+                        if url_v:
+                            results.append({"title": r.get("title", ""), "url": url_v,
+                                            "thumbnail": (r.get("images") or {}).get("medium"),
+                                            "source": r.get("url"), "duration": r.get("duration"),
+                                            "kind": "video"})
+                elif req.kind == "news":
+                    for r in ddgs.news(q, max_results=SEARCH_BATCH_SIZE):
+                        url_v = r.get("url")
+                        if url_v:
+                            results.append({"title": r.get("title", ""), "url": url_v,
+                                            "snippet": r.get("body", ""),
+                                            "thumbnail": r.get("image"),
+                                            "source": r.get("source", ""),
+                                            "date": r.get("date", ""),
+                                            "kind": "news"})
+                else:
+                    query_str = f"{q} filetype:{ft}" if req.kind == "file" and ft and "filetype:" not in q else q
+                    for r in ddgs.text(query_str, max_results=SEARCH_BATCH_SIZE):
+                        url_v = r.get("href")
+                        if url_v:
+                            results.append({"title": r.get("title", ""), "url": url_v,
+                                            "snippet": r.get("body", ""), "kind": req.kind})
+            seen, deduped = set(), []
+            for r in results:
+                u = r.get("url")
+                if u and u not in seen:
+                    seen.add(u); deduped.append(r)
+            return deduped
+
+        try:
+            all_results = await asyncio.wait_for(
+                asyncio.get_event_loop().run_in_executor(None, _run_ddg), timeout=45)
+        except asyncio.TimeoutError:
+            raise HTTPException(504, "Search timed out — try again")
+        except Exception as e:
+            raise HTTPException(502, f"Search failed: {str(e)[:200]}")
+
+        # Bing fallback when DDG comes up empty for web/file searches
+        if not all_results and req.kind in ("web", "file"):
+            try:
+                all_results = await asyncio.wait_for(
+                    _bing_fallback(q, req.kind, ft, SEARCH_BATCH_SIZE), timeout=25)
+            except Exception:
+                pass
+
+        if all_results:
+            await _cache_set(all_ck, {"results": all_results}, ttl=SEARCH_CACHE_TTL)
+
+    # Slice the requested page from the cached full set
+    start         = (page - 1) * per_page
+    end           = start + per_page
+    page_results  = all_results[start:end]
+    has_more      = end < len(all_results)
+
+    payload = {
+        "query": q, "kind": req.kind, "page": page, "per_page": per_page,
+        "count": len(page_results), "total": len(all_results),
+        "has_more": has_more,
+        "results": page_results,
+    }
+    return payload
 
 
 # ── Social people / profile discovery ─────────────────────────────────────────

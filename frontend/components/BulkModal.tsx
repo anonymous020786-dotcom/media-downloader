@@ -30,8 +30,8 @@ export default function BulkModal({ onClose, onSubmit }: Props) {
         {/* Body */}
         <div className="p-5 space-y-3">
           <p className="text-slate-500 text-xs leading-relaxed">
-            Paste one URL per line — videos, images, or page URLs all work.
-            Each URL is analyzed individually and queued with its best default format.
+            Paste one URL per line — videos, images, page URLs, or direct file links all work.
+            Up to 200 URLs queued in one batch.
           </p>
           <textarea
             value={text}

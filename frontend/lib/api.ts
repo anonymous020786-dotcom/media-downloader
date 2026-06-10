@@ -43,12 +43,19 @@ export const analyzePlaylist = (url: string) =>
     body: JSON.stringify({ url }),
   })
 
-export interface SearchResult { title: string; url: string; snippet?: string; thumbnail?: string; source?: string; duration?: string; kind: string }
-export interface SearchResponse { query: string; kind: string; page: number; per_page: number; count: number; has_more: boolean; results: SearchResult[]; _cached?: boolean }
-export const searchWeb = (query: string, kind: 'web'|'file'|'image'|'video' = 'web', filetype?: string, page = 1) =>
+export interface SearchResult {
+  title: string; url: string; snippet?: string; thumbnail?: string
+  source?: string; duration?: string; kind: string
+  // torrent extras
+  seeds?: string; leechers?: string; size?: string; magnet?: string
+  // news extras
+  date?: string
+}
+export interface SearchResponse { query: string; kind: string; page: number; per_page: number; count: number; total?: number; has_more: boolean; results: SearchResult[]; _cached?: boolean }
+export const searchWeb = (query: string, kind: 'web'|'file'|'image'|'video'|'torrent'|'news' = 'web', filetype?: string, page = 1, limit = 30) =>
   _f<SearchResponse>('/api/analyze/search', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ query, kind, filetype, limit: 30, page }),
+    body: JSON.stringify({ query, kind, filetype, limit, page }),
   })
 
 export const queueDownload = (payload: {
@@ -159,7 +166,7 @@ export const batchDownload = (items: BatchItem[], shared: Partial<AdvancedOption
   _f<{ count: number; jobs: BatchJobResult[] }>('/api/download/batch', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      items,
+      items: items.slice(0, 200),
       mediaType:      shared.mediaType ?? 'video',
       format:         shared.format    ?? 'mp4',
       quality:        shared.quality   ?? 'best',

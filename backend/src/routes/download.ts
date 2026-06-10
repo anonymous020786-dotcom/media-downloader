@@ -117,8 +117,8 @@ router.post('/batch', async (req, res) => {
   if (!Array.isArray(items) || items.length === 0) {
     res.status(400).json({ error: 'items array is required' }); return
   }
-  if (items.length > 50) {
-    res.status(400).json({ error: 'Maximum 50 items per batch' }); return
+  if (items.length > 200) {
+    res.status(400).json({ error: 'Maximum 200 items per batch' }); return
   }
 
   const jobs: Array<{ jobId: string; url: string; title?: string }> = []
