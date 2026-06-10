@@ -462,7 +462,712 @@ async def analyze(req: AnalyzeReq):
     return result
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# CUSTOM SITE EXTRACTORS  (sites yt-dlp doesn't support)
+# ─────────────────────────────────────────────────────────────────────────────
+
 _PAT_COM_RE = re.compile(r'^https?://(?:www\.)?pat\.com/-?(\d+(?:\d+)*)$')
+
+# Pixeldrain  https://pixeldrain.com/u/{id}  or  /l/{id}  (list)
+_PIXELDRAIN_RE = re.compile(
+    r'^https?://(?:www\.)?pixeldrain\.com/(?:u|l)/([A-Za-z0-9_-]+)', re.I)
+
+# Streamtape  https://streamtape.com/v/{id}
+_STREAMTAPE_RE = re.compile(
+    r'^https?://(?:www\.)?streamtape\.(?:com|to|cc|net|xyz|site)/(?:v|e)/([A-Za-z0-9_-]+)', re.I)
+
+# Bunkr  https://bunkr.sk/v/{slug}  or  /i/{slug}  or  /a/{slug}  (album)
+_BUNKR_RE = re.compile(
+    r'^https?://bunkr\.(?:sk|si|ph|cr|fi|su|is|to|la|ru|black)/([aiv])/([A-Za-z0-9_.-]+)', re.I)
+
+# Erome  https://www.erome.com/a/{id}
+_EROME_RE = re.compile(
+    r'^https?://(?:www\.)?erome\.com/a/([A-Za-z0-9_-]+)', re.I)
+
+# Doodstream  https://dood.wf/d/{id}  (many mirror domains)
+_DOODSTREAM_RE = re.compile(
+    r'^https?://(?:www\.)?(?:dood|ds2play)\.'
+    r'(?:wf|cx|sh|pm|yt|so|to|la|li|ru|re|stream|cloud|watch|tube|live|rest|pro|xxx|red|boo|fun|id|link|run|one|pw|biz|monster|watch|video|site|click|surf)/(?:d|e|f|v|[A-Za-z0-9]+)/([A-Za-z0-9_-]+)', re.I)
+
+# Cyberdrop  https://cyberdrop.me/a/{id}
+_CYBERDROP_RE = re.compile(
+    r'^https?://(?:www\.)?cyberdrop\.(?:me|cc|to|nl|org)/(?:a|f)/([A-Za-z0-9_-]+)', re.I)
+
+# Mixdrop  https://mixdrop.sb/f/{id}
+_MIXDROP_RE = re.compile(
+    r'^https?://(?:www\.)?mixdrop\.(?:sb|co|bz|to|club|vc|ag|ch|gl|ps|sx|ac|pk|ws)/(?:f|e)/([A-Za-z0-9_-]+)', re.I)
+
+
+def _is_custom_site(url: str) -> bool:
+    return bool(
+        _PAT_COM_RE.match(url) or _PIXELDRAIN_RE.match(url) or _STREAMTAPE_RE.match(url) or
+        _BUNKR_RE.match(url) or _EROME_RE.match(url) or _DOODSTREAM_RE.match(url) or
+        _CYBERDROP_RE.match(url) or _MIXDROP_RE.match(url)
+    )
+
+
+# ── Pixeldrain ────────────────────────────────────────────────────────────────
+
+async def _analyze_pixeldrain(url: str) -> dict:
+    m = _PIXELDRAIN_RE.match(url)
+    if not m:
+        raise ValueError("Invalid pixeldrain URL")
+    fid = m.group(1)
+    is_list = "/l/" in url.lower()
+
+    try:
+        async with httpx.AsyncClient(follow_redirects=True,
+                                     timeout=httpx.Timeout(10, connect=8),
+                                     verify=VERIFY_SSL) as c:
+            if is_list:
+                r = await c.get(f"https://pixeldrain.com/api/list/{fid}",
+                    headers={"User-Agent": _ua()})
+                if r.status_code == 200:
+                    data = r.json()
+                    files = data.get("files", [])
+                    return {
+                        "type": "playlist",
+                        "title": data.get("title", f"Pixeldrain list {fid}"),
+                        "extractor": "pixeldrain",
+                        "playlist_count": len(files),
+                        "_pd_list_id": fid,
+                    }
+            r = await c.get(f"https://pixeldrain.com/api/file/{fid}/info",
+                headers={"User-Agent": _ua(), "Accept": "application/json"})
+            if r.status_code == 200:
+                d = r.json()
+                ct = d.get("mime_type", "")
+                is_video = ct.startswith("video/") or ct.startswith("audio/")
+                return {
+                    "type": "video" if is_video else "file",
+                    "title": d.get("name", fid),
+                    "thumbnail": None, "duration": None,
+                    "uploader": d.get("user_name", ""),
+                    "extractor": "pixeldrain",
+                    "qualities": [], "video_formats": ["original"],
+                    "size": d.get("size"), "content_type": ct,
+                    "_pd_file_id": fid,
+                }
+    except Exception:
+        pass
+    return {"type": "file", "title": f"Pixeldrain {fid}", "extractor": "pixeldrain",
+            "_pd_file_id": fid, "video_formats": ["original"]}
+
+
+async def _dl_pixeldrain(req: DownloadReq, job_dir: Path):
+    m = _PIXELDRAIN_RE.match(req.url)
+    if not m:
+        raise HTTPException(400, "Invalid pixeldrain URL")
+    fid = m.group(1)
+    is_list = "/l/" in req.url.lower()
+
+    await _prog(req.job_id, {"status": "downloading", "progress": 2})
+
+    if is_list:
+        async with httpx.AsyncClient(follow_redirects=True, timeout=15, verify=VERIFY_SSL) as c:
+            r = await c.get(f"https://pixeldrain.com/api/list/{fid}",
+                headers={"User-Agent": _ua()})
+        files = r.json().get("files", []) if r.status_code == 200 else []
+        total = len(files)
+        for i, f in enumerate(files, 1):
+            sub_url = f"https://pixeldrain.com/api/file/{f['id']}?download"
+            out = _uniq(job_dir, _safe(f.get("name", f["id"])))
+            hdrs = {"User-Agent": _ua(), "Accept": "*/*",
+                    "Referer": "https://pixeldrain.com/"}
+            ok = await _aria2_dl(sub_url, out, req.job_id, "https://pixeldrain.com/", req.proxy)
+            if not ok:
+                async with httpx.AsyncClient(follow_redirects=True, timeout=httpx.Timeout(None, connect=20),
+                                             verify=VERIFY_SSL, headers=hdrs) as c:
+                    async with c.stream("GET", sub_url) as resp:
+                        if resp.status_code in (200, 206):
+                            async with aiofiles.open(out, "wb") as fo:
+                                async for chunk in resp.aiter_bytes(1 << 20):
+                                    await fo.write(chunk)
+            _prog_s(req.job_id, {"status": "downloading", "progress": min(95, int(i / total * 95))})
+    else:
+        dl_url = f"https://pixeldrain.com/api/file/{fid}?download"
+        out = _uniq(job_dir, f"{fid}.bin")
+        try:
+            async with httpx.AsyncClient(follow_redirects=True, timeout=15, verify=VERIFY_SSL) as c:
+                r = await c.get(f"https://pixeldrain.com/api/file/{fid}/info",
+                    headers={"User-Agent": _ua()})
+            if r.status_code == 200:
+                name = r.json().get("name", fid)
+                out = _uniq(job_dir, _safe(name))
+        except Exception:
+            pass
+
+        ok = await _aria2_dl(dl_url, out, req.job_id, "https://pixeldrain.com/", req.proxy)
+        if not ok:
+            async with httpx.AsyncClient(follow_redirects=True, http2=True,
+                                         timeout=httpx.Timeout(None, connect=20),
+                                         verify=VERIFY_SSL, proxy=req.proxy or None,
+                                         headers={"User-Agent": _ua()}) as c:
+                async with c.stream("GET", dl_url) as resp:
+                    resp.raise_for_status()
+                    total_b = int(resp.headers.get("content-length", 0)) or 0
+                    done = 0
+                    async with aiofiles.open(out, "wb") as fo:
+                        async for chunk in resp.aiter_bytes(1 << 20):
+                            await fo.write(chunk)
+                            done += len(chunk)
+                            if total_b:
+                                _prog_s(req.job_id, {"status": "downloading",
+                                    "progress": min(95, int(done / total_b * 95)),
+                                    "downloaded": done, "total": total_b})
+
+    files = [f.name for f in job_dir.iterdir() if f.is_file()]
+    await _prog(req.job_id, {"status": "completed", "progress": 100, "files": files})
+
+
+# ── Streamtape ────────────────────────────────────────────────────────────────
+
+async def _analyze_streamtape(url: str) -> dict:
+    m = _STREAMTAPE_RE.match(url)
+    vid = m.group(1) if m else "unknown"
+    return {
+        "type": "video", "title": f"Streamtape video {vid}",
+        "thumbnail": None, "duration": None, "uploader": "",
+        "extractor": "streamtape", "qualities": [], "video_formats": ["mp4"],
+        "_st_id": vid,
+    }
+
+
+async def _resolve_streamtape(url: str) -> Optional[str]:
+    """Extract the real MP4 URL from a streamtape page."""
+    m = _STREAMTAPE_RE.match(url)
+    if not m:
+        return None
+    vid = m.group(1)
+    # Try all known domains
+    for domain in ["streamtape.com", "streamtape.to", "streamtape.cc", "streamta.pe"]:
+        try:
+            page_url = f"https://{domain}/v/{vid}"
+            async with httpx.AsyncClient(follow_redirects=True, timeout=20, verify=VERIFY_SSL) as c:
+                r = await c.get(page_url, headers={
+                    "User-Agent": _ua(),
+                    "Referer": f"https://{domain}/",
+                })
+            if r.status_code != 200:
+                continue
+            html = r.text
+            # Pattern 1: two concatenated substrings that form the URL
+            # innerHTML = ("//streamtape.com/get_video?...").substring(0) + ("xxxx...").substring(N)
+            m2 = re.search(
+                r'innerHTML\s*=\s*["\`]([^"\`]{20,300})["\`]\s*\+\s*["\`]([^"\`]{5,100})["\`]\.substring\((\d+)\)',
+                html)
+            if m2:
+                part1, part2, n = m2.group(1), m2.group(2), int(m2.group(3))
+                raw = part1 + part2[n:]
+                if raw.startswith("//"):
+                    raw = "https:" + raw
+                return raw.split("&stream")[0] if "&stream=" in raw else raw
+
+            # Pattern 2: robotlink element contains get_video URL directly
+            m3 = re.search(r'id=["\']robotlink["\'][^>]*>([^<]{20,400})<', html)
+            if m3:
+                raw = m3.group(1).strip()
+                if raw.startswith("//"):
+                    raw = "https:" + raw
+                return raw
+
+            # Pattern 3: document.getElementById('robotlink') assignment
+            m4 = re.search(
+                r'getElementById\(["\']robotlink["\']\)\.innerHTML\s*=\s*["\`]([^"\`]{20,300})["\`]',
+                html)
+            if m4:
+                raw = m4.group(1)
+                if raw.startswith("//"):
+                    raw = "https:" + raw
+                return raw
+
+            # Pattern 4: get_video URL embedded in a variable
+            m5 = re.search(
+                r'(?:var\s+\w+|=)\s*["\`]((?:https?:)?//[^"\'`\s]{20,300}get_video[^"\'`\s]{10,200})["\`]',
+                html)
+            if m5:
+                raw = m5.group(1)
+                if raw.startswith("//"):
+                    raw = "https:" + raw
+                return raw
+
+        except Exception:
+            continue
+    return None
+
+
+async def _dl_streamtape(req: DownloadReq, job_dir: Path):
+    await _prog(req.job_id, {"status": "starting", "progress": 5, "info": "Resolving streamtape URL…"})
+    video_url = await _resolve_streamtape(req.url)
+    if not video_url:
+        raise HTTPException(502, "Could not extract streamtape video URL — the video may have expired or been removed")
+    await _prog(req.job_id, {"status": "downloading", "progress": 10})
+    m = _STREAMTAPE_RE.match(req.url)
+    vid = m.group(1) if m else "video"
+    out = _uniq(job_dir, f"streamtape_{vid}.mp4")
+    headers = {"User-Agent": _ua(), "Referer": req.url, "Accept": "video/mp4,video/*;q=0.9,*/*;q=0.8"}
+    ok = await _aria2_dl(video_url, out, req.job_id, req.url, req.proxy)
+    if not ok:
+        async with httpx.AsyncClient(follow_redirects=True, http2=True,
+                                     timeout=httpx.Timeout(None, connect=20),
+                                     verify=VERIFY_SSL, proxy=req.proxy or None,
+                                     headers=headers) as c:
+            async with c.stream("GET", video_url) as resp:
+                if resp.status_code == 403:
+                    raise HTTPException(403, "Streamtape returned 403 — link may have expired")
+                resp.raise_for_status()
+                total_b = int(resp.headers.get("content-length", 0)) or 0
+                done = 0
+                async with aiofiles.open(out, "wb") as fo:
+                    async for chunk in resp.aiter_bytes(1 << 20):
+                        await fo.write(chunk)
+                        done += len(chunk)
+                        if total_b:
+                            _prog_s(req.job_id, {"status": "downloading",
+                                "progress": min(95, int(done / total_b * 95)),
+                                "downloaded": done, "total": total_b})
+    files = [f.name for f in job_dir.iterdir() if f.is_file()]
+    await _prog(req.job_id, {"status": "completed", "progress": 100, "files": files})
+
+
+# ── Bunkr ─────────────────────────────────────────────────────────────────────
+
+async def _analyze_bunkr(url: str) -> dict:
+    m = _BUNKR_RE.match(url)
+    if not m:
+        raise ValueError("Invalid bunkr URL")
+    kind, slug = m.group(1).lower(), m.group(2)
+    is_album = kind == "a"
+    return {
+        "type": "playlist" if is_album else "video",
+        "title": f"Bunkr {'album' if is_album else 'file'} {slug}",
+        "thumbnail": None, "duration": None, "uploader": "",
+        "extractor": "bunkr",
+        "qualities": [], "video_formats": ["original"],
+        "_bunkr_kind": kind, "_bunkr_slug": slug,
+    }
+
+
+_BUNKR_DOMAINS = ["bunkr.sk", "bunkr.si", "bunkr.ph", "bunkr.cr", "bunkr.fi"]
+
+
+async def _bunkr_cdn_url(domain: str, kind: str, slug: str) -> Optional[str]:
+    """Fetch a bunkr file/video/image page and return the CDN download URL."""
+    page_url = f"https://{domain}/{kind}/{slug}"
+    try:
+        async with httpx.AsyncClient(follow_redirects=True, timeout=20, verify=VERIFY_SSL) as c:
+            r = await c.get(page_url, headers={"User-Agent": _ua(), "Referer": f"https://{domain}/"})
+        if r.status_code != 200:
+            return None
+        html = r.text
+        # og:video (highest priority)
+        m = re.search(r'<meta[^>]+(?:og:video)[^>]+content=["\']([^"\']{10,300})["\']', html, re.I)
+        if m:
+            return m.group(1)
+        # <source src="...">
+        m = re.search(r'<source[^>]+src=["\']([^"\']{10,300})["\']', html, re.I)
+        if m:
+            return m.group(1)
+        # direct CDN links (cdn.bunkr.*, i-*.bunkr.*)
+        m = re.search(r'https?://(?:cdn|i-[a-z]+)\.bunkr\.[a-z]+/[^"\'<>\s]{5,200}', html, re.I)
+        if m:
+            return m.group(0)
+        # download button href
+        m = re.search(r'href=["\']([^"\']{10,300}(?:cdn|download|bunkr)[^"\']{0,100})["\']', html, re.I)
+        if m and m.group(1).startswith("http"):
+            return m.group(1)
+    except Exception:
+        pass
+    return None
+
+
+async def _dl_bunkr(req: DownloadReq, job_dir: Path):
+    m = _BUNKR_RE.match(req.url)
+    if not m:
+        raise HTTPException(400, "Invalid bunkr URL")
+    kind, slug = m.group(1).lower(), m.group(2)
+    # Determine domain from original URL
+    dm = re.search(r'bunkr\.([a-z]+)/', req.url)
+    domain = f"bunkr.{dm.group(1)}" if dm else "bunkr.sk"
+
+    await _prog(req.job_id, {"status": "starting", "progress": 5})
+
+    if kind == "a":
+        # Album: scrape all file links from the album page
+        async with httpx.AsyncClient(follow_redirects=True, timeout=20, verify=VERIFY_SSL) as c:
+            r = await c.get(f"https://{domain}/a/{slug}",
+                headers={"User-Agent": _ua(), "Referer": f"https://{domain}/"})
+        html = r.text
+        # Find all file links in the album
+        file_links = re.findall(
+            r'href=["\']https?://bunkr\.[a-z]+/([vi])/([A-Za-z0-9_.-]+)["\']', html, re.I)
+        file_links = list(dict.fromkeys(file_links))  # dedupe
+        if not file_links:
+            raise HTTPException(404, "No files found in bunkr album")
+        total = len(file_links)
+        for i, (fkind, fslug) in enumerate(file_links, 1):
+            cdn_url = await _bunkr_cdn_url(domain, fkind, fslug)
+            if cdn_url:
+                fname = cdn_url.split("/")[-1].split("?")[0] or f"bunkr_{fslug}"
+                out = _uniq(job_dir, _safe(fname))
+                ok = await _aria2_dl(cdn_url, out, req.job_id, f"https://{domain}/", req.proxy)
+                if not ok:
+                    async with httpx.AsyncClient(follow_redirects=True,
+                                                 timeout=httpx.Timeout(None, connect=20),
+                                                 verify=VERIFY_SSL, proxy=req.proxy or None,
+                                                 headers={"User-Agent": _ua(), "Referer": f"https://{domain}/"}) as c:
+                        async with c.stream("GET", cdn_url) as resp:
+                            if resp.status_code in (200, 206):
+                                async with aiofiles.open(out, "wb") as fo:
+                                    async for chunk in resp.aiter_bytes(1 << 20):
+                                        await fo.write(chunk)
+            _prog_s(req.job_id, {"status": "downloading", "progress": min(95, int(i / total * 95))})
+    else:
+        # Single file/video
+        cdn_url = await _bunkr_cdn_url(domain, kind, slug)
+        if not cdn_url:
+            raise HTTPException(404, f"Could not resolve bunkr CDN URL for {slug}")
+        fname = cdn_url.split("/")[-1].split("?")[0] or f"bunkr_{slug}"
+        out = _uniq(job_dir, _safe(fname))
+        ok = await _aria2_dl(cdn_url, out, req.job_id, f"https://{domain}/", req.proxy)
+        if not ok:
+            async with httpx.AsyncClient(follow_redirects=True,
+                                         http2=True, timeout=httpx.Timeout(None, connect=20),
+                                         verify=VERIFY_SSL, proxy=req.proxy or None,
+                                         headers={"User-Agent": _ua(), "Referer": f"https://{domain}/"}) as c:
+                async with c.stream("GET", cdn_url) as resp:
+                    resp.raise_for_status()
+                    total_b = int(resp.headers.get("content-length", 0)) or 0
+                    done = 0
+                    async with aiofiles.open(out, "wb") as fo:
+                        async for chunk in resp.aiter_bytes(1 << 20):
+                            await fo.write(chunk)
+                            done += len(chunk)
+                            if total_b:
+                                _prog_s(req.job_id, {"status": "downloading",
+                                    "progress": min(95, int(done / total_b * 95)),
+                                    "downloaded": done, "total": total_b})
+
+    files = [f.name for f in job_dir.iterdir() if f.is_file()]
+    await _prog(req.job_id, {"status": "completed", "progress": 100, "files": files})
+
+
+# ── Erome ─────────────────────────────────────────────────────────────────────
+
+async def _analyze_erome(url: str) -> dict:
+    m = _EROME_RE.match(url)
+    album_id = m.group(1) if m else "unknown"
+    return {
+        "type": "playlist",
+        "title": f"Erome album {album_id}",
+        "thumbnail": None, "duration": None, "uploader": "",
+        "extractor": "erome",
+        "qualities": [], "video_formats": ["original"],
+        "_erome_album": album_id,
+    }
+
+
+async def _dl_erome(req: DownloadReq, job_dir: Path):
+    m = _EROME_RE.match(req.url)
+    if not m:
+        raise HTTPException(400, "Invalid erome URL")
+    album_id = m.group(1)
+    await _prog(req.job_id, {"status": "starting", "progress": 5})
+
+    for domain in ["www.erome.com", "erome.com"]:
+        try:
+            async with httpx.AsyncClient(follow_redirects=True, timeout=20, verify=VERIFY_SSL) as c:
+                r = await c.get(f"https://{domain}/a/{album_id}", headers={
+                    "User-Agent": _ua(),
+                    "Referer": f"https://{domain}/",
+                    "Accept": "text/html",
+                })
+            if r.status_code != 200:
+                continue
+            html = r.text
+            # Video sources
+            videos = list(dict.fromkeys(re.findall(
+                r'<source[^>]+src=["\']([^"\']{10,400})["\']', html, re.I)))
+            # Images (data-src for lazy-loaded, src for immediate)
+            images = list(dict.fromkeys(re.findall(
+                r'<img[^>]+(?:data-src|src)=["\']([^"\']{10,400}(?:jpg|jpeg|png|gif|webp)[^"\']{0,50})["\']',
+                html, re.I)))
+            items = [(u, "video") for u in videos] + [(u, "image") for u in images
+                     if not any(s in u.lower() for s in ("icon","avatar","logo","thumb","profile"))]
+            if not items:
+                continue
+            total = len(items)
+            for i, (media_url, mtype) in enumerate(items, 1):
+                if not media_url.startswith("http"):
+                    continue
+                fname = media_url.split("/")[-1].split("?")[0] or f"erome_{i}"
+                out = _uniq(job_dir, _safe(fname))
+                ok = await _aria2_dl(media_url, out, req.job_id, f"https://{domain}/", req.proxy)
+                if not ok:
+                    async with httpx.AsyncClient(follow_redirects=True,
+                                                 timeout=httpx.Timeout(None, connect=20),
+                                                 verify=VERIFY_SSL, proxy=req.proxy or None,
+                                                 headers={"User-Agent": _ua(),
+                                                          "Referer": f"https://{domain}/"}) as c:
+                        async with c.stream("GET", media_url) as resp:
+                            if resp.status_code in (200, 206):
+                                async with aiofiles.open(out, "wb") as fo:
+                                    async for chunk in resp.aiter_bytes(1 << 20):
+                                        await fo.write(chunk)
+                _prog_s(req.job_id, {"status": "downloading", "progress": min(95, int(i / total * 95))})
+            files = [f.name for f in job_dir.iterdir() if f.is_file()]
+            await _prog(req.job_id, {"status": "completed", "progress": 100, "files": files})
+            return
+        except Exception:
+            continue
+    raise HTTPException(502, "Could not reach erome.com")
+
+
+# ── Doodstream ────────────────────────────────────────────────────────────────
+
+async def _analyze_doodstream(url: str) -> dict:
+    m = _DOODSTREAM_RE.match(url)
+    vid = m.group(1) if m else "unknown"
+    return {
+        "type": "video", "title": f"Doodstream video {vid}",
+        "thumbnail": None, "duration": None, "uploader": "",
+        "extractor": "doodstream", "qualities": [], "video_formats": ["mp4"],
+        "_dood_id": vid,
+    }
+
+
+async def _resolve_doodstream(url: str) -> Optional[str]:
+    """Extract actual MP4 URL from doodstream page."""
+    from urllib.parse import urlparse
+    base = urlparse(url)
+    origin = f"{base.scheme}://{base.netloc}"
+    m = _DOODSTREAM_RE.match(url)
+    if not m:
+        return None
+    vid = m.group(1)
+    # Try watch page (not embed)
+    for watch_url in [f"{origin}/d/{vid}", f"{origin}/f/{vid}", url]:
+        try:
+            async with httpx.AsyncClient(follow_redirects=True, timeout=20, verify=VERIFY_SSL) as c:
+                r = await c.get(watch_url, headers={"User-Agent": _ua(), "Referer": origin + "/"})
+            if r.status_code != 200:
+                continue
+            html = r.text
+            # Find the pass_md5 path
+            pm = re.search(r"['\"/](\/pass_md5\/[^'\"/\s]{8,80}\/)['\"]", html)
+            if not pm:
+                continue
+            pm_path = pm.group(1)
+            # Fetch the pass_md5 URL → returns base CDN URL
+            async with httpx.AsyncClient(follow_redirects=True, timeout=20, verify=VERIFY_SSL) as c:
+                r2 = await c.get(f"{origin}{pm_path}", headers={
+                    "User-Agent": _ua(), "Referer": watch_url,
+                    "X-Requested-With": "XMLHttpRequest",
+                })
+            if r2.status_code != 200:
+                continue
+            base_url = r2.text.strip()
+            if not base_url.startswith("http"):
+                continue
+            # Construct final URL: base_url + random(10) + ?token={hash}&expiry={ts*1000}
+            import string, time
+            rand = "".join(random.choices(string.ascii_letters + string.digits, k=10))
+            hash_val = pm_path.split("/")[-2]
+            expiry = str(int(time.time() * 1000))
+            return f"{base_url}{rand}?token={hash_val}&expiry={expiry}"
+        except Exception:
+            continue
+    return None
+
+
+async def _dl_doodstream(req: DownloadReq, job_dir: Path):
+    await _prog(req.job_id, {"status": "starting", "progress": 5, "info": "Resolving doodstream URL…"})
+    video_url = await _resolve_doodstream(req.url)
+    if not video_url:
+        raise HTTPException(502, "Could not extract doodstream video URL — try a different mirror domain or check the video still exists")
+    await _prog(req.job_id, {"status": "downloading", "progress": 10})
+    m = _DOODSTREAM_RE.match(req.url)
+    vid = m.group(1) if m else "video"
+    out = _uniq(job_dir, f"dood_{vid}.mp4")
+    headers = {"User-Agent": _ua(), "Referer": req.url, "Accept": "video/mp4,video/*;q=0.9,*/*;q=0.8"}
+    ok = await _aria2_dl(video_url, out, req.job_id, req.url, req.proxy)
+    if not ok:
+        async with httpx.AsyncClient(follow_redirects=True, http2=True,
+                                     timeout=httpx.Timeout(None, connect=20),
+                                     verify=VERIFY_SSL, proxy=req.proxy or None,
+                                     headers=headers) as c:
+            async with c.stream("GET", video_url) as resp:
+                resp.raise_for_status()
+                total_b = int(resp.headers.get("content-length", 0)) or 0
+                done = 0
+                async with aiofiles.open(out, "wb") as fo:
+                    async for chunk in resp.aiter_bytes(1 << 20):
+                        await fo.write(chunk)
+                        done += len(chunk)
+                        if total_b:
+                            _prog_s(req.job_id, {"status": "downloading",
+                                "progress": min(95, int(done / total_b * 95)),
+                                "downloaded": done, "total": total_b})
+    files = [f.name for f in job_dir.iterdir() if f.is_file()]
+    await _prog(req.job_id, {"status": "completed", "progress": 100, "files": files})
+
+
+# ── Cyberdrop ─────────────────────────────────────────────────────────────────
+
+async def _analyze_cyberdrop(url: str) -> dict:
+    m = _CYBERDROP_RE.match(url)
+    aid = m.group(1) if m else "unknown"
+    return {
+        "type": "playlist",
+        "title": f"Cyberdrop album {aid}",
+        "thumbnail": None, "duration": None, "uploader": "",
+        "extractor": "cyberdrop",
+        "qualities": [], "video_formats": ["original"],
+        "_cyberdrop_id": aid,
+    }
+
+
+async def _dl_cyberdrop(req: DownloadReq, job_dir: Path):
+    m = _CYBERDROP_RE.match(req.url)
+    if not m:
+        raise HTTPException(400, "Invalid cyberdrop URL")
+    aid = m.group(1)
+    from urllib.parse import urlparse
+    base_domain = urlparse(req.url).netloc
+    await _prog(req.job_id, {"status": "starting", "progress": 5})
+
+    for domain in [base_domain, "cyberdrop.me", "cyberdrop.cc"]:
+        try:
+            async with httpx.AsyncClient(follow_redirects=True, timeout=20, verify=VERIFY_SSL) as c:
+                r = await c.get(f"https://{domain}/a/{aid}", headers={
+                    "User-Agent": _ua(), "Referer": f"https://{domain}/",
+                })
+            if r.status_code != 200:
+                continue
+            html = r.text
+            # Find CDN file URLs
+            cdn_links = list(dict.fromkeys(re.findall(
+                r'https?://(?:cdn\.|f\.)[^"\'<>\s]{5,200}', html, re.I)))
+            if not cdn_links:
+                # Try href-based download links
+                cdn_links = list(dict.fromkeys(re.findall(
+                    r'href=["\']([^"\']{10,300}(?:cdn|download)[^"\']{0,100})["\']', html, re.I)))
+                cdn_links = [u for u in cdn_links if u.startswith("http")]
+            if not cdn_links:
+                continue
+            total = len(cdn_links)
+            for i, link in enumerate(cdn_links, 1):
+                fname = link.split("/")[-1].split("?")[0] or f"cyberdrop_{i}"
+                out = _uniq(job_dir, _safe(fname))
+                ok = await _aria2_dl(link, out, req.job_id, f"https://{domain}/", req.proxy)
+                if not ok:
+                    async with httpx.AsyncClient(follow_redirects=True,
+                                                 timeout=httpx.Timeout(None, connect=20),
+                                                 verify=VERIFY_SSL, proxy=req.proxy or None,
+                                                 headers={"User-Agent": _ua(),
+                                                          "Referer": f"https://{domain}/"}) as c:
+                        async with c.stream("GET", link) as resp:
+                            if resp.status_code in (200, 206):
+                                async with aiofiles.open(out, "wb") as fo:
+                                    async for chunk in resp.aiter_bytes(1 << 20):
+                                        await fo.write(chunk)
+                _prog_s(req.job_id, {"status": "downloading", "progress": min(95, int(i / total * 95))})
+            files = [f.name for f in job_dir.iterdir() if f.is_file()]
+            await _prog(req.job_id, {"status": "completed", "progress": 100, "files": files})
+            return
+        except Exception:
+            continue
+    raise HTTPException(502, "Could not reach cyberdrop — check the URL or try again later")
+
+
+# ── Mixdrop ───────────────────────────────────────────────────────────────────
+
+async def _analyze_mixdrop(url: str) -> dict:
+    m = _MIXDROP_RE.match(url)
+    fid = m.group(1) if m else "unknown"
+    return {
+        "type": "video", "title": f"Mixdrop video {fid}",
+        "thumbnail": None, "duration": None, "uploader": "",
+        "extractor": "mixdrop", "qualities": [], "video_formats": ["mp4"],
+        "_mixdrop_id": fid,
+    }
+
+
+async def _resolve_mixdrop(url: str) -> Optional[str]:
+    """Extract actual CDN URL from a Mixdrop page (MDCore.wurl)."""
+    from urllib.parse import urlparse
+    base_domain = urlparse(url).netloc or "mixdrop.sb"
+    m = _MIXDROP_RE.match(url)
+    if not m:
+        return None
+    fid = m.group(1)
+    for domain in [base_domain, "mixdrop.sb", "mixdrop.co", "mixdrop.bz", "mixdrop.to"]:
+        for path in [f"/f/{fid}", f"/e/{fid}"]:
+            try:
+                async with httpx.AsyncClient(follow_redirects=True, timeout=20, verify=VERIFY_SSL) as c:
+                    r = await c.get(f"https://{domain}{path}", headers={
+                        "User-Agent": _ua(),
+                        "Referer": f"https://{domain}/",
+                    })
+                if r.status_code != 200:
+                    continue
+                html = r.text
+                # MDCore.wurl = "https://..."
+                mw = re.search(r'MDCore\.wurl\s*=\s*["\`]([^"\'`\s]{10,300})["\`]', html, re.I)
+                if mw:
+                    raw = mw.group(1)
+                    if raw.startswith("//"):
+                        raw = "https:" + raw
+                    return raw
+                # MDCore.vurl or MDCore.src
+                mv = re.search(r'MDCore\.(?:vurl|src|url)\s*=\s*["\`]([^"\'`\s]{10,300})["\`]', html, re.I)
+                if mv:
+                    raw = mv.group(1)
+                    if raw.startswith("//"):
+                        raw = "https:" + raw
+                    return raw
+                # <source src="https://s-XX.mixdrop...">
+                ms = re.search(r'<source[^>]+src=["\']([^"\']{10,300})["\']', html, re.I)
+                if ms:
+                    raw = ms.group(1)
+                    if raw.startswith("//"):
+                        raw = "https:" + raw
+                    return raw
+            except Exception:
+                continue
+    return None
+
+
+async def _dl_mixdrop(req: DownloadReq, job_dir: Path):
+    await _prog(req.job_id, {"status": "starting", "progress": 5, "info": "Resolving Mixdrop URL…"})
+    video_url = await _resolve_mixdrop(req.url)
+    if not video_url:
+        raise HTTPException(502, "Could not extract Mixdrop video URL — the video may be unavailable or the page JS has changed")
+    await _prog(req.job_id, {"status": "downloading", "progress": 10})
+    m = _MIXDROP_RE.match(req.url)
+    fid = m.group(1) if m else "video"
+    out = _uniq(job_dir, f"mixdrop_{fid}.mp4")
+    headers = {"User-Agent": _ua(), "Referer": req.url, "Accept": "video/mp4,video/*;q=0.9,*/*;q=0.8"}
+    ok = await _aria2_dl(video_url, out, req.job_id, req.url, req.proxy)
+    if not ok:
+        async with httpx.AsyncClient(follow_redirects=True, http2=True,
+                                     timeout=httpx.Timeout(None, connect=20),
+                                     verify=VERIFY_SSL, proxy=req.proxy or None,
+                                     headers=headers) as c:
+            async with c.stream("GET", video_url) as resp:
+                resp.raise_for_status()
+                total_b = int(resp.headers.get("content-length", 0)) or 0
+                done = 0
+                async with aiofiles.open(out, "wb") as fo:
+                    async for chunk in resp.aiter_bytes(1 << 20):
+                        await fo.write(chunk)
+                        done += len(chunk)
+                        if total_b:
+                            _prog_s(req.job_id, {"status": "downloading",
+                                "progress": min(95, int(done / total_b * 95)),
+                                "downloaded": done, "total": total_b})
+    files = [f.name for f in job_dir.iterdir() if f.is_file()]
+    await _prog(req.job_id, {"status": "completed", "progress": 100, "files": files})
 
 async def _pat_login(email: str, password: str) -> Optional[str]:
     """Login to pat.com via auth.externulls.com → returns Bearer JWT or None."""
@@ -635,9 +1340,15 @@ async def _dl_pat_com(req: DownloadReq, job_dir: Path):
 
 
 async def _do_analyze(url: str) -> dict:
-    # 0a. pat.com — custom extractor (JWT auth, no yt-dlp support)
-    if _PAT_COM_RE.match(url):
-        return await _analyze_pat_com(url)
+    # 0a. Custom site extractors (no yt-dlp support)
+    if _PAT_COM_RE.match(url):       return await _analyze_pat_com(url)
+    if _PIXELDRAIN_RE.match(url):    return await _analyze_pixeldrain(url)
+    if _STREAMTAPE_RE.match(url):    return await _analyze_streamtape(url)
+    if _BUNKR_RE.match(url):         return await _analyze_bunkr(url)
+    if _EROME_RE.match(url):         return await _analyze_erome(url)
+    if _DOODSTREAM_RE.match(url):    return await _analyze_doodstream(url)
+    if _CYBERDROP_RE.match(url):     return await _analyze_cyberdrop(url)
+    if _MIXDROP_RE.match(url):       return await _analyze_mixdrop(url)
     # 0. Torrent / magnet
     if url.startswith("magnet:") or url.split("?")[0].lower().endswith(".torrent"):
         name = "torrent"
@@ -1237,7 +1948,15 @@ async def download(req: DownloadReq):
         try:
             if req.cookies:
                 cookie_file = _write_cookies(req.cookies)
-            if req.capture and req.media_type == "video":
+            # Custom site extractors bypass normal yt-dlp dispatch
+            if _PIXELDRAIN_RE.match(req.url):   await _dl_pixeldrain(req, job_dir)
+            elif _BUNKR_RE.match(req.url):      await _dl_bunkr(req, job_dir)
+            elif _EROME_RE.match(req.url):      await _dl_erome(req, job_dir)
+            elif _CYBERDROP_RE.match(req.url):  await _dl_cyberdrop(req, job_dir)
+            elif _STREAMTAPE_RE.match(req.url): await _dl_streamtape(req, job_dir)
+            elif _DOODSTREAM_RE.match(req.url): await _dl_doodstream(req, job_dir)
+            elif _MIXDROP_RE.match(req.url):    await _dl_mixdrop(req, job_dir)
+            elif req.capture and req.media_type == "video":
                 await _dl_capture(req, job_dir)
             elif req.media_type in ("playlist","profile"):
                 await _dl_playlist(req, job_dir, cookie_file)
