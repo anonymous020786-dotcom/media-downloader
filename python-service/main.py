@@ -462,7 +462,182 @@ async def analyze(req: AnalyzeReq):
     return result
 
 
+_PAT_COM_RE = re.compile(r'^https?://(?:www\.)?pat\.com/-?(\d+(?:\d+)*)$')
+
+async def _pat_login(email: str, password: str) -> Optional[str]:
+    """Login to pat.com via auth.externulls.com → returns Bearer JWT or None."""
+    try:
+        async with httpx.AsyncClient(follow_redirects=True, timeout=20, verify=VERIFY_SSL) as c:
+            r = await c.post(
+                "https://auth.externulls.com/login/",
+                json={"email": email, "password": password, "scope": "pat"},
+                headers={
+                    "User-Agent": _ua(),
+                    "Origin": "https://pat.com",
+                    "Referer": "https://pat.com/",
+                    "Content-Type": "application/json",
+                },
+            )
+            if r.status_code == 200:
+                return r.json().get("token")
+    except Exception:
+        pass
+    return None
+
+
+def _pat_file_id(url: str) -> Optional[str]:
+    """Extract numeric file ID from a pat.com URL.
+    https://pat.com/-0252924980226239  →  '252924980226239'
+    https://pat.com/-1123456789        →  '123456789'
+    """
+    m = _PAT_COM_RE.match(url)
+    if not m:
+        return None
+    raw = m.group(1)
+    # Strip leading digit prefix (the '-0', '-1' type tag absorbed into the number)
+    # The URL digit after '-' is the type prefix; rest is the file ID
+    # e.g. "0252924980226239" → type=0, file_id="252924980226239"
+    if len(raw) > 1:
+        return raw[1:]  # drop the first digit (type prefix)
+    return raw
+
+
+async def _analyze_pat_com(url: str, token: Optional[str] = None) -> dict:
+    """Analyse a pat.com video URL. Returns video metadata."""
+    file_id = _pat_file_id(url)
+    if not file_id:
+        raise ValueError(f"Cannot parse pat.com URL: {url}")
+
+    video_url = f"https://video.pat.com/{file_id}"
+    headers = {
+        "User-Agent": _ua(),
+        "Referer": url,
+        "Origin": "https://pat.com",
+        "Accept": "*/*",
+    }
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+
+    # Probe the video URL for content-length / content-type
+    title = f"pat.com video {file_id}"
+    size = None
+    try:
+        async with httpx.AsyncClient(follow_redirects=True, timeout=15, verify=VERIFY_SSL) as c:
+            r = await c.head(video_url, headers=headers)
+            if r.status_code == 200:
+                size = int(r.headers.get("content-length", 0)) or None
+            # Try to get title from og:title in page HTML (no auth needed for the SPA shell)
+            rp = await c.get(url, headers={**headers, "Accept": "text/html"})
+            m2 = re.search(r'<meta[^>]+(?:og:title|twitter:title)[^>]+content=["\']([^"\']{1,200})', rp.text, re.I)
+            if m2:
+                title = m2.group(1).strip()
+    except Exception:
+        pass
+
+    return {
+        "type": "video",
+        "title": title,
+        "thumbnail": None,
+        "duration": None,
+        "uploader": "",
+        "extractor": "pat.com",
+        "qualities": [],
+        "video_formats": ["mp4"],
+        "size": size,
+        "_pat_file_id": file_id,
+        "_pat_video_url": video_url,
+        "_pat_needs_auth": not bool(token),
+    }
+
+
+async def _dl_pat_com(req: DownloadReq, job_dir: Path):
+    """Download a pat.com video. Accepts auth via:
+      • req.cookies field containing  pat_token=<JWT>
+        OR  pat_email=user@x.com pat_password=secret
+    """
+    file_id = _pat_file_id(req.url)
+    if not file_id:
+        raise HTTPException(400, "Invalid pat.com URL")
+
+    # Extract token / credentials from the cookies field
+    token: Optional[str] = None
+    if req.cookies:
+        m_tok = re.search(r'pat_token=([^\s;]+)', req.cookies)
+        if m_tok:
+            token = m_tok.group(1)
+        else:
+            m_em  = re.search(r'pat_email=([^\s;]+)', req.cookies)
+            m_pw  = re.search(r'pat_password=([^\s;]+)', req.cookies)
+            if m_em and m_pw:
+                await _prog(req.job_id, {"status":"starting","progress":2,"info":"Logging in to pat.com…"})
+                token = await _pat_login(m_em.group(1), m_pw.group(1))
+                if not token:
+                    raise HTTPException(401, "pat.com login failed — check email/password")
+
+    video_url = f"https://video.pat.com/{file_id}"
+    headers = {
+        "User-Agent": _ua(),
+        "Referer": req.url,
+        "Origin": "https://pat.com",
+        "Accept": "video/mp4,video/*;q=0.9,*/*;q=0.8",
+    }
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+
+    await _prog(req.job_id, {"status":"downloading","progress":5})
+
+    out = _uniq(job_dir, f"pat_{file_id}.mp4")
+    part = job_dir / (out.name + ".part")
+
+    try:
+        async with httpx.AsyncClient(
+            follow_redirects=True, http2=True, verify=VERIFY_SSL,
+            timeout=httpx.Timeout(None, connect=20),
+            proxy=req.proxy or None,
+            headers=headers,
+        ) as c:
+            async with c.stream("GET", video_url) as r:
+                if r.status_code == 403:
+                    raise HTTPException(
+                        401,
+                        "pat.com returned 403 — video requires login. "
+                        "Add  pat_token=<JWT>  or  pat_email=x pat_password=y  "
+                        "in the Cookies field."
+                    )
+                if r.status_code == 404:
+                    raise HTTPException(404, f"pat.com video {file_id} not found")
+                r.raise_for_status()
+                total = int(r.headers.get("content-length", 0)) or 0
+                done = 0
+                async with aiofiles.open(part, "wb") as f:
+                    async for chunk in r.aiter_bytes(1 << 20):
+                        await f.write(chunk)
+                        done += len(chunk)
+                        if total:
+                            _prog_s(req.job_id, {
+                                "status": "downloading",
+                                "progress": min(95, int(done / total * 95)),
+                                "downloaded": done, "total": total,
+                            })
+
+        if not part.exists() or part.stat().st_size < 1024:
+            if part.exists(): part.unlink()
+            raise HTTPException(500, "pat.com download produced an empty file")
+
+        part.rename(out)
+        files = [f.name for f in job_dir.iterdir() if f.is_file()]
+        await _prog(req.job_id, {"status": "completed", "progress": 100, "files": files})
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, f"pat.com download error: {e}")
+
+
 async def _do_analyze(url: str) -> dict:
+    # 0a. pat.com — custom extractor (JWT auth, no yt-dlp support)
+    if _PAT_COM_RE.match(url):
+        return await _analyze_pat_com(url)
     # 0. Torrent / magnet
     if url.startswith("magnet:") or url.split("?")[0].lower().endswith(".torrent"):
         name = "torrent"
@@ -1571,6 +1746,10 @@ async def _dl_capture(req: DownloadReq, job_dir: Path):
 
 
 async def _dl_video(req: DownloadReq, job_dir: Path, cookie_file: Optional[str]):
+    # 0. pat.com — requires custom JWT auth flow
+    if _PAT_COM_RE.match(req.url):
+        await _dl_pat_com(req, job_dir)
+        return
     # 0. Fast path: a directly-pasted media file URL (e.g. from the network tab)
     base = req.url.split("?")[0].lower()
     if base.endswith(_DIRECT_EXT):
