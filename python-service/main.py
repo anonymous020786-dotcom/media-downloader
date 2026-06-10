@@ -548,12 +548,59 @@ _CYBERDROP_RE = re.compile(
 _MIXDROP_RE = re.compile(
     r'^https?://(?:www\.)?mixdrop\.(?:sb|co|bz|to|club|vc|ag|ch|gl|ps|sx|ac|pk|ws)/(?:f|e)/([A-Za-z0-9_-]+)', re.I)
 
+# GoFile  https://gofile.io/d/{id}
+_GOFILE_RE = re.compile(
+    r'^https?://(?:www\.)?gofile\.io/d/([A-Za-z0-9]+)', re.I)
+
+# FileMoon  https://filemoon.sx/e/{id}  (many mirrors)
+_FILEMOON_RE = re.compile(
+    r'^https?://(?:www\.)?(?:'
+    r'filemoon\.sx|filemoon\.in|filemoon\.to|filemoon\.cc|filemoon\.pw|filemoon\.wf|'
+    r'filemoon\.monster|filemoon\.fun|filemoon\.cf|filemoon\.ru|moonvid\.to|'
+    r'kerapoxy\.cc|cr\.watchsb\.com|vid2funs\.com|sfastwish\.com|'
+    r'playersb\.com|sbnmp\.bar|hdwatched\.life|embedrise\.com'
+    r')/(?:e|d|v)/([A-Za-z0-9_-]+)', re.I)
+
+# StreamWish  https://streamwish.com/e/{id}  (many mirrors)
+_STREAMWISH_RE = re.compile(
+    r'^https?://(?:www\.)?(?:'
+    r'streamwish\.com|streamwish\.to|streamwish\.site|streamwish\.space|'
+    r'strwish\.com|swdyu\.com|awish\.one|dwish\.tv|wishfast\.top|'
+    r'filelions\.com|filelions\.live|filelions\.top|ajmidyaan\.com|'
+    r'khadhnaa\.xyz|cilootv\.store|streamruby\.com|streamsilk\.com|'
+    r'smoothpre\.com|strtape\.cloud|wishembed\.top|bestremit\.com|'
+    r'asnimations\.com|animefever\.cc|watchanimesub\.net'
+    r')/(?:e|d|f|v)/([A-Za-z0-9_-]+)', re.I)
+
+# Voe.sx  https://voe.sx/e/{id}  or  /v/{id}
+_VOE_RE = re.compile(
+    r'^https?://(?:www\.)?(?:voe\.sx|voe\.bar|voe\.rest|voe\.rocks|voe\.sx)/(?:e|v)/([A-Za-z0-9_-]+)', re.I)
+
+# Mp4upload  https://www.mp4upload.com/embed-{id}.html
+_MP4UPLOAD_RE = re.compile(
+    r'^https?://(?:www\.)?mp4upload\.com/(?:embed-)?([A-Za-z0-9_-]+)(?:\.html)?', re.I)
+
+# SendVid  https://sendvid.com/{id}  or  /embed/{id}
+_SENDVID_RE = re.compile(
+    r'^https?://(?:www\.)?sendvid\.com/(?:embed/)?([A-Za-z0-9_-]+)', re.I)
+
+# Mediafire  https://www.mediafire.com/file/{hash}/name/file
+_MEDIAFIRE_RE = re.compile(
+    r'^https?://(?:www\.)?mediafire\.com/(?:file|download)/([A-Za-z0-9_/.-]+)', re.I)
+
+# Krakenfiles  https://krakenfiles.com/view/{hash}/file.html
+_KRAKENFILES_RE = re.compile(
+    r'^https?://(?:www\.)?krakenfiles\.com/(?:view|download)/([A-Za-z0-9_-]+)', re.I)
+
 
 def _is_custom_site(url: str) -> bool:
     return bool(
         _PAT_COM_RE.match(url) or _PIXELDRAIN_RE.match(url) or _STREAMTAPE_RE.match(url) or
         _BUNKR_RE.match(url) or _EROME_RE.match(url) or _DOODSTREAM_RE.match(url) or
-        _CYBERDROP_RE.match(url) or _MIXDROP_RE.match(url)
+        _CYBERDROP_RE.match(url) or _MIXDROP_RE.match(url) or
+        _GOFILE_RE.match(url) or _FILEMOON_RE.match(url) or _STREAMWISH_RE.match(url) or
+        _VOE_RE.match(url) or _MP4UPLOAD_RE.match(url) or _SENDVID_RE.match(url) or
+        _MEDIAFIRE_RE.match(url) or _KRAKENFILES_RE.match(url)
     )
 
 
@@ -1220,6 +1267,714 @@ async def _dl_mixdrop(req: DownloadReq, job_dir: Path):
     files = [f.name for f in job_dir.iterdir() if f.is_file()]
     await _prog(req.job_id, {"status": "completed", "progress": 100, "files": files})
 
+# ── Shared helpers for JS-embed video hosts ───────────────────────────────────
+
+def _unpack_packer(html: str) -> Optional[str]:
+    """Decode p,a,c,k,e,r packed JavaScript embedded in HTML. Returns decoded source or None."""
+    m = re.search(
+        r"}\('((?:[^'\\]|\\.)*)',\s*(\d+),\s*\d+,'((?:[^'\\]|\\.)*)'\s*\.split\('\|'\)",
+        html, re.S)
+    if not m:
+        m = re.search(
+            r'}\("((?:[^"\\]|\\.)*)",\s*(\d+),\s*\d+,"((?:[^"\\]|\\.)*)"\s*\.split\("\|"\)',
+            html, re.S)
+    if not m:
+        return None
+    p_code = m.group(1).replace("\\'", "'").replace('\\"', '"').replace("\\\\", "\\")
+    radix = int(m.group(2))
+    k = m.group(3).replace("\\'", "'").split("|")
+
+    _chars = "0123456789abcdefghijklmnopqrstuvwxyz"
+
+    def _from_base(s: str) -> int:
+        result = 0
+        for c in s.lower():
+            result = result * radix + _chars.index(c)
+        return result
+
+    def _replace(tok_m):
+        tok = tok_m.group(0)
+        try:
+            idx = int(tok) if radix == 10 else _from_base(tok)
+            if 0 <= idx < len(k) and k[idx]:
+                return k[idx]
+        except (ValueError, IndexError):
+            pass
+        return tok
+
+    return re.sub(r'\b\w+\b', _replace, p_code)
+
+
+async def _run_ffmpeg_hls(m3u8: str, out: Path, jid: str,
+                          referer: str, proxy: Optional[str]) -> bool:
+    """Download HLS stream via ffmpeg. Returns True on success."""
+    hdrs = f"Referer: {referer}\r\nOrigin: {_origin(referer)}\r\n"
+    cmd = ["ffmpeg", "-y", "-headers", hdrs, "-i", m3u8,
+           "-c", "copy", "-movflags", "+faststart", str(out)]
+    if proxy:
+        cmd = ["ffmpeg", "-y", "-http_proxy", proxy, "-headers", hdrs, "-i", m3u8,
+               "-c", "copy", "-movflags", "+faststart", str(out)]
+    proc = await asyncio.create_subprocess_exec(
+        *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
+
+    async def _pump():
+        assert proc.stdout
+        async for raw in proc.stdout:
+            mt = re.search(r"time=(\d+:\d+:\d+)", raw.decode("utf-8", "ignore"))
+            if mt:
+                _prog_s(jid, {"status": "downloading", "progress": 50,
+                               "info": f"ffmpeg {mt.group(1)}"})
+    try:
+        await asyncio.wait_for(_pump(), timeout=7200)
+        await asyncio.wait_for(proc.wait(), timeout=60)
+    except asyncio.TimeoutError:
+        try: proc.kill()
+        except Exception: pass
+        return False
+    return proc.returncode == 0 and out.exists() and out.stat().st_size >= 1024
+
+
+def _extract_m3u8(html: str) -> Optional[str]:
+    """Try to find an HLS m3u8 URL directly in HTML or in unpacked JS."""
+    # Direct URL in HTML
+    for pat in [
+        r'["\']?(https?://[^"\'<>\s]+\.m3u8[^"\'<>\s]*)["\']?',
+        r'file\s*:\s*["\']([^"\']+\.m3u8[^"\']*)["\']',
+        r'"file"\s*:\s*"([^"]+\.m3u8[^"]*)"',
+        r"'file'\s*:\s*'([^']+\.m3u8[^']*)'",
+    ]:
+        m = re.search(pat, html, re.I)
+        if m and "m3u8" in m.group(1):
+            return m.group(1)
+    # Try packed JS
+    unpacked = _unpack_packer(html)
+    if unpacked:
+        m = re.search(r'["\']?(https?://[^"\'<>\s]+\.m3u8[^"\'<>\s]*)["\']?', unpacked, re.I)
+        if m:
+            return m.group(1)
+        # Also look for file:"..." pattern
+        m = re.search(r'file\s*:\s*["\']([^"\']+\.m3u8[^"\']*)["\']', unpacked, re.I)
+        if m:
+            return m.group(1)
+    return None
+
+
+def _extract_mp4(html: str) -> Optional[str]:
+    """Try to find a direct mp4 URL in HTML or in unpacked JS."""
+    for pat in [
+        r'file\s*:\s*["\']([^"\']+\.mp4[^"\']*)["\']',
+        r'"file"\s*:\s*"([^"]+\.mp4[^"]*)"',
+        r"'file'\s*:\s*'([^']+\.mp4[^']*)'",
+        r'<source[^>]+src=["\']([^"\']+\.mp4[^"\']*)["\']',
+    ]:
+        m = re.search(pat, html, re.I)
+        if m and "mp4" in m.group(1):
+            return m.group(1)
+    unpacked = _unpack_packer(html)
+    if unpacked:
+        for pat in [
+            r'file\s*:\s*["\']([^"\']+\.mp4[^"\']*)["\']',
+            r'["\']?(https?://[^"\'<>\s]+\.mp4[^"\'<>\s]*)["\']?',
+        ]:
+            m = re.search(pat, unpacked, re.I)
+            if m:
+                return m.group(1)
+    return None
+
+
+# ── GoFile ────────────────────────────────────────────────────────────────────
+
+async def _gofile_token() -> Optional[str]:
+    try:
+        async with httpx.AsyncClient(follow_redirects=True,
+                                     timeout=httpx.Timeout(12, connect=8),
+                                     verify=VERIFY_SSL) as c:
+            r = await c.post("https://api.gofile.io/accounts/guest",
+                             headers={"User-Agent": _ua()})
+            if r.status_code == 200:
+                return r.json()["data"]["token"]
+    except Exception:
+        pass
+    return None
+
+
+async def _analyze_gofile(url: str) -> dict:
+    m = _GOFILE_RE.match(url)
+    if not m:
+        raise ValueError("Invalid GoFile URL")
+    content_id = m.group(1)
+    try:
+        token = await _gofile_token()
+        if not token:
+            raise ValueError("No guest token")
+        async with httpx.AsyncClient(follow_redirects=True,
+                                     timeout=httpx.Timeout(12, connect=8),
+                                     verify=VERIFY_SSL) as c:
+            r = await c.get(
+                f"https://api.gofile.io/contents/{content_id}?wt=4fd6sg89d7s6&cache=true",
+                headers={"User-Agent": _ua(), "Authorization": f"Bearer {token}"})
+            if r.status_code != 200:
+                raise ValueError(f"GoFile API {r.status_code}")
+            data = r.json().get("data", {})
+            children = data.get("children", {})
+            files = [v for v in children.values() if v.get("type") == "file"]
+            total_size = sum(f.get("size", 0) for f in files)
+            title = data.get("name", content_id)
+            return {
+                "type": "file" if len(files) == 1 else "playlist",
+                "url": url, "title": _safe(title),
+                "extractor": "gofile",
+                "file_count": len(files), "size": total_size,
+            }
+    except Exception:
+        return {"type": "file", "url": url, "title": f"GoFile {content_id}",
+                "extractor": "gofile"}
+
+
+async def _dl_gofile(req: DownloadReq, job_dir: Path):
+    await _prog(req.job_id, {"status": "starting", "progress": 3, "info": "Fetching GoFile metadata…"})
+    m = _GOFILE_RE.match(req.url)
+    if not m:
+        raise HTTPException(400, "Invalid GoFile URL")
+    content_id = m.group(1)
+    token = await _gofile_token()
+    if not token:
+        raise HTTPException(502, "Could not get GoFile guest token")
+    try:
+        async with httpx.AsyncClient(follow_redirects=True,
+                                     timeout=httpx.Timeout(20, connect=10),
+                                     verify=VERIFY_SSL) as c:
+            r = await c.get(
+                f"https://api.gofile.io/contents/{content_id}?wt=4fd6sg89d7s6&cache=true",
+                headers={"User-Agent": _ua(), "Authorization": f"Bearer {token}"})
+            r.raise_for_status()
+            data = r.json().get("data", {})
+            if data.get("type") == "folder":
+                children = data.get("children", {})
+                files = [v for v in children.values() if v.get("type") == "file"]
+            else:
+                files = [data]
+    except Exception as e:
+        raise HTTPException(502, f"GoFile API error: {e}")
+
+    if not files:
+        raise HTTPException(404, "No downloadable files found in GoFile folder")
+
+    dl_headers = {"User-Agent": _ua(), "Cookie": f"accountToken={token}", "Referer": "https://gofile.io/"}
+    for i, f in enumerate(files):
+        fname = _safe(f.get("name", f"gofile_{i}"))
+        dl_url = f.get("link", "")
+        if not dl_url:
+            continue
+        out = _uniq(job_dir, fname)
+        pct = int(10 + (i / len(files)) * 80)
+        await _prog(req.job_id, {"status": "downloading", "progress": pct, "info": f"Downloading {fname}…"})
+        async with httpx.AsyncClient(follow_redirects=True,
+                                     timeout=httpx.Timeout(None, connect=20),
+                                     verify=VERIFY_SSL, proxy=req.proxy or None,
+                                     headers=dl_headers) as hc:
+            async with hc.stream("GET", dl_url) as resp:
+                if resp.status_code == 401:
+                    raise HTTPException(401, "GoFile requires an account for this content. Add your GoFile token in the cookies field as: gofile_token=YOUR_TOKEN")
+                resp.raise_for_status()
+                total_b = int(resp.headers.get("content-length", 0)) or 0
+                done = 0
+                async with aiofiles.open(out, "wb") as fo:
+                    async for chunk in resp.aiter_bytes(1 << 20):
+                        await fo.write(chunk)
+                        done += len(chunk)
+                        if total_b:
+                            _prog_s(req.job_id, {"status": "downloading",
+                                "progress": pct + min(int(done / total_b * 10), 10)})
+    files_out = [f.name for f in job_dir.iterdir() if f.is_file()]
+    await _prog(req.job_id, {"status": "completed", "progress": 100, "files": files_out})
+
+
+# ── FileMoon ──────────────────────────────────────────────────────────────────
+
+async def _resolve_filemoon(url: str) -> Optional[str]:
+    headers = {"User-Agent": _ua(), "Referer": url, "Accept": "text/html,*/*;q=0.9"}
+    try:
+        async with httpx.AsyncClient(follow_redirects=True,
+                                     timeout=httpx.Timeout(15, connect=10),
+                                     verify=VERIFY_SSL) as c:
+            r = await c.get(url, headers=headers)
+            if r.status_code != 200:
+                return None
+            return _extract_m3u8(r.text) or _extract_mp4(r.text)
+    except Exception:
+        return None
+
+
+async def _analyze_filemoon(url: str) -> dict:
+    m = _FILEMOON_RE.match(url)
+    fid = m.group(1) if m else "video"
+    stream = await _resolve_filemoon(url)
+    return {
+        "type": "video", "url": url,
+        "title": f"FileMoon {fid}",
+        "extractor": "filemoon",
+        "stream_url": stream or "",
+    }
+
+
+async def _dl_filemoon(req: DownloadReq, job_dir: Path):
+    await _prog(req.job_id, {"status": "starting", "progress": 5, "info": "Resolving FileMoon stream…"})
+    m = _FILEMOON_RE.match(req.url)
+    fid = m.group(1) if m else "video"
+    stream = await _resolve_filemoon(req.url)
+    if not stream:
+        # Fallback: Playwright interception
+        await _prog(req.job_id, {"status": "starting", "progress": 15,
+                                  "info": "Launching headless browser for FileMoon…"})
+        try:
+            _, videos = await asyncio.wait_for(
+                _render_media(req.url, proxy=req.proxy, scroll=False,
+                              timeout_ms=25000, want_video=True), timeout=40)
+            m3u8s = [v for v in videos if ".m3u8" in v]
+            stream = m3u8s[0] if m3u8s else (videos[0] if videos else None)
+        except Exception:
+            stream = None
+    if not stream:
+        raise HTTPException(502, "Could not extract FileMoon stream URL — the video may be unavailable")
+    await _prog(req.job_id, {"status": "downloading", "progress": 20})
+    out = _uniq(job_dir, f"filemoon_{fid}.mp4")
+    if ".m3u8" in stream:
+        ok = await _run_ffmpeg_hls(stream, out, req.job_id, req.url, req.proxy)
+        if not ok:
+            raise HTTPException(502, "ffmpeg failed to download FileMoon HLS stream")
+    else:
+        ok = await _aria2_dl(stream, out, req.job_id, req.url, req.proxy)
+        if not ok:
+            async with httpx.AsyncClient(follow_redirects=True,
+                                         timeout=httpx.Timeout(None, connect=20),
+                                         verify=VERIFY_SSL, proxy=req.proxy or None,
+                                         headers={"User-Agent": _ua(), "Referer": req.url}) as hc:
+                async with hc.stream("GET", stream) as resp:
+                    resp.raise_for_status()
+                    async with aiofiles.open(out, "wb") as fo:
+                        async for chunk in resp.aiter_bytes(1 << 20):
+                            await fo.write(chunk)
+    files = [f.name for f in job_dir.iterdir() if f.is_file()]
+    await _prog(req.job_id, {"status": "completed", "progress": 100, "files": files})
+
+
+# ── StreamWish ────────────────────────────────────────────────────────────────
+
+async def _resolve_streamwish(url: str) -> Optional[str]:
+    headers = {"User-Agent": _ua(), "Referer": url, "Accept": "text/html,*/*;q=0.9"}
+    try:
+        async with httpx.AsyncClient(follow_redirects=True,
+                                     timeout=httpx.Timeout(15, connect=10),
+                                     verify=VERIFY_SSL) as c:
+            r = await c.get(url, headers=headers)
+            if r.status_code != 200:
+                return None
+            return _extract_m3u8(r.text) or _extract_mp4(r.text)
+    except Exception:
+        return None
+
+
+async def _analyze_streamwish(url: str) -> dict:
+    m = _STREAMWISH_RE.match(url)
+    fid = m.group(1) if m else "video"
+    stream = await _resolve_streamwish(url)
+    return {
+        "type": "video", "url": url,
+        "title": f"StreamWish {fid}",
+        "extractor": "streamwish",
+        "stream_url": stream or "",
+    }
+
+
+async def _dl_streamwish(req: DownloadReq, job_dir: Path):
+    await _prog(req.job_id, {"status": "starting", "progress": 5, "info": "Resolving StreamWish stream…"})
+    m = _STREAMWISH_RE.match(req.url)
+    fid = m.group(1) if m else "video"
+    stream = await _resolve_streamwish(req.url)
+    if not stream:
+        await _prog(req.job_id, {"status": "starting", "progress": 15,
+                                  "info": "Launching headless browser for StreamWish…"})
+        try:
+            _, videos = await asyncio.wait_for(
+                _render_media(req.url, proxy=req.proxy, scroll=False,
+                              timeout_ms=25000, want_video=True), timeout=40)
+            m3u8s = [v for v in videos if ".m3u8" in v]
+            stream = m3u8s[0] if m3u8s else (videos[0] if videos else None)
+        except Exception:
+            stream = None
+    if not stream:
+        raise HTTPException(502, "Could not extract StreamWish stream URL — the video may be unavailable")
+    await _prog(req.job_id, {"status": "downloading", "progress": 20})
+    out = _uniq(job_dir, f"streamwish_{fid}.mp4")
+    if ".m3u8" in stream:
+        ok = await _run_ffmpeg_hls(stream, out, req.job_id, req.url, req.proxy)
+        if not ok:
+            raise HTTPException(502, "ffmpeg failed to download StreamWish HLS stream")
+    else:
+        ok = await _aria2_dl(stream, out, req.job_id, req.url, req.proxy)
+        if not ok:
+            async with httpx.AsyncClient(follow_redirects=True,
+                                         timeout=httpx.Timeout(None, connect=20),
+                                         verify=VERIFY_SSL, proxy=req.proxy or None,
+                                         headers={"User-Agent": _ua(), "Referer": req.url}) as hc:
+                async with hc.stream("GET", stream) as resp:
+                    resp.raise_for_status()
+                    async with aiofiles.open(out, "wb") as fo:
+                        async for chunk in resp.aiter_bytes(1 << 20):
+                            await fo.write(chunk)
+    files = [f.name for f in job_dir.iterdir() if f.is_file()]
+    await _prog(req.job_id, {"status": "completed", "progress": 100, "files": files})
+
+
+# ── Voe.sx ────────────────────────────────────────────────────────────────────
+
+async def _resolve_voe(url: str) -> Optional[str]:
+    headers = {"User-Agent": _ua(), "Referer": "https://voe.sx/", "Accept": "text/html,*/*;q=0.9"}
+    try:
+        async with httpx.AsyncClient(follow_redirects=True,
+                                     timeout=httpx.Timeout(15, connect=10),
+                                     verify=VERIFY_SSL) as c:
+            r = await c.get(url, headers=headers)
+            if r.status_code != 200:
+                return None
+            html = r.text
+            # Voe typically puts the m3u8 in a JS var: var hls = '...'; or sources: [{file:'...'}]
+            for pat in [
+                r"var\s+hls\s*=\s*['\"]([^'\"]+\.m3u8[^'\"]*)['\"]",
+                r"'hls'\s*:\s*['\"]([^'\"]+\.m3u8[^'\"]*)['\"]",
+                r'"hls"\s*:\s*"([^"]+\.m3u8[^"]*)"',
+            ]:
+                m = re.search(pat, html, re.I)
+                if m:
+                    return m.group(1)
+            return _extract_m3u8(html) or _extract_mp4(html)
+    except Exception:
+        return None
+
+
+async def _analyze_voe(url: str) -> dict:
+    m = _VOE_RE.match(url)
+    fid = m.group(1) if m else "video"
+    stream = await _resolve_voe(url)
+    return {"type": "video", "url": url, "title": f"Voe {fid}",
+            "extractor": "voe", "stream_url": stream or ""}
+
+
+async def _dl_voe(req: DownloadReq, job_dir: Path):
+    await _prog(req.job_id, {"status": "starting", "progress": 5, "info": "Resolving Voe.sx stream…"})
+    m = _VOE_RE.match(req.url)
+    fid = m.group(1) if m else "video"
+    stream = await _resolve_voe(req.url)
+    if not stream:
+        raise HTTPException(502, "Could not extract Voe.sx stream URL — the video may be unavailable")
+    await _prog(req.job_id, {"status": "downloading", "progress": 15})
+    out = _uniq(job_dir, f"voe_{fid}.mp4")
+    if ".m3u8" in stream:
+        ok = await _run_ffmpeg_hls(stream, out, req.job_id, "https://voe.sx/", req.proxy)
+        if not ok:
+            raise HTTPException(502, "ffmpeg failed to download Voe.sx HLS stream")
+    else:
+        ok = await _aria2_dl(stream, out, req.job_id, req.url, req.proxy)
+        if not ok:
+            async with httpx.AsyncClient(follow_redirects=True,
+                                         timeout=httpx.Timeout(None, connect=20),
+                                         verify=VERIFY_SSL, proxy=req.proxy or None,
+                                         headers={"User-Agent": _ua(), "Referer": req.url}) as hc:
+                async with hc.stream("GET", stream) as resp:
+                    resp.raise_for_status()
+                    async with aiofiles.open(out, "wb") as fo:
+                        async for chunk in resp.aiter_bytes(1 << 20):
+                            await fo.write(chunk)
+    files = [f.name for f in job_dir.iterdir() if f.is_file()]
+    await _prog(req.job_id, {"status": "completed", "progress": 100, "files": files})
+
+
+# ── Mp4upload ─────────────────────────────────────────────────────────────────
+
+async def _resolve_mp4upload(url: str) -> Optional[str]:
+    # Normalize: https://www.mp4upload.com/embed-{id}.html
+    m = _MP4UPLOAD_RE.match(url)
+    if not m:
+        return None
+    fid = m.group(1).replace("embed-", "").replace(".html", "")
+    embed_url = f"https://www.mp4upload.com/embed-{fid}.html"
+    headers = {"User-Agent": _ua(), "Referer": "https://www.mp4upload.com/", "Accept": "text/html,*/*;q=0.9"}
+    try:
+        async with httpx.AsyncClient(follow_redirects=True,
+                                     timeout=httpx.Timeout(15, connect=10),
+                                     verify=VERIFY_SSL) as c:
+            r = await c.get(embed_url, headers=headers)
+            if r.status_code != 200:
+                return None
+            return _extract_m3u8(r.text) or _extract_mp4(r.text)
+    except Exception:
+        return None
+
+
+async def _analyze_mp4upload(url: str) -> dict:
+    m = _MP4UPLOAD_RE.match(url)
+    fid = m.group(1) if m else "video"
+    stream = await _resolve_mp4upload(url)
+    return {"type": "video", "url": url, "title": f"Mp4upload {fid}",
+            "extractor": "mp4upload", "stream_url": stream or ""}
+
+
+async def _dl_mp4upload(req: DownloadReq, job_dir: Path):
+    await _prog(req.job_id, {"status": "starting", "progress": 5, "info": "Resolving Mp4upload stream…"})
+    m = _MP4UPLOAD_RE.match(req.url)
+    fid = m.group(1) if m else "video"
+    stream = await _resolve_mp4upload(req.url)
+    if not stream:
+        raise HTTPException(502, "Could not extract Mp4upload video URL")
+    await _prog(req.job_id, {"status": "downloading", "progress": 15})
+    out = _uniq(job_dir, f"mp4upload_{fid}.mp4")
+    if ".m3u8" in stream:
+        ok = await _run_ffmpeg_hls(stream, out, req.job_id, "https://www.mp4upload.com/", req.proxy)
+        if not ok:
+            raise HTTPException(502, "ffmpeg failed to download Mp4upload HLS stream")
+    else:
+        ok = await _aria2_dl(stream, out, req.job_id, req.url, req.proxy)
+        if not ok:
+            async with httpx.AsyncClient(follow_redirects=True,
+                                         timeout=httpx.Timeout(None, connect=20),
+                                         verify=VERIFY_SSL, proxy=req.proxy or None,
+                                         headers={"User-Agent": _ua(), "Referer": req.url}) as hc:
+                async with hc.stream("GET", stream) as resp:
+                    resp.raise_for_status()
+                    async with aiofiles.open(out, "wb") as fo:
+                        async for chunk in resp.aiter_bytes(1 << 20):
+                            await fo.write(chunk)
+    files = [f.name for f in job_dir.iterdir() if f.is_file()]
+    await _prog(req.job_id, {"status": "completed", "progress": 100, "files": files})
+
+
+# ── SendVid ───────────────────────────────────────────────────────────────────
+
+async def _resolve_sendvid(url: str) -> Optional[str]:
+    m = _SENDVID_RE.match(url)
+    if not m:
+        return None
+    fid = m.group(1)
+    page_url = f"https://sendvid.com/{fid}"
+    headers = {"User-Agent": _ua(), "Referer": "https://sendvid.com/", "Accept": "text/html,*/*;q=0.9"}
+    try:
+        async with httpx.AsyncClient(follow_redirects=True,
+                                     timeout=httpx.Timeout(15, connect=10),
+                                     verify=VERIFY_SSL) as c:
+            r = await c.get(page_url, headers=headers)
+            if r.status_code != 200:
+                return None
+            html = r.text
+            # SendVid: <meta property="og:video" content="...mp4">  or  source src="..."
+            for pat in [
+                r'og:video[^>]+content=["\']([^"\']+\.mp4[^"\']*)["\']',
+                r'<source[^>]+src=["\']([^"\']+\.mp4[^"\']*)["\']',
+                r'video_url\s*=\s*["\']([^"\']+\.mp4[^"\']*)["\']',
+            ]:
+                m2 = re.search(pat, html, re.I)
+                if m2:
+                    return m2.group(1)
+            return _extract_mp4(html) or _extract_m3u8(html)
+    except Exception:
+        return None
+
+
+async def _analyze_sendvid(url: str) -> dict:
+    m = _SENDVID_RE.match(url)
+    fid = m.group(1) if m else "video"
+    stream = await _resolve_sendvid(url)
+    return {"type": "video", "url": url, "title": f"SendVid {fid}",
+            "extractor": "sendvid", "stream_url": stream or ""}
+
+
+async def _dl_sendvid(req: DownloadReq, job_dir: Path):
+    await _prog(req.job_id, {"status": "starting", "progress": 5, "info": "Resolving SendVid stream…"})
+    m = _SENDVID_RE.match(req.url)
+    fid = m.group(1) if m else "video"
+    stream = await _resolve_sendvid(req.url)
+    if not stream:
+        raise HTTPException(502, "Could not extract SendVid video URL")
+    await _prog(req.job_id, {"status": "downloading", "progress": 15})
+    out = _uniq(job_dir, f"sendvid_{fid}.mp4")
+    if ".m3u8" in stream:
+        ok = await _run_ffmpeg_hls(stream, out, req.job_id, "https://sendvid.com/", req.proxy)
+        if not ok:
+            raise HTTPException(502, "ffmpeg failed to download SendVid HLS")
+    else:
+        ok = await _aria2_dl(stream, out, req.job_id, req.url, req.proxy)
+        if not ok:
+            async with httpx.AsyncClient(follow_redirects=True,
+                                         timeout=httpx.Timeout(None, connect=20),
+                                         verify=VERIFY_SSL, proxy=req.proxy or None,
+                                         headers={"User-Agent": _ua(), "Referer": req.url}) as hc:
+                async with hc.stream("GET", stream) as resp:
+                    resp.raise_for_status()
+                    async with aiofiles.open(out, "wb") as fo:
+                        async for chunk in resp.aiter_bytes(1 << 20):
+                            await fo.write(chunk)
+    files = [f.name for f in job_dir.iterdir() if f.is_file()]
+    await _prog(req.job_id, {"status": "completed", "progress": 100, "files": files})
+
+
+# ── Mediafire ─────────────────────────────────────────────────────────────────
+
+async def _resolve_mediafire(url: str) -> Optional[tuple[str, str]]:
+    """Returns (direct_download_url, filename) or None."""
+    headers = {"User-Agent": _ua(), "Referer": "https://www.mediafire.com/", "Accept": "text/html,*/*;q=0.9"}
+    try:
+        async with httpx.AsyncClient(follow_redirects=True,
+                                     timeout=httpx.Timeout(15, connect=10),
+                                     verify=VERIFY_SSL) as c:
+            r = await c.get(url, headers=headers)
+            if r.status_code != 200:
+                return None
+            html = r.text
+            # Find download button / direct link
+            for pat in [
+                r'id=["\']downloadButton["\'][^>]+href=["\']([^"\']+)["\']',
+                r'href=["\']([^"\']+)["\'][^>]+id=["\']downloadButton["\']',
+                r'<a[^>]+class=["\'][^"\']*download[^"\']*["\'][^>]+href=["\']([^"\']{20,})["\']',
+                r'"download_url"\s*:\s*"([^"]+)"',
+                r'data-url=["\']([^"\']+mediafire\.com[^"\']+)["\']',
+            ]:
+                m = re.search(pat, html, re.I)
+                if m:
+                    dl_url = m.group(1)
+                    if dl_url.startswith("//"):
+                        dl_url = "https:" + dl_url
+                    # Extract filename
+                    fn_m = re.search(r'class=["\']filename["\'][^>]*>([^<]+)<', html, re.I)
+                    fname = fn_m.group(1).strip() if fn_m else url.split("/")[-2]
+                    return dl_url, fname
+    except Exception:
+        pass
+    return None
+
+
+async def _analyze_mediafire(url: str) -> dict:
+    result = await _resolve_mediafire(url)
+    if result:
+        dl_url, fname = result
+        return {"type": "file", "url": url, "title": _safe(fname),
+                "extractor": "mediafire", "direct_url": dl_url}
+    return {"type": "file", "url": url, "title": "Mediafire file",
+            "extractor": "mediafire"}
+
+
+async def _dl_mediafire(req: DownloadReq, job_dir: Path):
+    await _prog(req.job_id, {"status": "starting", "progress": 5, "info": "Resolving Mediafire download link…"})
+    result = await _resolve_mediafire(req.url)
+    if not result:
+        raise HTTPException(502, "Could not extract Mediafire download URL — the file may be private or removed")
+    dl_url, fname = result
+    fname = _safe(fname)
+    out = _uniq(job_dir, fname or "mediafire_file")
+    await _prog(req.job_id, {"status": "downloading", "progress": 15})
+    ok = await _aria2_dl(dl_url, out, req.job_id, req.url, req.proxy)
+    if not ok:
+        async with httpx.AsyncClient(follow_redirects=True,
+                                     timeout=httpx.Timeout(None, connect=20),
+                                     verify=VERIFY_SSL, proxy=req.proxy or None,
+                                     headers={"User-Agent": _ua(), "Referer": req.url}) as hc:
+            async with hc.stream("GET", dl_url) as resp:
+                resp.raise_for_status()
+                total_b = int(resp.headers.get("content-length", 0)) or 0
+                done = 0
+                async with aiofiles.open(out, "wb") as fo:
+                    async for chunk in resp.aiter_bytes(1 << 20):
+                        await fo.write(chunk)
+                        done += len(chunk)
+                        if total_b:
+                            _prog_s(req.job_id, {"status": "downloading",
+                                "progress": min(95, int(done / total_b * 85) + 10)})
+    files = [f.name for f in job_dir.iterdir() if f.is_file()]
+    await _prog(req.job_id, {"status": "completed", "progress": 100, "files": files})
+
+
+# ── Krakenfiles ───────────────────────────────────────────────────────────────
+
+async def _resolve_krakenfiles(url: str) -> Optional[tuple[str, str]]:
+    """Returns (direct_download_url, filename) or None."""
+    m = _KRAKENFILES_RE.match(url)
+    if not m:
+        return None
+    fhash = m.group(1)
+    headers = {"User-Agent": _ua(), "Referer": "https://krakenfiles.com/", "Accept": "application/json"}
+    try:
+        async with httpx.AsyncClient(follow_redirects=True,
+                                     timeout=httpx.Timeout(15, connect=10),
+                                     verify=VERIFY_SSL) as c:
+            # Try the JSON API first
+            r = await c.post(f"https://krakenfiles.com/api/models/get-direct-url/{fhash}",
+                             headers={**headers, "Content-Type": "application/json"})
+            if r.status_code == 200:
+                data = r.json()
+                if data.get("status") == "ok":
+                    return data["url"], data.get("filename", f"krakenfiles_{fhash}")
+            # Fall back to scraping the page
+            r2 = await c.get(f"https://krakenfiles.com/view/{fhash}/file.html",
+                             headers={**headers, "Accept": "text/html,*/*;q=0.9"})
+            if r2.status_code != 200:
+                return None
+            html = r2.text
+            # Find direct link or download button
+            for pat in [
+                r'id=["\']download-url["\'][^>]+value=["\']([^"\']+)["\']',
+                r'href=["\']([^"\']+/download/[^"\']+)["\']',
+                r'"url"\s*:\s*"([^"]+krakenfiles[^"]+)"',
+            ]:
+                m2 = re.search(pat, html, re.I)
+                if m2:
+                    fn_m = re.search(r'<h4[^>]*>([^<]+)</h4>', html)
+                    fname = fn_m.group(1).strip() if fn_m else f"krakenfiles_{fhash}"
+                    return m2.group(1), fname
+    except Exception:
+        pass
+    return None
+
+
+async def _analyze_krakenfiles(url: str) -> dict:
+    m = _KRAKENFILES_RE.match(url)
+    fhash = m.group(1) if m else "?"
+    result = await _resolve_krakenfiles(url)
+    if result:
+        dl_url, fname = result
+        return {"type": "file", "url": url, "title": _safe(fname),
+                "extractor": "krakenfiles", "direct_url": dl_url}
+    return {"type": "file", "url": url, "title": f"Krakenfiles {fhash}",
+            "extractor": "krakenfiles"}
+
+
+async def _dl_krakenfiles(req: DownloadReq, job_dir: Path):
+    await _prog(req.job_id, {"status": "starting", "progress": 5, "info": "Resolving Krakenfiles download link…"})
+    result = await _resolve_krakenfiles(req.url)
+    if not result:
+        raise HTTPException(502, "Could not extract Krakenfiles download URL — the file may be removed")
+    dl_url, fname = result
+    out = _uniq(job_dir, _safe(fname) or "krakenfiles_file")
+    await _prog(req.job_id, {"status": "downloading", "progress": 15})
+    ok = await _aria2_dl(dl_url, out, req.job_id, req.url, req.proxy)
+    if not ok:
+        async with httpx.AsyncClient(follow_redirects=True,
+                                     timeout=httpx.Timeout(None, connect=20),
+                                     verify=VERIFY_SSL, proxy=req.proxy or None,
+                                     headers={"User-Agent": _ua(), "Referer": req.url}) as hc:
+            async with hc.stream("GET", dl_url) as resp:
+                resp.raise_for_status()
+                total_b = int(resp.headers.get("content-length", 0)) or 0
+                done = 0
+                async with aiofiles.open(out, "wb") as fo:
+                    async for chunk in resp.aiter_bytes(1 << 20):
+                        await fo.write(chunk)
+                        done += len(chunk)
+                        if total_b:
+                            _prog_s(req.job_id, {"status": "downloading",
+                                "progress": min(95, int(done / total_b * 85) + 10)})
+    files = [f.name for f in job_dir.iterdir() if f.is_file()]
+    await _prog(req.job_id, {"status": "completed", "progress": 100, "files": files})
+
+
 async def _pat_login(email: str, password: str) -> Optional[str]:
     """Login to pat.com via auth.externulls.com → returns Bearer JWT or None."""
     try:
@@ -1650,6 +2405,14 @@ async def _do_analyze(url: str) -> dict:
     if _DOODSTREAM_RE.match(url):    return await _analyze_doodstream(url)
     if _CYBERDROP_RE.match(url):     return await _analyze_cyberdrop(url)
     if _MIXDROP_RE.match(url):       return await _analyze_mixdrop(url)
+    if _GOFILE_RE.match(url):        return await _analyze_gofile(url)
+    if _FILEMOON_RE.match(url):      return await _analyze_filemoon(url)
+    if _STREAMWISH_RE.match(url):    return await _analyze_streamwish(url)
+    if _VOE_RE.match(url):           return await _analyze_voe(url)
+    if _MP4UPLOAD_RE.match(url):     return await _analyze_mp4upload(url)
+    if _SENDVID_RE.match(url):       return await _analyze_sendvid(url)
+    if _MEDIAFIRE_RE.match(url):     return await _analyze_mediafire(url)
+    if _KRAKENFILES_RE.match(url):   return await _analyze_krakenfiles(url)
     # 0. Torrent / magnet
     if url.startswith("magnet:") or url.split("?")[0].lower().endswith(".torrent"):
         name = "torrent"
@@ -2258,6 +3021,14 @@ async def download(req: DownloadReq):
             elif _STREAMTAPE_RE.match(req.url): await _dl_streamtape(req, job_dir)
             elif _DOODSTREAM_RE.match(req.url): await _dl_doodstream(req, job_dir)
             elif _MIXDROP_RE.match(req.url):    await _dl_mixdrop(req, job_dir)
+            elif _GOFILE_RE.match(req.url):     await _dl_gofile(req, job_dir)
+            elif _FILEMOON_RE.match(req.url):   await _dl_filemoon(req, job_dir)
+            elif _STREAMWISH_RE.match(req.url): await _dl_streamwish(req, job_dir)
+            elif _VOE_RE.match(req.url):        await _dl_voe(req, job_dir)
+            elif _MP4UPLOAD_RE.match(req.url):  await _dl_mp4upload(req, job_dir)
+            elif _SENDVID_RE.match(req.url):    await _dl_sendvid(req, job_dir)
+            elif _MEDIAFIRE_RE.match(req.url):  await _dl_mediafire(req, job_dir)
+            elif _KRAKENFILES_RE.match(req.url):await _dl_krakenfiles(req, job_dir)
             elif req.capture and req.media_type == "video":
                 await _dl_capture(req, job_dir)
             elif req.media_type in ("playlist","profile"):
