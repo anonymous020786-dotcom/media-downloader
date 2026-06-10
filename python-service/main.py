@@ -467,6 +467,57 @@ async def analyze(req: AnalyzeReq):
 # ─────────────────────────────────────────────────────────────────────────────
 
 _PAT_COM_RE = re.compile(r'^https?://(?:www\.)?pat\.com/-?(\d+(?:\d+)*)$')
+# Direct pat.com CDN URL (user pastes from browser network tab)
+# e.g. https://video.pat.com/key=...,end=...,limit=.../data=.../media=hls4A/...
+_PAT_CDN_RE = re.compile(r'^https?://video\.pat\.com/key=[^/]+/data=[^/]+/', re.I)
+
+
+def _pat_cdn_to_m3u8(cdn_url: str) -> str:
+    """Convert any pat.com CDN segment/init URL to its HLS master playlist URL.
+
+    CDN structure:
+      https://video.pat.com/{auth}/data={d}/media=hls4A/{quality}/{file}.mp4/{segment}
+
+    Master playlist is at:
+      https://video.pat.com/{auth}/data={d}/media=hls4A/master.m3u8
+    OR quality-level playlist:
+      https://video.pat.com/{auth}/data={d}/media=hls4A/{quality}/{file}.mp4/index.m3u8
+    """
+    # Trim everything from 'media=hls4A' onwards, then append the manifest path
+    m = re.match(r'(https?://video\.pat\.com/[^/]+/data=[^/]+/media=hls4A)', cdn_url, re.I)
+    if m:
+        return m.group(1) + "/master.m3u8"
+    # Fallback: trim at the last known segment filename pattern
+    m2 = re.match(r'(https?://video\.pat\.com/[^/]+/data=[^/]+/media=[^/]+/[^/]+/[^/]+\.mp4)/', cdn_url, re.I)
+    if m2:
+        return m2.group(1) + "/index.m3u8"
+    return cdn_url
+
+
+async def _analyze_pat_cdn(url: str) -> dict:
+    """Analyse a direct pat.com CDN URL (pasted from browser network tab)."""
+    m = re.search(r'/media=([^/]+)/', url, re.I)
+    media_type = m.group(1) if m else "hls"
+    m2 = re.search(r'/(\d{10,}\.mp4)/', url)
+    cdn_file_id = m2.group(1).replace(".mp4", "") if m2 else "unknown"
+    m3u8_url = _pat_cdn_to_m3u8(url)
+    # Check expiry from token
+    m_end = re.search(r',end=(\d+)', url)
+    expired = False
+    if m_end:
+        import time
+        expired = int(m_end.group(1)) < time.time()
+    return {
+        "type": "video",
+        "title": f"pat.com video {cdn_file_id}",
+        "thumbnail": None, "duration": None, "uploader": "",
+        "extractor": "pat.com-cdn",
+        "qualities": [], "video_formats": ["mp4"],
+        "_pat_cdn_url": url,
+        "_pat_m3u8_url": m3u8_url,
+        "_pat_expired": expired,
+        "_pat_note": "Expired token" if expired else "Direct CDN URL — will download via ffmpeg",
+    }
 
 # Pixeldrain  https://pixeldrain.com/u/{id}  or  /l/{id}  (list)
 _PIXELDRAIN_RE = re.compile(
@@ -1377,6 +1428,61 @@ async def _analyze_pat_com(url: str, token: Optional[str] = None) -> dict:
     }
 
 
+async def _dl_pat_cdn(req: DownloadReq, job_dir: Path):
+    """Download a pat.com video from a direct CDN URL (pasted from browser network tab).
+    Builds the m3u8 master playlist URL and streams via ffmpeg.
+    """
+    m3u8 = _pat_cdn_to_m3u8(req.url)
+    await _prog(req.job_id, {"status": "downloading", "progress": 5,
+                              "info": "Downloading pat.com HLS stream…"})
+    m = re.search(r'/(\d{10,})\.mp4/', req.url)
+    cdn_id = m.group(1) if m else "video"
+    out = _uniq(job_dir, f"pat_{cdn_id}.mp4")
+
+    cmd = [
+        "ffmpeg", "-y",
+        "-headers", "Referer: https://pat.com/\r\nOrigin: https://pat.com/\r\n",
+        "-i", m3u8,
+        "-c", "copy", "-movflags", "+faststart",
+        str(out),
+    ]
+    if req.proxy:
+        cmd = ["ffmpeg", "-y", "-http_proxy", req.proxy,
+               "-headers", cmd[3], "-i", m3u8,
+               "-c", "copy", "-movflags", "+faststart", str(out)]
+
+    proc = await asyncio.create_subprocess_exec(
+        *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
+    async def _pump():
+        assert proc.stdout
+        async for raw in proc.stdout:
+            line = raw.decode("utf-8", "ignore")
+            mt = re.search(r"time=(\d+:\d+:\d+)", line)
+            if mt:
+                _prog_s(req.job_id, {"status": "downloading", "progress": 50,
+                                      "info": f"ffmpeg {mt.group(1)}"})
+    try:
+        await asyncio.wait_for(_pump(), timeout=7200)
+        await asyncio.wait_for(proc.wait(), timeout=60)
+    except asyncio.TimeoutError:
+        try: proc.kill()
+        except Exception: pass
+
+    if proc.returncode != 0 or not out.exists() or out.stat().st_size < 1024:
+        if out.exists(): out.unlink()
+        # Token may be expired — try downloading the specific segment URL directly
+        ok = await _aria2_dl(req.url, _uniq(job_dir, f"pat_{cdn_id}_seg.mp4"),
+                             req.job_id, "https://pat.com/", req.proxy)
+        if not ok:
+            raise HTTPException(
+                403,
+                "pat.com CDN token has expired. Open the video in your browser, "
+                "copy a fresh CDN URL from the network tab, and paste it here."
+            )
+    files = [f.name for f in job_dir.iterdir() if f.is_file()]
+    await _prog(req.job_id, {"status": "completed", "progress": 100, "files": files})
+
+
 async def _dl_pat_com(req: DownloadReq, job_dir: Path):
     """Download a pat.com video (HLS stream via CDN).
 
@@ -1398,18 +1504,47 @@ async def _dl_pat_com(req: DownloadReq, job_dir: Path):
     await _prog(req.job_id, {"status": "starting", "progress": 5,
                               "info": "Resolving pat.com stream URL…"})
 
-    # Step 1: resolve the signed CDN / m3u8 URL from the API
+    # Step 1: try the authenticated API path
     stream_url, cdn_file_id = await _pat_resolve_stream(file_id, token, req.url)
 
+    # Step 2: no API result — try Playwright headless render to intercept CDN URLs
+    # Works for free/public videos; the browser executes the JS and we capture the
+    # signed CDN URL from network traffic without needing an account.
     if not stream_url:
-        if not token:
-            raise HTTPException(
-                401,
-                "pat.com videos require login. "
-                "Add  pat_token=<JWT>  or  pat_email=x pat_password=y  "
-                "in the Cookies field."
+        await _prog(req.job_id, {"status": "starting", "progress": 15,
+                                  "info": "Launching headless browser to intercept CDN URL…"})
+        try:
+            _, videos = await asyncio.wait_for(
+                _render_media(req.url, proxy=req.proxy, scroll=False,
+                              timeout_ms=35000, want_video=True),
+                timeout=50,
             )
-        raise HTTPException(502, "Could not resolve pat.com stream URL — the video may have been removed")
+            # Filter for pat.com CDN URLs (video.pat.com/key=...)
+            pat_cdn = [v for v in videos if "video.pat.com/key=" in v]
+            # Prefer m3u8 manifest; fall back to any segment
+            m3u8_hits = [v for v in pat_cdn if "m3u8" in v]
+            if m3u8_hits:
+                stream_url = m3u8_hits[0]
+            elif pat_cdn:
+                # Convert any segment URL to its m3u8 master
+                stream_url = _pat_cdn_to_m3u8(pat_cdn[0])
+            elif videos:
+                # Generic video URL captured (maybe an embed or alt CDN)
+                stream_url = next(iter(videos))
+        except Exception:
+            pass
+
+    if not stream_url:
+        if token:
+            raise HTTPException(502, "Could not resolve pat.com stream URL — the video may have been removed")
+        raise HTTPException(
+            403,
+            "pat.com could not be accessed without login for this video.\n\n"
+            "Options:\n"
+            "1. Open the video in your browser, go to DevTools → Network tab, "
+            "filter by 'video.pat.com', copy any CDN URL and paste it here.\n"
+            "2. Add  pat_token=<JWT>  or  pat_email=x pat_password=y  in the Cookies field."
+        )
 
     await _prog(req.job_id, {"status": "downloading", "progress": 10})
 
@@ -1506,6 +1641,7 @@ async def _dl_pat_com(req: DownloadReq, job_dir: Path):
 
 async def _do_analyze(url: str) -> dict:
     # 0a. Custom site extractors (no yt-dlp support)
+    if _PAT_CDN_RE.match(url):       return await _analyze_pat_cdn(url)
     if _PAT_COM_RE.match(url):       return await _analyze_pat_com(url)
     if _PIXELDRAIN_RE.match(url):    return await _analyze_pixeldrain(url)
     if _STREAMTAPE_RE.match(url):    return await _analyze_streamtape(url)
@@ -2114,7 +2250,8 @@ async def download(req: DownloadReq):
             if req.cookies:
                 cookie_file = _write_cookies(req.cookies)
             # Custom site extractors bypass normal yt-dlp dispatch
-            if _PIXELDRAIN_RE.match(req.url):   await _dl_pixeldrain(req, job_dir)
+            if _PAT_CDN_RE.match(req.url):      await _dl_pat_cdn(req, job_dir)
+            elif _PIXELDRAIN_RE.match(req.url): await _dl_pixeldrain(req, job_dir)
             elif _BUNKR_RE.match(req.url):      await _dl_bunkr(req, job_dir)
             elif _EROME_RE.match(req.url):      await _dl_erome(req, job_dir)
             elif _CYBERDROP_RE.match(req.url):  await _dl_cyberdrop(req, job_dir)
@@ -2630,7 +2767,10 @@ async def _dl_capture(req: DownloadReq, job_dir: Path):
 
 
 async def _dl_video(req: DownloadReq, job_dir: Path, cookie_file: Optional[str]):
-    # 0. pat.com — requires custom JWT auth flow
+    # 0. pat.com — custom extractors
+    if _PAT_CDN_RE.match(req.url):
+        await _dl_pat_cdn(req, job_dir)
+        return
     if _PAT_COM_RE.match(req.url):
         await _dl_pat_com(req, job_dir)
         return
