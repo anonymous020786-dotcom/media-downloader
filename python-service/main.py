@@ -1191,20 +1191,156 @@ async def _pat_login(email: str, password: str) -> Optional[str]:
 
 
 def _pat_file_id(url: str) -> Optional[str]:
-    """Extract numeric file ID from a pat.com URL.
+    """Extract numeric slug ID from a pat.com URL.
     https://pat.com/-0252924980226239  →  '252924980226239'
-    https://pat.com/-1123456789        →  '123456789'
+    The leading digit after '-' is a type prefix, not part of the ID.
     """
     m = _PAT_COM_RE.match(url)
     if not m:
         return None
     raw = m.group(1)
-    # Strip leading digit prefix (the '-0', '-1' type tag absorbed into the number)
-    # The URL digit after '-' is the type prefix; rest is the file ID
-    # e.g. "0252924980226239" → type=0, file_id="252924980226239"
-    if len(raw) > 1:
-        return raw[1:]  # drop the first digit (type prefix)
-    return raw
+    return raw[1:] if len(raw) > 1 else raw
+
+
+async def _pat_get_token(req_cookies: Optional[str], job_id: str) -> Optional[str]:
+    """Extract or acquire a pat.com Bearer JWT from the cookies field."""
+    if not req_cookies:
+        return None
+    m_tok = re.search(r'pat_token=([^\s;]+)', req_cookies)
+    if m_tok:
+        return m_tok.group(1)
+    m_em = re.search(r'pat_email=([^\s;]+)', req_cookies)
+    m_pw = re.search(r'pat_password=([^\s;]+)', req_cookies)
+    if m_em and m_pw:
+        await _prog(job_id, {"status": "starting", "progress": 2, "info": "Logging in to pat.com…"})
+        token = await _pat_login(m_em.group(1), m_pw.group(1))
+        if not token:
+            raise HTTPException(401, "pat.com login failed — check email/password")
+        return token
+    return None
+
+
+_PAT_QUALITY_PREF = [
+    "avc1_1080p", "avc1_720p", "avc1_480p", "avc1_360p",
+    "av1_1080p",  "av1_720p",  "av1_480p",  "av1_360p",
+    "hevc_1080p", "hevc_720p",
+]
+
+
+async def _pat_resolve_stream(file_id: str, token: Optional[str], referer: str
+                              ) -> tuple[Optional[str], Optional[str]]:
+    """Call video.pat.com/{file_id} with Bearer auth.
+    Returns (stream_url, cdn_file_id) where stream_url is the HLS master m3u8
+    or a direct CDN URL.
+
+    The CDN URL structure (from network analysis):
+      https://video.pat.com/key={k},end={exp},limit={n}/data={d}/media=hls4A/
+        {quality}/{cdn_file_id}.mp4/{segment}
+
+    With Bearer auth the API likely returns a JSON with the signed base URL
+    or redirects to it.
+    """
+    api_url = f"https://video.pat.com/{file_id}"
+    headers = {
+        "User-Agent": _ua(),
+        "Referer": referer,
+        "Origin": "https://pat.com",
+        "Accept": "application/json, video/mp4, */*",
+    }
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+
+    try:
+        async with httpx.AsyncClient(
+            follow_redirects=False,  # capture redirect Location manually
+            timeout=httpx.Timeout(20, connect=15),
+            verify=VERIFY_SSL,
+        ) as c:
+            r = await c.get(api_url, headers=headers)
+
+        # Case 1: API returns a redirect → Location is the CDN base or m3u8
+        if r.status_code in (301, 302, 307, 308):
+            loc = r.headers.get("location", "")
+            if loc:
+                # If it's already an m3u8 URL, return it
+                if "m3u8" in loc:
+                    return loc, None
+                # Otherwise it's the CDN base → probe for m3u8
+                cdn_base = loc.rstrip("/")
+                return await _pat_build_m3u8(cdn_base, token), None
+
+        # Case 2: JSON response with stream info
+        if r.status_code == 200:
+            ct = r.headers.get("content-type", "")
+            if "json" in ct:
+                data = r.json()
+                # Extract stream URL from common field names
+                for field in ("stream_url", "hls_url", "cdn_url", "url", "src", "source"):
+                    val = data.get(field) or data.get("data", {}).get(field, "")
+                    if val and val.startswith("http"):
+                        if "m3u8" in val:
+                            return val, data.get("cdn_file_id")
+                        return await _pat_build_m3u8(val.rstrip("/"), token), data.get("cdn_file_id")
+                # Maybe nested under "video" or "file"
+                for nested in ("video", "file", "media", "content"):
+                    sub = data.get(nested, {})
+                    if isinstance(sub, dict):
+                        for field in ("stream_url", "hls_url", "cdn_url", "url"):
+                            val = sub.get(field, "")
+                            if val and val.startswith("http"):
+                                if "m3u8" in val:
+                                    return val, sub.get("cdn_file_id") or sub.get("id")
+                                return await _pat_build_m3u8(val.rstrip("/"), token), None
+            # Case 3: video/mp4 direct stream (unlikely but handle it)
+            if "video/" in ct or "application/octet-stream" in ct:
+                return api_url, None  # caller will download as direct stream
+
+        # Case 4: 403 without token → not authenticated
+        if r.status_code == 403 and not token:
+            return None, None
+
+    except Exception:
+        pass
+
+    return None, None
+
+
+async def _pat_build_m3u8(cdn_base: str, token: Optional[str]) -> Optional[str]:
+    """Given a CDN base URL, find the HLS master playlist.
+    CDN structure: {cdn_base}/media=hls4A/{quality}/{cdn_file_id}.mp4/index.m3u8
+    """
+    headers: dict = {"User-Agent": _ua(), "Accept": "*/*", "Referer": "https://pat.com/"}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+
+    # If cdn_base already contains media=hls4A, probe directly
+    if "media=hls4A" in cdn_base:
+        # Try master playlist at this level
+        for name in ("master.m3u8", "index.m3u8", "playlist.m3u8"):
+            url = f"{cdn_base}/{name}"
+            try:
+                async with httpx.AsyncClient(follow_redirects=True, timeout=10, verify=VERIFY_SSL) as c:
+                    r = await c.head(url, headers=headers)
+                if r.status_code == 200:
+                    return url
+            except Exception:
+                pass
+        return None
+
+    # Try appending media=hls4A and quality variants
+    async with httpx.AsyncClient(follow_redirects=True, timeout=10, verify=VERIFY_SSL) as c:
+        for suffix in [
+            "media=hls4A/master.m3u8",
+            "media=hls4A/index.m3u8",
+        ]:
+            url = f"{cdn_base}/{suffix}"
+            try:
+                r = await c.head(url, headers=headers)
+                if r.status_code == 200:
+                    return url
+            except Exception:
+                pass
+    return None
 
 
 async def _analyze_pat_com(url: str, token: Optional[str] = None) -> dict:
@@ -1213,27 +1349,14 @@ async def _analyze_pat_com(url: str, token: Optional[str] = None) -> dict:
     if not file_id:
         raise ValueError(f"Cannot parse pat.com URL: {url}")
 
-    video_url = f"https://video.pat.com/{file_id}"
-    headers = {
-        "User-Agent": _ua(),
-        "Referer": url,
-        "Origin": "https://pat.com",
-        "Accept": "*/*",
-    }
-    if token:
-        headers["Authorization"] = f"Bearer {token}"
-
-    # Probe the video URL for content-length / content-type
     title = f"pat.com video {file_id}"
-    size = None
     try:
-        async with httpx.AsyncClient(follow_redirects=True, timeout=15, verify=VERIFY_SSL) as c:
-            r = await c.head(video_url, headers=headers)
-            if r.status_code == 200:
-                size = int(r.headers.get("content-length", 0)) or None
-            # Try to get title from og:title in page HTML (no auth needed for the SPA shell)
-            rp = await c.get(url, headers={**headers, "Accept": "text/html"})
-            m2 = re.search(r'<meta[^>]+(?:og:title|twitter:title)[^>]+content=["\']([^"\']{1,200})', rp.text, re.I)
+        async with httpx.AsyncClient(follow_redirects=True,
+                                     timeout=httpx.Timeout(10, connect=8),
+                                     verify=VERIFY_SSL) as c:
+            rp = await c.get(url, headers={"User-Agent": _ua(), "Accept": "text/html"})
+            m2 = re.search(
+                r'<meta[^>]+(?:og:title|twitter:title)[^>]+content=["\']([^"\']{1,200})', rp.text, re.I)
             if m2:
                 title = m2.group(1).strip()
     except Exception:
@@ -1246,97 +1369,139 @@ async def _analyze_pat_com(url: str, token: Optional[str] = None) -> dict:
         "duration": None,
         "uploader": "",
         "extractor": "pat.com",
-        "qualities": [],
-        "video_formats": ["mp4"],
-        "size": size,
+        "qualities": _PAT_QUALITY_PREF[:4],  # show available quality labels
+        "video_formats": ["mp4", "mkv"],
         "_pat_file_id": file_id,
-        "_pat_video_url": video_url,
         "_pat_needs_auth": not bool(token),
+        "_pat_note": "Requires pat.com login — add pat_token=<JWT> or pat_email=x pat_password=y in Cookies",
     }
 
 
 async def _dl_pat_com(req: DownloadReq, job_dir: Path):
-    """Download a pat.com video. Accepts auth via:
-      • req.cookies field containing  pat_token=<JWT>
-        OR  pat_email=user@x.com pat_password=secret
+    """Download a pat.com video (HLS stream via CDN).
+
+    Video delivery: HLS fragmented-MP4 at video.pat.com
+    CDN URL structure:
+      https://video.pat.com/key={k},end={expiry},limit={n}/data={hash}/
+        media=hls4A/{quality}/{cdn_file_id}.mp4/{segment}
+
+    Auth: put one of these in the Cookies field:
+      pat_token=<JWT>                         — use existing Bearer token
+      pat_email=x@y.com pat_password=secret   — auto-login to get token
     """
     file_id = _pat_file_id(req.url)
     if not file_id:
         raise HTTPException(400, "Invalid pat.com URL")
 
-    # Extract token / credentials from the cookies field
-    token: Optional[str] = None
-    if req.cookies:
-        m_tok = re.search(r'pat_token=([^\s;]+)', req.cookies)
-        if m_tok:
-            token = m_tok.group(1)
-        else:
-            m_em  = re.search(r'pat_email=([^\s;]+)', req.cookies)
-            m_pw  = re.search(r'pat_password=([^\s;]+)', req.cookies)
-            if m_em and m_pw:
-                await _prog(req.job_id, {"status":"starting","progress":2,"info":"Logging in to pat.com…"})
-                token = await _pat_login(m_em.group(1), m_pw.group(1))
-                if not token:
-                    raise HTTPException(401, "pat.com login failed — check email/password")
+    token = await _pat_get_token(req.cookies, req.job_id)
 
-    video_url = f"https://video.pat.com/{file_id}"
-    headers = {
-        "User-Agent": _ua(),
-        "Referer": req.url,
-        "Origin": "https://pat.com",
-        "Accept": "video/mp4,video/*;q=0.9,*/*;q=0.8",
-    }
-    if token:
-        headers["Authorization"] = f"Bearer {token}"
+    await _prog(req.job_id, {"status": "starting", "progress": 5,
+                              "info": "Resolving pat.com stream URL…"})
 
-    await _prog(req.job_id, {"status":"downloading","progress":5})
+    # Step 1: resolve the signed CDN / m3u8 URL from the API
+    stream_url, cdn_file_id = await _pat_resolve_stream(file_id, token, req.url)
 
-    out = _uniq(job_dir, f"pat_{file_id}.mp4")
-    part = job_dir / (out.name + ".part")
+    if not stream_url:
+        if not token:
+            raise HTTPException(
+                401,
+                "pat.com videos require login. "
+                "Add  pat_token=<JWT>  or  pat_email=x pat_password=y  "
+                "in the Cookies field."
+            )
+        raise HTTPException(502, "Could not resolve pat.com stream URL — the video may have been removed")
 
-    try:
-        async with httpx.AsyncClient(
-            follow_redirects=True, http2=True, verify=VERIFY_SSL,
-            timeout=httpx.Timeout(None, connect=20),
-            proxy=req.proxy or None,
-            headers=headers,
-        ) as c:
-            async with c.stream("GET", video_url) as r:
-                if r.status_code == 403:
-                    raise HTTPException(
-                        401,
-                        "pat.com returned 403 — video requires login. "
-                        "Add  pat_token=<JWT>  or  pat_email=x pat_password=y  "
-                        "in the Cookies field."
-                    )
-                if r.status_code == 404:
-                    raise HTTPException(404, f"pat.com video {file_id} not found")
-                r.raise_for_status()
-                total = int(r.headers.get("content-length", 0)) or 0
-                done = 0
-                async with aiofiles.open(part, "wb") as f:
-                    async for chunk in r.aiter_bytes(1 << 20):
-                        await f.write(chunk)
-                        done += len(chunk)
-                        if total:
-                            _prog_s(req.job_id, {
-                                "status": "downloading",
-                                "progress": min(95, int(done / total * 95)),
-                                "downloaded": done, "total": total,
-                            })
+    await _prog(req.job_id, {"status": "downloading", "progress": 10})
 
-        if not part.exists() or part.stat().st_size < 1024:
-            if part.exists(): part.unlink()
-            raise HTTPException(500, "pat.com download produced an empty file")
+    out_name = f"pat_{cdn_file_id or file_id}.mp4"
+    out = _uniq(job_dir, out_name)
 
-        part.rename(out)
-        files = [f.name for f in job_dir.iterdir() if f.is_file()]
-        await _prog(req.job_id, {"status": "completed", "progress": 100, "files": files})
+    # Step 2: download — HLS via ffmpeg, direct MP4 via aria2c/httpx
+    is_hls = "m3u8" in stream_url or "m3u8" in stream_url.lower()
 
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(500, f"pat.com download error: {e}")
+    if is_hls:
+        # ffmpeg handles HLS natively: concat all segments → single MP4
+        ffmpeg_cmd = [
+            "ffmpeg", "-y",
+            "-headers", f"Referer: https://pat.com/\r\nOrigin: https://pat.com/\r\n"
+                        + (f"Authorization: Bearer {token}\r\n" if token else ""),
+            "-i", stream_url,
+            "-c", "copy",
+            "-movflags", "+faststart",
+            str(out),
+        ]
+        if req.proxy:
+            ffmpeg_cmd = ["ffmpeg", "-y",
+                          "-http_proxy", req.proxy,
+                          "-headers", ffmpeg_cmd[3],
+                          "-i", stream_url, "-c", "copy", "-movflags", "+faststart", str(out)]
+
+        proc = await asyncio.create_subprocess_exec(
+            *ffmpeg_cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )
+        async def _pump_ffmpeg():
+            assert proc.stdout
+            async for raw in proc.stdout:
+                line = raw.decode("utf-8", "ignore")
+                m_t = re.search(r"time=(\d+:\d+:\d+)", line)
+                if m_t:
+                    _prog_s(req.job_id, {"status": "downloading", "progress": 50,
+                                          "info": f"ffmpeg {m_t.group(1)}"})
+        try:
+            await asyncio.wait_for(_pump_ffmpeg(), timeout=7200)
+            await asyncio.wait_for(proc.wait(), timeout=60)
+        except asyncio.TimeoutError:
+            try: proc.kill()
+            except Exception: pass
+            raise HTTPException(504, "pat.com HLS download timed out")
+
+        if proc.returncode != 0 or not out.exists() or out.stat().st_size < 1024:
+            if out.exists(): out.unlink()
+            raise HTTPException(500, "ffmpeg failed to download pat.com HLS stream")
+    else:
+        # Direct MP4 download
+        headers = {
+            "User-Agent": _ua(),
+            "Referer": req.url,
+            "Origin": "https://pat.com",
+            "Accept": "video/mp4,video/*;q=0.9,*/*;q=0.8",
+        }
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+
+        ok = await _aria2_dl(stream_url, out, req.job_id, req.url, req.proxy)
+        if not ok:
+            part = job_dir / (out.name + ".part")
+            async with httpx.AsyncClient(
+                follow_redirects=True, http2=True, verify=VERIFY_SSL,
+                timeout=httpx.Timeout(None, connect=20),
+                proxy=req.proxy or None, headers=headers,
+            ) as c:
+                async with c.stream("GET", stream_url) as r:
+                    if r.status_code == 403:
+                        raise HTTPException(401, "pat.com CDN returned 403 — token may have expired")
+                    r.raise_for_status()
+                    total_b = int(r.headers.get("content-length", 0)) or 0
+                    done = 0
+                    async with aiofiles.open(part, "wb") as f:
+                        async for chunk in r.aiter_bytes(1 << 20):
+                            await f.write(chunk)
+                            done += len(chunk)
+                            if total_b:
+                                _prog_s(req.job_id, {
+                                    "status": "downloading",
+                                    "progress": min(95, int(done / total_b * 95)),
+                                    "downloaded": done, "total": total_b,
+                                })
+            if not part.exists() or part.stat().st_size < 1024:
+                if part.exists(): part.unlink()
+                raise HTTPException(500, "pat.com download produced an empty file")
+            part.rename(out)
+
+    files = [f.name for f in job_dir.iterdir() if f.is_file()]
+    await _prog(req.job_id, {"status": "completed", "progress": 100, "files": files})
 
 
 async def _do_analyze(url: str) -> dict:
