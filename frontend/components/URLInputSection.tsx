@@ -11,11 +11,11 @@ import PlatformGrid from './PlatformGrid'
 import AdvancedOptions from './AdvancedOptions'
 import MediaPreviewGrid, { type PreviewItem } from './download/MediaPreviewGrid'
 import SearchPanel from './download/SearchPanel'
-import type { AnalyzeResult, PlaylistInfo, DownloadMode, Job, AdvancedOptions as Opts } from '@/lib/types'
+import type { AnalyzeResult, PlaylistInfo, DownloadMode, Job, AdvancedOptions as Opts, FeedResult, FeedItem } from '@/lib/types'
 import { DEFAULT_ADVANCED } from '@/lib/types'
-import { analyzeUrl, analyzePlaylist, queueDownload, previewPage, listPlaylist, fmtDuration, fmtBytes } from '@/lib/api'
+import { analyzeUrl, analyzePlaylist, queueDownload, previewPage, listPlaylist, fmtDuration, fmtBytes, parseFeed, batchDownload } from '@/lib/api'
 import { getRecaptchaToken } from '@/lib/recaptcha'
-import { FileDown, SearchCheck } from 'lucide-react'
+import { FileDown, SearchCheck, Rss, CheckSquare, Square, ChevronDown, ChevronUp } from 'lucide-react'
 import { toast } from 'sonner'
 
 const RECENT_KEY = 'mediadl_recent_urls'
@@ -43,6 +43,7 @@ const MODES: { key: DownloadMode; label: string; icon: React.ReactNode; hint: st
   { key: 'profile',  label: 'Profile',  icon: <User size={12}/>,     hint: 'All posts from a profile' },
   { key: 'batch',    label: 'Batch',    icon: <Layers size={12}/>,   hint: 'Multiple URLs at once' },
   { key: 'search',   label: 'Search',   icon: <SearchCheck size={12}/>, hint: 'Find files on the web & download' },
+  { key: 'feed',     label: 'Feed',     icon: <Rss size={12}/>,      hint: 'Download from RSS, Atom, or M3U/IPTV feed' },
 ]
 
 const PLATFORM_MAP: { host: string; name: string; color: string }[] = [
@@ -96,8 +97,16 @@ export default function URLInputSection({ onQueued, initialUrl = '' }: Props) {
   const [showPreview, setShowPreview] = useState(false)
   const [recentUrls,  setRecentUrls]  = useState<string[]>([])
   const [showRecent,  setShowRecent]  = useState(false)
+  // Feed mode state
+  const [feedResult,  setFeedResult]  = useState<FeedResult | null>(null)
+  const [feedLoading, setFeedLoading] = useState(false)
+  const [feedSelected,setFeedSelected]= useState<Set<number>>(new Set())
+  const [feedFmt,     setFeedFmt]     = useState('mp4')
+  const [feedQueing,  setFeedQueing]  = useState(false)
   const inputRef    = useRef<HTMLInputElement>(null)
   const recentRef   = useRef<HTMLDivElement>(null)
+  // Clipboard suggestion
+  const [clipSuggest, setClipSuggest] = useState('')
 
   const reset = useCallback(() => { setInfo(null); setPlInfo(null); setError('') }, [])
   const isPlaylistMode = mode === 'playlist' || mode === 'profile'
@@ -112,6 +121,25 @@ export default function URLInputSection({ onQueued, initialUrl = '' }: Props) {
     }
     document.addEventListener('mousedown', handler)
     return () => document.removeEventListener('mousedown', handler)
+  }, [])
+
+  // Clipboard URL watcher — when page becomes visible, check clipboard for a URL
+  useEffect(() => {
+    const checkClip = async () => {
+      try {
+        if (!navigator?.clipboard?.readText) return
+        const text = (await navigator.clipboard.readText()).trim()
+        if (text.startsWith('http') && text !== url && text !== clipSuggest) {
+          setClipSuggest(text)
+        }
+      } catch { /* permission denied or unavailable */ }
+    }
+    const onVisible = () => { if (document.visibilityState === 'visible') checkClip() }
+    document.addEventListener('visibilitychange', onVisible)
+    // Also check on initial mount (user may have copied before opening the page)
+    checkClip()
+    return () => document.removeEventListener('visibilitychange', onVisible)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   const analyze = useCallback(async (targetUrl?: string) => {
@@ -270,6 +298,42 @@ export default function URLInputSection({ onQueued, initialUrl = '' }: Props) {
   const canDownload   = !!(url.trim() && (info || plInfo))
   const canPreview    = !!(url.trim() && (plInfo || isPlaylistMode || info?.type === 'page'))
   const platform      = detectPlatform(url)
+  const isFeedMode    = mode === 'feed'
+
+  // Feed mode handlers
+  async function handleFeedLoad() {
+    const u = url.trim()
+    if (!u) return
+    setFeedLoading(true); setFeedResult(null); setFeedSelected(new Set()); setError('')
+    try {
+      const r = await parseFeed(u)
+      setFeedResult(r)
+      // Pre-select all items
+      setFeedSelected(new Set(r.items.map((_, i) => i)))
+    } catch (e: any) { setError(e.message) }
+    finally { setFeedLoading(false) }
+  }
+
+  async function handleFeedDownload() {
+    if (!feedResult) return
+    const selected = feedResult.items.filter((_, i) => feedSelected.has(i))
+    if (!selected.length) { toast.error('Select at least one item'); return }
+    setFeedQueing(true)
+    try {
+      const items = selected.map((it) => ({ url: it.url, title: it.title, thumbnail: it.thumbnail ?? undefined }))
+      const mediaType = feedResult.type === 'm3u' ? 'video' : 'video'
+      const { count, jobs } = await batchDownload(items, { mediaType, format: feedFmt, quality: 'best', priority: opts.priority })
+      for (const j of jobs) {
+        onQueued(j.jobId, {
+          jobId: j.jobId, url: j.url, mediaType, format: feedFmt,
+          quality: 'best', title: j.title, addedAt: Date.now(),
+        })
+      }
+      toast.success(`Queued ${count} items from feed`)
+      setFeedResult(null); setUrl('')
+    } catch (e: any) { toast.error(e.message) }
+    finally { setFeedQueing(false) }
+  }
 
   return (
     <div className="space-y-4">
@@ -285,11 +349,127 @@ export default function URLInputSection({ onQueued, initialUrl = '' }: Props) {
         ))}
       </div>
 
+      {/* Clipboard URL suggestion banner */}
+      {clipSuggest && !url && mode !== 'search' && (
+        <div className="flex items-center gap-3 px-4 py-2.5 bg-indigo-950/40 border border-indigo-800/40 rounded-xl text-xs">
+          <Link2 size={12} className="text-indigo-400 shrink-0" />
+          <span className="text-indigo-300 flex-1 truncate">Clipboard: <span className="text-indigo-200">{clipSuggest}</span></span>
+          <button
+            onClick={() => { setUrl(clipSuggest); setClipSuggest(''); reset(); setTimeout(() => analyze(clipSuggest), 50) }}
+            className="shrink-0 px-2.5 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-medium transition-colors">
+            Use
+          </button>
+          <button type="button" title="Dismiss" onClick={() => setClipSuggest('')} className="shrink-0 text-indigo-500 hover:text-indigo-300 transition-colors">
+            <X size={12} />
+          </button>
+        </div>
+      )}
+
       {/* Search mode → web/file/image/video search */}
       {mode === 'search' && <SearchPanel onQueued={onQueued} />}
 
+      {/* Feed mode — RSS / Atom / M3U / IPTV */}
+      {isFeedMode && (
+        <div className="space-y-3">
+          <div className="flex gap-2">
+            <input
+              value={url}
+              onChange={(e) => { setUrl(e.target.value); setFeedResult(null); setError('') }}
+              onKeyDown={(e) => { if (e.key === 'Enter') handleFeedLoad() }}
+              placeholder="Paste RSS, Atom, M3U, or M3U8 feed URL…"
+              className="flex-1 bg-[var(--bg-card)] border border-[var(--border)] focus:border-[var(--brand)] rounded-xl pl-4 pr-4 py-3.5 text-sm text-[var(--text)] placeholder-[var(--text-3)] outline-none transition-colors"
+            />
+            <button type="button" onClick={handleFeedLoad} disabled={!url.trim() || feedLoading}
+              className="flex items-center gap-2 px-5 py-3 bg-[var(--bg-hover)] hover:bg-[var(--border)] disabled:opacity-40 disabled:cursor-not-allowed text-[var(--text)] text-sm font-medium rounded-xl border border-[var(--border)] transition-colors">
+              {feedLoading ? <span className="w-4 h-4 border-2 border-[var(--text-3)] border-t-[var(--brand)] rounded-full spin" /> : <Rss size={14} />}
+              {feedLoading ? 'Fetching…' : 'Load Feed'}
+            </button>
+          </div>
+
+          {error && (
+            <div className="flex items-start gap-2.5 text-red-400 text-sm bg-red-950/30 border border-red-800/40 rounded-xl px-4 py-3">
+              <AlertCircle size={15} className="shrink-0 mt-0.5" />
+              <span className="text-xs">{error}</span>
+            </div>
+          )}
+
+          {feedResult && (
+            <div className="bg-[var(--bg-card)] border border-[var(--border)] rounded-2xl overflow-hidden">
+              {/* Feed header */}
+              <div className="flex items-center justify-between gap-3 px-4 py-3 border-b border-[var(--border)]">
+                <div className="flex items-center gap-2.5">
+                  <Rss size={14} className="text-amber-400" />
+                  <span className="text-sm font-semibold text-[var(--text)] line-clamp-1">
+                    {feedResult.feed_title || 'Feed'}
+                  </span>
+                  <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-md bg-[var(--bg-hover)] text-[var(--text-3)] uppercase">
+                    {feedResult.type}
+                  </span>
+                  <span className="text-[11px] text-[var(--text-3)]">{feedResult.count} items</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button type="button"
+                    onClick={() => setFeedSelected(feedSelected.size === feedResult.items.length ? new Set() : new Set(feedResult.items.map((_, i) => i)))}
+                    className="text-[10px] text-[var(--text-3)] hover:text-[var(--text-2)] transition-colors px-2 py-1 rounded-lg border border-[var(--border)] hover:border-[var(--border-hover)]">
+                    {feedSelected.size === feedResult.items.length ? 'Deselect all' : 'Select all'}
+                  </button>
+                  <select value={feedFmt} onChange={(e) => setFeedFmt(e.target.value)}
+                    title="Output format" aria-label="Output format"
+                    className="bg-[var(--bg-card)] border border-[var(--border)] text-[var(--text)] text-xs rounded-lg px-2 py-1 outline-none">
+                    {['mp4','webm','mkv','mp3','m4a'].map((f) => <option key={f} value={f}>{f.toUpperCase()}</option>)}
+                  </select>
+                </div>
+              </div>
+
+              {/* Feed items */}
+              <div className="max-h-80 overflow-y-auto divide-y divide-[var(--border)]">
+                {feedResult.items.map((item, idx) => {
+                  const checked = feedSelected.has(idx)
+                  return (
+                    <button type="button" key={idx}
+                      onClick={() => {
+                        const next = new Set(feedSelected)
+                        if (checked) next.delete(idx); else next.add(idx)
+                        setFeedSelected(next)
+                      }}
+                      className={`w-full flex items-center gap-3 px-4 py-2.5 text-left transition-colors hover:bg-[var(--bg-hover)] ${checked ? 'bg-indigo-950/20' : ''}`}>
+                      {checked
+                        ? <CheckSquare size={13} className="text-indigo-400 shrink-0" />
+                        : <Square size={13} className="text-[var(--text-3)] shrink-0" />}
+                      {item.thumbnail && (
+                        <Image src={item.thumbnail} alt="" width={40} height={28}
+                          className="shrink-0 w-10 h-7 object-cover rounded" unoptimized />
+                      )}
+                      <div className="flex-1 min-w-0">
+                        <p className="text-xs font-medium text-[var(--text)] truncate">{item.title || item.url}</p>
+                        {item.duration_str && <p className="text-[10px] text-[var(--text-3)]">{item.duration_str}</p>}
+                      </div>
+                      {item.group && <span className="shrink-0 text-[9px] text-[var(--text-3)] bg-[var(--bg-hover)] px-1.5 py-0.5 rounded">{item.group}</span>}
+                    </button>
+                  )
+                })}
+              </div>
+
+              {/* Feed download bar */}
+              <div className="flex items-center gap-3 px-4 py-3 border-t border-[var(--border)] bg-[var(--bg-hover)]">
+                <span className="text-[11px] text-[var(--text-3)] flex-1">
+                  {feedSelected.size} of {feedResult.count} selected
+                </span>
+                <button type="button" onClick={handleFeedDownload}
+                  disabled={feedQueing || feedSelected.size === 0}
+                  className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-[var(--brand)] to-[var(--accent)] hover:opacity-90 disabled:opacity-40 text-white font-bold text-sm rounded-xl transition-all">
+                  {feedQueing
+                    ? <><span className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full spin"/>Queueing…</>
+                    : <><Download size={13}/>Download {feedSelected.size} items</>}
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* URL bar */}
-      {mode !== 'batch' && mode !== 'search' && (
+      {mode !== 'batch' && mode !== 'search' && !isFeedMode && (
         <div className="flex flex-col sm:flex-row gap-2">
           <div
           className="relative flex-1"
@@ -507,12 +687,12 @@ export default function URLInputSection({ onQueued, initialUrl = '' }: Props) {
       )}
 
       {/* Advanced options */}
-      {mode !== 'batch' && mode !== 'search' && (
+      {mode !== 'batch' && mode !== 'search' && !isFeedMode && (
         <AdvancedOptions opts={opts} onChange={setOpts} showPlaylistOptions={isPlaylistMode || !!plInfo} />
       )}
 
       {/* Platform grid */}
-      {mode !== 'search' && <PlatformGrid onSelect={handlePlatformSelect} />}
+      {mode !== 'search' && !isFeedMode && <PlatformGrid onSelect={handlePlatformSelect} />}
 
       {showBulk && <BulkModal onClose={() => { setShowBulk(false); setMode('single') }} onSubmit={handleBulk} />}
 

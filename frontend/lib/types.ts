@@ -1,5 +1,5 @@
 export type MediaType = 'video' | 'image' | 'page' | 'playlist' | 'profile' | 'file' | 'torrent'
-export type DownloadMode = 'single' | 'playlist' | 'profile' | 'batch' | 'search'
+export type DownloadMode = 'single' | 'playlist' | 'profile' | 'batch' | 'search' | 'feed'
 
 export interface AnalyzeResult {
   type:           MediaType
@@ -47,6 +47,7 @@ export interface JobProgress {
   files?:          string[]
   error?:          string
   filename?:       string
+  current_item?:   number | null   // 1-based index of current item in playlist
 }
 
 export interface Job {
@@ -63,6 +64,7 @@ export interface Job {
   maxItems?:       number
   subtitles?:      boolean
   embedThumbnail?: boolean
+  priority?:       number   // 1=high, 5=normal, 10=low
 }
 
 export interface AdvancedOptions {
@@ -92,6 +94,8 @@ export interface AdvancedOptions {
   // Clip extraction
   startTime:            string
   endTime:              string
+  // Queue priority
+  priority:             1 | 5 | 10    // 1=high, 5=normal, 10=low
 }
 
 export const DEFAULT_ADVANCED: AdvancedOptions = {
@@ -114,6 +118,48 @@ export const DEFAULT_ADVANCED: AdvancedOptions = {
   repeatEvery:         '',
   startTime:           '',
   endTime:             '',
+  priority:            5,
+}
+
+// ── RSS / M3U feed types ──────────────────────────────────────────────────────
+export interface FeedItem {
+  title:          string
+  url:            string
+  thumbnail?:     string | null
+  description?:   string | null
+  pub_date?:      string | null
+  duration_str?:  string | null
+  duration?:      number | null
+  group?:         string
+  enclosure_type?: string | null
+}
+
+export interface FeedResult {
+  type:        'rss' | 'atom' | 'm3u'
+  feed_title?: string
+  feed_url:    string
+  count:       number
+  items:       FeedItem[]
+  _cached?:    boolean
+}
+
+// ── Convert job types ─────────────────────────────────────────────────────────
+export interface ConvertRequest {
+  job_id:         string
+  filename:       string
+  output_format:  string
+  new_job_id?:    string
+  video_codec?:   string
+  resolution?:    string
+  crf?:           number
+  fps?:           number
+  audio_codec?:   string
+  audio_bitrate?: string
+  extract_audio?: boolean
+  gif_fps?:       number
+  gif_scale?:     number
+  start_time?:    string
+  end_time?:      string
 }
 
 export interface StorageJob {

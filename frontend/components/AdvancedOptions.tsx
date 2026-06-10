@@ -2,7 +2,7 @@
 import { useState } from 'react'
 import {
   ChevronDown, ChevronUp, Settings2, Scissors, Globe,
-  Clock, Info, Zap, Music, FileText, Wifi,
+  Clock, Info, Zap, Music, FileText, Wifi, Gauge,
 } from 'lucide-react'
 import type { AdvancedOptions as Opts } from '@/lib/types'
 
@@ -102,6 +102,7 @@ export default function AdvancedOptions({ opts, onChange, showPlaylistOptions = 
     opts.sponsorBlock, opts.splitChapters, opts.normalizeAudio,
     !!opts.speedLimit, opts.concurrentFragments !== 16, !!opts.outputTemplate,
     showPlaylistOptions && !!opts.maxItems,
+    opts.priority !== 5,
   ].filter(Boolean).length
 
   const selectedTpl = OUTPUT_TEMPLATES.find(t => t.value === opts.outputTemplate) ?? OUTPUT_TEMPLATES.find(t => t.value === '__custom__')!
@@ -329,6 +330,33 @@ export default function AdvancedOptions({ opts, onChange, showPlaylistOptions = 
               <option value="daily">Daily (9 am)</option>
               <option value="weekly">Weekly (Mon)</option>
             </select>
+          </Row>
+
+          {/* ── Queue Priority ────────────────────────────────────── */}
+          <SectionHeader icon={<Gauge size={10} />} label="Queue priority" />
+          <Row label="Priority" hint="High-priority jobs jump the queue ahead of normal ones">
+            <div className="flex items-center gap-1">
+              {([1, 5, 10] as const).map((p) => {
+                const labels: Record<number, string> = { 1: 'High', 5: 'Normal', 10: 'Low' }
+                const colors: Record<number, string> = {
+                  1: 'bg-red-600 text-white',
+                  5: 'bg-indigo-600 text-white',
+                  10: 'bg-slate-700 text-slate-300',
+                }
+                const active = opts.priority === p
+                return (
+                  <button
+                    key={p}
+                    type="button"
+                    onClick={() => set('priority', p)}
+                    className={`px-2.5 py-1 rounded-lg text-[10px] font-bold transition-colors
+                      ${active ? colors[p] : 'bg-[#161b27] border border-[#21293a] text-slate-500 hover:text-slate-300'}`}
+                  >
+                    {labels[p]}
+                  </button>
+                )
+              })}
+            </div>
           </Row>
 
           <div className="flex items-start gap-2 pt-3 text-[10px] text-slate-600">

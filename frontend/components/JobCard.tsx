@@ -5,6 +5,7 @@ import {
   Trash2, RotateCcw, Film, ImageIcon, Globe, Music,
   CheckCircle2, XCircle, Clock, Loader2, Wifi,
   Download, FolderOpen, FileVideo, FileImage, File, HardDriveDownload, Play, Copy, Link2,
+  CheckSquare, Square, List,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import type { Job, JobStatus } from '@/lib/types'
@@ -13,9 +14,12 @@ import { saveToLocation } from '@/lib/save'
 import MediaViewer from './download/MediaViewer'
 
 interface Props {
-  job:      Job
-  onDelete: (id: string) => void
-  onRetry:  (id: string) => void
+  job:            Job
+  onDelete:       (id: string) => void
+  onRetry:        (id: string) => void
+  bulkMode?:      boolean
+  selected?:      boolean
+  onToggleSelect?: (bullId: string) => void
 }
 
 const STATUS: Record<JobStatus, { label: string; cls: string }> = {
@@ -65,7 +69,7 @@ function Thumb({ job }: { job: Job }) {
   return <Globe size={22} className={cls} />
 }
 
-function JobCardInner({ job, onDelete, onRetry }: Props) {
+function JobCardInner({ job, onDelete, onRetry, bulkMode, selected, onToggleSelect }: Props) {
   const { progress, format, jobId } = job
   const [viewerIdx, setViewerIdx] = useState<number | null>(null)
   const pct     = Math.min(100, Math.max(0, progress.progress))
@@ -86,16 +90,32 @@ function JobCardInner({ job, onDelete, onRetry }: Props) {
                  : isDone  ? 'progress-shimmer-success'
                  : 'progress-shimmer'
 
+  const playlistBadge = (progress.total_files != null && progress.total_files > 1)
+    ? `${progress.completed_files ?? 0} / ${progress.total_files}`
+    : null
+
   return (
     <div
+      onClick={bulkMode ? () => onToggleSelect?.(job.bullId) : undefined}
       className={`group relative animate-in rounded-2xl border overflow-hidden
-                  transition-colors duration-200 hover:border-[#2d3a4f] ${cardBg}`}
+                  transition-colors duration-200 hover:border-[#2d3a4f] ${cardBg}
+                  ${bulkMode ? 'cursor-pointer' : ''}
+                  ${bulkMode && selected ? 'ring-1 ring-indigo-600/60' : ''}`}
     >
       {/* Top progress stripe */}
       {!isQueue && (
         <div className="absolute inset-x-0 top-0 h-[2px] bg-[#21293a]">
           <div className={`h-full transition-all duration-700 ${barColor}`}
                style={{ width: `${pct}%` }} />
+        </div>
+      )}
+
+      {/* Bulk select checkbox */}
+      {bulkMode && (
+        <div className="absolute top-2 left-2 z-10">
+          {selected
+            ? <CheckSquare size={16} className="text-indigo-400" />
+            : <Square size={16} className="text-[#475569]" />}
         </div>
       )}
 
@@ -129,6 +149,11 @@ function JobCardInner({ job, onDelete, onRetry }: Props) {
               {(job.mediaType === 'playlist' || job.mediaType === 'profile') && job.maxItems && (
                 <span className="px-1.5 py-0.5 rounded-md text-[10px] font-bold bg-violet-900/40 text-violet-300">
                   ≤{job.maxItems} items
+                </span>
+              )}
+              {playlistBadge && isActive && (
+                <span className="flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[10px] font-bold bg-cyan-900/30 text-cyan-400">
+                  <List size={8} />{playlistBadge}
                 </span>
               )}
             </div>
@@ -181,7 +206,7 @@ function JobCardInner({ job, onDelete, onRetry }: Props) {
           <p className="text-[11px] text-amber-300/80 leading-snug">
             Finished, but no file was captured. The source may block downloads, need login (add cookies), or be DRM-protected.
           </p>
-          <button onClick={() => onRetry(job.bullId)}
+          <button type="button" onClick={() => onRetry(job.bullId)}
             className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-500 text-white text-[11px] font-bold transition-colors">
             <RotateCcw size={12} /> Retry
           </button>
@@ -204,7 +229,7 @@ function JobCardInner({ job, onDelete, onRetry }: Props) {
                   <FolderOpen size={12} /> Download ZIP
                 </a>
                 {/* Pick a folder for the ZIP */}
-                <button
+                <button type="button"
                   onClick={async () => {
                     const r = await saveToLocation(zipDownloadUrl(jobId), `mediadl-${jobId.slice(0,8)}.zip`)
                     if (r === 'error') toast.error('Could not save ZIP')
@@ -231,7 +256,7 @@ function JobCardInner({ job, onDelete, onRetry }: Props) {
                   <FileIcon name={f} />
                   <span className="flex-1 min-w-0 text-[11px] truncate font-mono text-emerald-200/90" title={f}>{f}</span>
                   {/* Preview / play in-app */}
-                  <button onClick={() => setViewerIdx(idx)} title="Preview / play"
+                  <button type="button" onClick={() => setViewerIdx(idx)} title="Preview / play"
                     className="shrink-0 p-1.5 rounded-md text-emerald-300/70 hover:text-emerald-200 hover:bg-emerald-800/40 transition-colors">
                     <Play size={13} />
                   </button>
@@ -241,7 +266,7 @@ function JobCardInner({ job, onDelete, onRetry }: Props) {
                     <Download size={13} /> Download
                   </a>
                   {/* Secondary: pick a folder */}
-                  <button onClick={save} title="Choose a folder to save in"
+                  <button type="button" onClick={save} title="Choose a folder to save in"
                     className="shrink-0 flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-emerald-900/40 hover:bg-emerald-800/50 border border-emerald-700/40 text-emerald-200 text-[11px] font-bold transition-colors">
                     <HardDriveDownload size={13} /> Save as…
                   </button>
@@ -265,20 +290,20 @@ function JobCardInner({ job, onDelete, onRetry }: Props) {
       )}
 
       {/* Hover action buttons */}
-      <div className="absolute top-2 right-2 hidden group-hover:flex items-center gap-1">
-        <button
+      <div className={`absolute top-2 right-2 items-center gap-1 ${bulkMode ? 'hidden' : 'hidden group-hover:flex'}`}>
+        <button type="button"
           onClick={() => { navigator.clipboard?.writeText(job.url).catch(() => {}); toast.success('URL copied') }}
           title="Copy URL"
           className="p-1.5 rounded-lg bg-[#21293a] hover:bg-slate-600 text-[#94a3b8] hover:text-white transition-colors">
           <Copy size={12} />
         </button>
         {isFail && (
-          <button onClick={() => onRetry(job.bullId)} title="Retry"
+          <button type="button" onClick={() => onRetry(job.bullId)} title="Retry"
             className="p-1.5 rounded-lg bg-[#21293a] hover:bg-amber-700 text-[#94a3b8] hover:text-white transition-colors">
             <RotateCcw size={12} />
           </button>
         )}
-        <button onClick={() => onDelete(job.bullId)} title="Remove"
+        <button type="button" onClick={() => onDelete(job.bullId)} title="Remove"
           className="p-1.5 rounded-lg bg-[#21293a] hover:bg-red-700 text-[#94a3b8] hover:text-white transition-colors">
           <Trash2 size={12} />
         </button>
@@ -290,8 +315,11 @@ function JobCardInner({ job, onDelete, onRetry }: Props) {
 // Memo: only re-render when progress or bullId changes
 export default memo(JobCardInner, (prev, next) =>
   prev.job.bullId    === next.job.bullId &&
-  prev.job.progress.status   === next.job.progress.status &&
-  prev.job.progress.progress === next.job.progress.progress &&
-  prev.job.progress.speed    === next.job.progress.speed &&
-  (prev.job.progress.files?.length ?? 0) === (next.job.progress.files?.length ?? 0)
+  prev.job.progress.status       === next.job.progress.status &&
+  prev.job.progress.progress     === next.job.progress.progress &&
+  prev.job.progress.speed        === next.job.progress.speed &&
+  prev.job.progress.completed_files === next.job.progress.completed_files &&
+  (prev.job.progress.files?.length ?? 0) === (next.job.progress.files?.length ?? 0) &&
+  prev.selected  === next.selected &&
+  prev.bulkMode  === next.bulkMode
 )

@@ -1,4 +1,4 @@
-import type { AnalyzeResult, Job, JobProgress, PlaylistInfo, StorageJob, AdvancedOptions } from './types'
+import type { AnalyzeResult, Job, JobProgress, PlaylistInfo, StorageJob, AdvancedOptions, FeedResult, ConvertRequest } from './types'
 
 const PUBLIC_BASE = (process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000').replace(/\/$/, '')
 // On the server (SSR) localhost:4000 points at the frontend container itself, not the
@@ -65,6 +65,7 @@ export const queueDownload = (payload: {
       quality:        payload.quality,
       title:          payload.title,
       thumbnail:      payload.thumbnail,
+      priority:       payload.priority  ?? 5,
       maxItems:       payload.maxItems ?? null,
       startIndex:     payload.startIndex ?? 1,
       subtitles:      payload.subtitles ?? false,
@@ -148,6 +149,54 @@ export interface Testimonial { id:number; name:string; role:string; avatar?:stri
 export interface HistoryRow { id:number; url:string; media_type:string; format:string; quality?:string; status:string; created_at:string }
 export const fetchHistory  = () => _f<HistoryRow[]>('/api/content/history')
 export const clearHistory  = () => _f('/api/content/history', { method: 'DELETE' })
+
+// ── Batch download ────────────────────────────────────────────────────────────
+export interface BatchItem { url: string; title?: string; thumbnail?: string; mediaType?: string; format?: string }
+export interface BatchJobResult { jobId: string; url: string; title?: string }
+export const batchDownload = (items: BatchItem[], shared: Partial<AdvancedOptions> & {
+  mediaType?: string; format?: string; quality?: string; delaySeconds?: number
+}) =>
+  _f<{ count: number; jobs: BatchJobResult[] }>('/api/download/batch', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      items,
+      mediaType:      shared.mediaType ?? 'video',
+      format:         shared.format    ?? 'mp4',
+      quality:        shared.quality   ?? 'best',
+      priority:       shared.priority  ?? 5,
+      subtitles:      shared.subtitles ?? false,
+      embedThumbnail: shared.embedThumbnail ?? false,
+      embedMetadata:  shared.embedMetadata  ?? true,
+      cookies:        shared.cookies  || null,
+      proxy:          shared.proxy    || null,
+      sponsorBlock:   shared.sponsorBlock   ?? false,
+      normalizeAudio: shared.normalizeAudio ?? false,
+      speedLimit:     shared.speedLimit     || null,
+      concurrentFragments: shared.concurrentFragments ?? 16,
+      delaySeconds:   shared.delaySeconds   || null,
+    }),
+  })
+
+// ── RSS/M3U feed parser ───────────────────────────────────────────────────────
+export const parseFeed = (url: string) =>
+  _f<FeedResult>('/api/download/feed', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ url }),
+  })
+
+// ── Convert already-downloaded file ──────────────────────────────────────────
+export const convertFile = (req: ConvertRequest) =>
+  _f<{ success: boolean; output_file: string; output_job_id: string; size: number }>('/api/download/convert', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(req),
+  })
+
+// ── Merge audio + video files ─────────────────────────────────────────────────
+export const mergeFiles = (jobId: string, videoFile: string, audioFile: string, outputFormat = 'mp4') =>
+  _f<{ success: boolean; output_file: string; size: number }>('/api/download/merge', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ job_id: jobId, video_file: videoFile, audio_file: audioFile, output_format: outputFormat }),
+  })
 
 // ── Recurring schedules ───────────────────────────────────────────────────────
 export interface ScheduleRow { key: string; name: string; pattern: string; next: number }

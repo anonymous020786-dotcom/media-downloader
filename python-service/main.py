@@ -1885,6 +1885,428 @@ async def _dl_page(req: DownloadReq, job_dir: Path, cookie_file: Optional[str] =
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# NEW ENDPOINTS  v4.0
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ── /rss — parse RSS / Atom / M3U / M3U8 playlist feeds ──────────────────────
+class RssReq(BaseModel):
+    url: str
+    @field_validator("url")
+    @classmethod
+    def _http(cls, v):
+        v = v.strip()
+        if not v.startswith(("http://","https://")):
+            raise ValueError("URL must start with http:// or https://")
+        return v
+
+@app.post("/rss")
+async def parse_feed(req: RssReq):
+    """Parse an RSS/Atom feed or M3U/M3U8 IPTV playlist.
+    Returns a list of items with title, url, thumbnail, duration, pub_date."""
+    ck = _cache_key("rss", req.url)
+    cached = await _cache_get(ck)
+    if cached:
+        cached["_cached"] = True
+        return cached
+
+    url_lower = req.url.lower().split("?")[0]
+
+    # ── M3U / IPTV ────────────────────────────────────────────────────────────
+    if url_lower.endswith(".m3u") or url_lower.endswith(".m3u8") or "iptv" in req.url.lower():
+        async with _client() as c:
+            r = await c.get(req.url, timeout=30)
+            r.raise_for_status()
+        text = r.text
+        items = []
+        lines = text.splitlines()
+        i = 0
+        while i < len(lines):
+            line = lines[i].strip()
+            if line.startswith("#EXTINF"):
+                # Parse #EXTINF:-1 tvg-id="..." tvg-logo="..." group-title="..." ,Title
+                meta = {}
+                m = re.search(r'tvg-logo="([^"]+)"', line)
+                if m: meta["thumbnail"] = m.group(1)
+                m = re.search(r'group-title="([^"]+)"', line)
+                if m: meta["group"] = m.group(1)
+                m = re.search(r',(.+)$', line)
+                title = m.group(1).strip() if m else "Unknown"
+                m = re.search(r'#EXTINF:(-?\d+(?:\.\d+)?)', line)
+                dur = float(m.group(1)) if m and m.group(1) != "-1" else None
+                # Next non-empty line is the URL
+                j = i + 1
+                while j < len(lines) and not lines[j].strip():
+                    j += 1
+                if j < len(lines) and lines[j].strip().startswith("http"):
+                    items.append({"title": title, "url": lines[j].strip(),
+                                  "duration": dur, **meta})
+                    i = j + 1
+                    continue
+            i += 1
+        result = {"type": "m3u", "title": req.url.split("/")[-1].split("?")[0],
+                  "count": len(items), "items": items[:2000]}
+        if items:
+            await _cache_set(ck, result, ttl=900)
+        return result
+
+    # ── RSS / Atom ─────────────────────────────────────────────────────────────
+    async with _client() as c:
+        r = await c.get(req.url, timeout=30)
+        r.raise_for_status()
+
+    import xml.etree.ElementTree as ET
+    try:
+        root = ET.fromstring(r.content)
+    except ET.ParseError as e:
+        raise HTTPException(400, f"Invalid XML/RSS feed: {str(e)[:200]}")
+
+    NS = {"atom": "http://www.w3.org/2005/Atom",
+          "media": "http://search.yahoo.com/mrss/",
+          "itunes": "http://www.itunes.com/dtds/podcast-1.0.dtd",
+          "content": "http://purl.org/rss/1.0/modules/content/"}
+
+    def _txt(el, *tags):
+        for t in tags:
+            sub = el.find(t)
+            if sub is not None and sub.text: return sub.text.strip()
+        return ""
+
+    def _attr(el, tag, attr):
+        sub = el.find(tag)
+        return sub.get(attr, "") if sub is not None else ""
+
+    items = []
+    feed_title = ""
+    is_atom = root.tag.endswith("}feed") or root.tag == "feed"
+
+    if is_atom:
+        feed_title = _txt(root, "title", "{http://www.w3.org/2005/Atom}title")
+        for entry in root.findall(".//{http://www.w3.org/2005/Atom}entry") or root.findall(".//entry"):
+            title = _txt(entry, "{http://www.w3.org/2005/Atom}title", "title")
+            # Find media URL: link[rel=enclosure] or media:content
+            media_url = ""
+            for link in entry.findall("{http://www.w3.org/2005/Atom}link") + entry.findall("link"):
+                rel = link.get("rel","")
+                if rel in ("enclosure","alternate") or link.get("type","").startswith(("audio/","video/")):
+                    media_url = link.get("href") or link.get("url") or ""
+                    if media_url: break
+            if not media_url:
+                media_url = _attr(entry, "link", "href") or _txt(entry, "{http://www.w3.org/2005/Atom}id","id")
+            thumb = ""
+            mc = entry.find("{http://search.yahoo.com/mrss/}content")
+            if mc is not None: thumb = mc.get("url","")
+            if not thumb:
+                mt = entry.find("{http://search.yahoo.com/mrss/}thumbnail")
+                if mt is not None: thumb = mt.get("url","")
+            pub = _txt(entry, "{http://www.w3.org/2005/Atom}updated",
+                       "{http://www.w3.org/2005/Atom}published", "updated", "published")
+            desc = _txt(entry, "{http://www.w3.org/2005/Atom}summary", "summary",
+                        "{http://www.w3.org/2005/Atom}content")
+            dur_s = _txt(entry, "{http://www.itunes.com/dtds/podcast-1.0.dtd}duration")
+            if title or media_url:
+                items.append({"title": title, "url": media_url, "thumbnail": thumb or None,
+                              "description": desc[:300] if desc else None,
+                              "pub_date": pub or None, "duration_str": dur_s or None})
+    else:
+        # RSS 2.0
+        channel = root.find("channel") or root
+        feed_title = _txt(channel, "title")
+        for item in root.findall(".//item"):
+            title = _txt(item, "title")
+            # Prefer <enclosure> for media
+            enc = item.find("enclosure")
+            media_url = (enc.get("url","") if enc is not None else "") or _txt(item, "link")
+            thumb = ""
+            mc = item.find("{http://search.yahoo.com/mrss/}content")
+            if mc is not None: thumb = mc.get("url","")
+            if not thumb:
+                mt = item.find("{http://search.yahoo.com/mrss/}thumbnail")
+                if mt is not None: thumb = mt.get("url","")
+            if not thumb:
+                # Extract first image from description
+                desc_html = _txt(item, "description", "{http://purl.org/rss/1.0/modules/content/}encoded")
+                im = re.search(r'<img[^>]+src=["\']([^"\']+)["\']', desc_html or "", re.I)
+                if im: thumb = im.group(1)
+            pub = _txt(item, "pubDate", "dc:date")
+            desc = _txt(item, "description")
+            dur_s = _txt(item, "{http://www.itunes.com/dtds/podcast-1.0.dtd}duration")
+            enc_type = enc.get("type","") if enc is not None else ""
+            if title or media_url:
+                items.append({"title": title, "url": media_url, "thumbnail": thumb or None,
+                              "description": re.sub(r'<[^>]+>', '', desc)[:300] if desc else None,
+                              "pub_date": pub or None, "duration_str": dur_s or None,
+                              "enclosure_type": enc_type or None})
+
+    result = {"type": "rss" if not is_atom else "atom",
+              "feed_title": feed_title, "feed_url": req.url,
+              "count": len(items), "items": items[:500]}
+    if items:
+        await _cache_set(ck, result, ttl=900)
+    return result
+
+
+# ── /batch — start multiple downloads concurrently ────────────────────────────
+class BatchItem(BaseModel):
+    url:             str
+    job_id:          str
+    media_type:      Literal["video","image","page","playlist","profile","file","torrent"] = "video"
+    format:          str           = "mp4"
+    quality:         Optional[str] = "best"
+    max_items:       Optional[int] = None
+    start_index:     int           = 1
+    subtitles:       bool          = False
+    embed_thumbnail: bool          = False
+    embed_metadata:  bool          = True
+    cookies:         Optional[str] = None
+    proxy:           Optional[str] = None
+    start_time:      Optional[str] = None
+    end_time:        Optional[str] = None
+    sponsor_block:   bool          = False
+    normalize_audio: bool          = False
+    speed_limit:     Optional[str] = None
+    concurrent_fragments: int      = 16
+
+class BatchReq(BaseModel):
+    items: list[BatchItem]
+
+@app.post("/batch")
+async def batch_download(req: BatchReq):
+    """Start up to MAX_CONCURRENT downloads in parallel. Returns per-item status immediately
+    after each item finishes (not streaming — waits for all). For fire-and-forget batch
+    jobs, callers should poll progress by job_id as usual."""
+    if not req.items:
+        raise HTTPException(400, "No items provided")
+    if len(req.items) > 50:
+        raise HTTPException(400, "Maximum 50 items per batch request")
+
+    async def _run_one(item: BatchItem) -> dict:
+        dr = DownloadReq(
+            url=item.url, job_id=item.job_id, media_type=item.media_type,
+            format=item.format, quality=item.quality, max_items=item.max_items,
+            start_index=item.start_index, subtitles=item.subtitles,
+            embed_thumbnail=item.embed_thumbnail, embed_metadata=item.embed_metadata,
+            cookies=item.cookies, proxy=item.proxy,
+            start_time=item.start_time, end_time=item.end_time,
+            sponsor_block=item.sponsor_block, normalize_audio=item.normalize_audio,
+            speed_limit=item.speed_limit, concurrent_fragments=item.concurrent_fragments,
+        )
+        job_dir = DOWNLOAD_DIR / item.job_id
+        job_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            async with _sem:
+                cookie_file = None
+                try:
+                    if item.cookies:
+                        cookie_file = _write_cookies(item.cookies)
+                    if item.media_type in ("playlist","profile"):
+                        await _dl_playlist(dr, job_dir, cookie_file)
+                    elif item.media_type == "video":
+                        await _dl_video(dr, job_dir, cookie_file)
+                    elif item.media_type == "image":
+                        await _dl_image(dr, job_dir)
+                    elif item.media_type == "file":
+                        await _dl_file(dr, job_dir)
+                    else:
+                        await _dl_page(dr, job_dir, cookie_file)
+                    files = [f.name for f in job_dir.iterdir() if f.is_file()] if job_dir.exists() else []
+                    return {"job_id": item.job_id, "url": item.url, "success": True, "files": files}
+                except Exception as e:
+                    msg = str(e)[:300]
+                    await _prog(item.job_id, {"status": "failed", "progress": 0, "error": msg})
+                    return {"job_id": item.job_id, "url": item.url, "success": False, "error": msg}
+                finally:
+                    if cookie_file: _rm(cookie_file)
+        except Exception as e:
+            return {"job_id": item.job_id, "url": item.url, "success": False, "error": str(e)[:300]}
+
+    results = await asyncio.gather(*(_run_one(item) for item in req.items))
+    ok = sum(1 for r in results if r.get("success"))
+    return {"total": len(results), "succeeded": ok, "failed": len(results) - ok, "results": list(results)}
+
+
+# ── /convert — FFmpeg re-encode / format conversion of a downloaded file ──────
+class ConvertReq(BaseModel):
+    job_id:           str
+    filename:         str
+    output_format:    str                      # e.g. "mp4", "mp3", "webm", "gif"
+    new_job_id:       Optional[str]  = None    # write output here (defaults to job_id)
+    # Video options
+    video_codec:      Optional[str]  = None    # "libx264","libx265","libvpx-vp9","copy"
+    resolution:       Optional[str]  = None    # "1280x720","1920x1080","640x360"
+    crf:              Optional[int]  = None    # 18-28; lower=better quality
+    fps:              Optional[int]  = None    # output frame rate
+    # Audio options
+    audio_codec:      Optional[str]  = None    # "aac","libmp3lame","libopus","copy"
+    audio_bitrate:    Optional[str]  = None    # "128k","192k","320k"
+    extract_audio:    bool           = False   # discard video track
+    # GIF options
+    gif_fps:          int            = 10
+    gif_scale:        int            = 480
+    # Clip
+    start_time:       Optional[str]  = None
+    end_time:         Optional[str]  = None
+
+@app.post("/convert")
+async def convert_file(req: ConvertReq):
+    """Re-encode / convert a file that already lives in DOWNLOAD_DIR.
+    Supports video ↔ video, video → audio, video → GIF, audio → audio."""
+    # Validate path stays inside DOWNLOAD_DIR
+    if not re.match(r'^[0-9a-f\-]{36}$', req.job_id):
+        raise HTTPException(400, "Invalid job_id")
+    safe_name = Path(req.filename).name
+    src = DOWNLOAD_DIR / req.job_id / safe_name
+    if not src.exists():
+        raise HTTPException(404, f"File not found: {req.filename}")
+
+    out_job_id = req.new_job_id or req.job_id
+    if req.new_job_id:
+        if not re.match(r'^[0-9a-f\-]{36}$', req.new_job_id):
+            raise HTTPException(400, "Invalid new_job_id")
+        out_dir = DOWNLOAD_DIR / req.new_job_id
+        out_dir.mkdir(parents=True, exist_ok=True)
+    else:
+        out_dir = DOWNLOAD_DIR / req.job_id
+
+    fmt = req.output_format.lower().lstrip(".")
+    stem = Path(safe_name).stem
+    out = _uniq(out_dir, f"{stem}_converted.{fmt}")
+
+    await _prog(out_job_id, {"status": "converting", "progress": 5,
+                              "filename": f"Converting {safe_name} → {fmt}…"})
+
+    # Build FFmpeg command
+    cmd = ["ffmpeg", "-y", "-i", str(src)]
+
+    if req.start_time:
+        cmd += ["-ss", req.start_time]
+    if req.end_time:
+        cmd += ["-to", req.end_time]
+
+    if fmt == "gif":
+        # Two-pass GIF with palette for quality
+        scale = req.gif_scale or 480
+        fps   = req.gif_fps or 10
+        palette = out_dir / f"{stem}_palette.png"
+        p1 = await asyncio.create_subprocess_exec(
+            "ffmpeg", "-y", "-i", str(src),
+            "-vf", f"fps={fps},scale={scale}:-1:flags=lanczos,palettegen",
+            str(palette), stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
+        await p1.wait()
+        cmd += ["-i", str(palette), "-lavfi",
+                f"fps={fps},scale={scale}:-1:flags=lanczos[x];[x][1:v]paletteuse",
+                "-loop", "0"]
+    elif req.extract_audio:
+        vcodec = "none"
+        acodec = req.audio_codec or ("libmp3lame" if fmt == "mp3" else "aac")
+        cmd += ["-vn", "-acodec", acodec]
+        if req.audio_bitrate:
+            cmd += ["-b:a", req.audio_bitrate]
+    else:
+        if req.video_codec:
+            cmd += ["-c:v", req.video_codec]
+        elif fmt in ("mp4", "mov"):
+            cmd += ["-c:v", "libx264", "-preset", "veryfast"]
+        elif fmt == "webm":
+            cmd += ["-c:v", "libvpx-vp9", "-crf", str(req.crf or 33), "-b:v", "0"]
+        elif fmt == "mkv":
+            cmd += ["-c:v", "copy"]
+
+        if req.crf and fmt != "webm":
+            cmd += ["-crf", str(req.crf)]
+        if req.resolution:
+            w, h = req.resolution.replace("x", ":").split(":")
+            cmd += ["-vf", f"scale={w}:{h}"]
+        if req.fps:
+            cmd += ["-r", str(req.fps)]
+        if req.audio_codec:
+            cmd += ["-c:a", req.audio_codec]
+        elif fmt in ("mp4", "mov"):
+            cmd += ["-c:a", "aac"]
+        if req.audio_bitrate:
+            cmd += ["-b:a", req.audio_bitrate]
+        if fmt in ("mp4", "mov"):
+            cmd += ["-movflags", "+faststart"]
+
+    cmd.append(str(out))
+
+    proc = await asyncio.create_subprocess_exec(
+        *cmd, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE)
+
+    dur_re  = re.compile(r"Duration:\s*(\d+):(\d+):(\d+\.?\d*)")
+    time_re = re.compile(r"time=(\d+):(\d+):(\d+\.?\d*)")
+    total_s: Optional[float] = None
+
+    async for raw in proc.stderr:  # type: ignore
+        line = raw.decode("utf-8", "ignore")
+        if total_s is None:
+            m = dur_re.search(line)
+            if m: total_s = _hms(*m.groups())
+        m = time_re.search(line)
+        if m and total_s and total_s > 0:
+            pct = min(94, int(_hms(*m.groups()) / total_s * 90))
+            await _prog(out_job_id, {"status": "converting", "progress": 5 + pct,
+                                      "filename": f"Converting → {fmt}…"})
+
+    await proc.wait()
+
+    # Cleanup palette if GIF
+    if fmt == "gif":
+        palette = out_dir / f"{stem}_palette.png"
+        try: palette.unlink()
+        except Exception: pass
+
+    if proc.returncode != 0 or not out.exists() or out.stat().st_size < 512:
+        raise HTTPException(500, f"FFmpeg conversion failed (exit {proc.returncode})")
+
+    files = [f.name for f in out_dir.iterdir() if f.is_file()]
+    await _prog(out_job_id, {"status": "completed", "progress": 100, "files": files})
+    return {"success": True, "output_file": out.name, "output_job_id": out_job_id,
+            "size": out.stat().st_size}
+
+
+# ── /merge — merge separate audio + video files (or concatenate) ─────────────
+class MergeReq(BaseModel):
+    job_id:          str
+    video_file:      str
+    audio_file:      str
+    output_filename: Optional[str] = None
+    output_format:   str           = "mp4"
+
+@app.post("/merge")
+async def merge_files(req: MergeReq):
+    """Merge a separate video file and audio file into one container."""
+    if not re.match(r'^[0-9a-f\-]{36}$', req.job_id):
+        raise HTTPException(400, "Invalid job_id")
+    job_dir = DOWNLOAD_DIR / req.job_id
+    v_src = job_dir / Path(req.video_file).name
+    a_src = job_dir / Path(req.audio_file).name
+    if not v_src.exists(): raise HTTPException(404, f"Video file not found: {req.video_file}")
+    if not a_src.exists(): raise HTTPException(404, f"Audio file not found: {req.audio_file}")
+
+    fmt = req.output_format.lower().lstrip(".")
+    out_name = req.output_filename or f"{v_src.stem}_merged.{fmt}"
+    out = _uniq(job_dir, _safe(out_name))
+
+    await _prog(req.job_id, {"status": "processing", "progress": 10, "filename": "Merging streams…"})
+
+    cmd = ["ffmpeg", "-y", "-i", str(v_src), "-i", str(a_src),
+           "-c:v", "copy", "-c:a", "aac",
+           "-map", "0:v:0", "-map", "1:a:0",
+           "-movflags", "+faststart", str(out)]
+
+    proc = await asyncio.create_subprocess_exec(
+        *cmd, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
+    await proc.wait()
+
+    if proc.returncode != 0 or not out.exists():
+        raise HTTPException(500, "FFmpeg merge failed")
+
+    files = [f.name for f in job_dir.iterdir() if f.is_file()]
+    await _prog(req.job_id, {"status": "completed", "progress": 100, "files": files})
+    return {"success": True, "output_file": out.name, "size": out.stat().st_size}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # HELPERS
 # ─────────────────────────────────────────────────────────────────────────────
 def _client(proxy: Optional[str] = None) -> httpx.AsyncClient:
