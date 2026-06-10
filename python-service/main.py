@@ -592,6 +592,66 @@ _MEDIAFIRE_RE = re.compile(
 _KRAKENFILES_RE = re.compile(
     r'^https?://(?:www\.)?krakenfiles\.com/(?:view|download)/([A-Za-z0-9_-]+)', re.I)
 
+# Fembed  https://fembed.com/v/{id}  (many mirror domains)
+_FEMBED_RE = re.compile(
+    r'^https?://(?:www\.)?(?:'
+    r'fembed\.com|fembad\.com|mcloud\.bz|embedsito\.com|femax20\.com|'
+    r'fcdn\.stream|sharinglink\.club|moviemaniac\.org|bestsharing\.com|'
+    r'dailyplanet\.pw|javhdfree\.icu|nsbx\.stream|gcloud\.live|'
+    r'javstream\.cx|fplayer\.online|watchjavonline\.com|'
+    r'streamhide\.to|streamvid\.net|vidhide\.com|vidhide\.to'
+    r')/(?:v|e|f)/([A-Za-z0-9_-]+)', re.I)
+
+# Uqload  https://uqload.com/xxxxxxxx.html
+_UQLOAD_RE = re.compile(
+    r'^https?://(?:www\.)?uqload\.(?:com|to|io|co)/(?:embed-)?([A-Za-z0-9_-]+)(?:\.html)?', re.I)
+
+# Vidoza  https://vidoza.net/embed-{id}.html
+_VIDOZA_RE = re.compile(
+    r'^https?://(?:www\.)?vidoza\.(?:net|org)/(?:embed-)?([A-Za-z0-9_-]+)(?:\.html)?', re.I)
+
+# Upstream  https://upstream.to/embed-{id}.html
+_UPSTREAM_RE = re.compile(
+    r'^https?://(?:www\.)?upstream\.to/(?:embed-)?([A-Za-z0-9_-]+)(?:\.html)?', re.I)
+
+# Kwik  https://kwik.cx/e/{id}  (anime)
+_KWIK_RE = re.compile(
+    r'^https?://(?:www\.)?kwik\.(?:cx|si|pm|ec|io|co)/(?:e|f)/([A-Za-z0-9_-]+)', re.I)
+
+# StreamSB / Cloudemb  https://streamsb.net/e/{id}  (many mirrors)
+_STREAMSB_RE = re.compile(
+    r'^https?://(?:www\.)?(?:'
+    r'streamsb\.net|sbembed\.com|sbembed\.net|cloudemb\.com|uqloads\.xyz|'
+    r'sbplay\.org|sbvideo\.net|sblongvu\.com|sbplay1\.com|sbplay2\.com|'
+    r'sbplay3\.com|sbplay\.one|sbplay\.xyz|watchsb\.com|streamsss\.net|'
+    r'sbplay2\.xyz|sbfast\.com|sbfull\.com|sbcloud1\.com|sbanh\.com|'
+    r'embedsb\.com|pelistop\.co|multimovies\.cloud|sbthe\.com|sbchill\.com'
+    r')/(?:e|embed|v)/([A-Za-z0-9_-]+)', re.I)
+
+# Streamlare  https://streamlare.com/e/{id}
+_STREAMLARE_RE = re.compile(
+    r'^https?://(?:www\.)?streamlare\.com/(?:e|v)/([A-Za-z0-9_-]+)', re.I)
+
+# Fapello  https://fapello.com/{user}/{id}/
+_FAPELLO_RE = re.compile(
+    r'^https?://(?:www\.)?fapello\.(?:com|su)/([A-Za-z0-9_.-]+)(?:/(\d+))?/?$', re.I)
+
+# Vidmoly  https://vidmoly.to/embed-{id}.html
+_VIDMOLY_RE = re.compile(
+    r'^https?://(?:www\.)?vidmoly\.(?:to|me)/(?:embed-)?([A-Za-z0-9_-]+)(?:\.html)?', re.I)
+
+# Racaty  https://racaty.net/{id}
+_RACATY_RE = re.compile(
+    r'^https?://(?:www\.)?racaty\.(?:net|io)/([A-Za-z0-9_-]+)', re.I)
+
+# Usersdrive  https://usersdrive.com/{id}.html
+_USERSDRIVE_RE = re.compile(
+    r'^https?://(?:www\.)?usersdrive\.(?:com|net)/(?:d/)?([A-Za-z0-9_-]+)(?:\.html)?', re.I)
+
+# HexUpload  https://hexupload.net/{id}
+_HEXUPLOAD_RE = re.compile(
+    r'^https?://(?:www\.)?hexupload\.net/([A-Za-z0-9_-]+)', re.I)
+
 
 def _is_custom_site(url: str) -> bool:
     return bool(
@@ -600,7 +660,11 @@ def _is_custom_site(url: str) -> bool:
         _CYBERDROP_RE.match(url) or _MIXDROP_RE.match(url) or
         _GOFILE_RE.match(url) or _FILEMOON_RE.match(url) or _STREAMWISH_RE.match(url) or
         _VOE_RE.match(url) or _MP4UPLOAD_RE.match(url) or _SENDVID_RE.match(url) or
-        _MEDIAFIRE_RE.match(url) or _KRAKENFILES_RE.match(url)
+        _MEDIAFIRE_RE.match(url) or _KRAKENFILES_RE.match(url) or
+        _FEMBED_RE.match(url) or _UQLOAD_RE.match(url) or _VIDOZA_RE.match(url) or
+        _UPSTREAM_RE.match(url) or _KWIK_RE.match(url) or _STREAMSB_RE.match(url) or
+        _STREAMLARE_RE.match(url) or _FAPELLO_RE.match(url) or _VIDMOLY_RE.match(url) or
+        _RACATY_RE.match(url) or _USERSDRIVE_RE.match(url) or _HEXUPLOAD_RE.match(url)
     )
 
 
@@ -1975,6 +2039,534 @@ async def _dl_krakenfiles(req: DownloadReq, job_dir: Path):
     await _prog(req.job_id, {"status": "completed", "progress": 100, "files": files})
 
 
+# ── Generic JS-embed downloader (shared by Fembed, Uqload, Vidoza, Upstream, etc.) ──
+
+async def _scrape_video_url(page_url: str, referer: Optional[str] = None) -> Optional[str]:
+    """Scrape a video embed page for m3u8/mp4 URL. Tries direct scrape then packed JS."""
+    hdrs = {"User-Agent": _ua(), "Referer": referer or page_url, "Accept": "text/html,*/*;q=0.9"}
+    try:
+        async with httpx.AsyncClient(follow_redirects=True,
+                                     timeout=httpx.Timeout(15, connect=10),
+                                     verify=VERIFY_SSL) as c:
+            r = await c.get(page_url, headers=hdrs)
+            if r.status_code != 200:
+                return None
+            return _extract_m3u8(r.text) or _extract_mp4(r.text)
+    except Exception:
+        return None
+
+
+async def _dl_embed_video(req: DownloadReq, job_dir: Path, site_name: str,
+                          resolve_fn, fid: str, referer: str):
+    """Generic downloader for JS-embed video hosts: scrape → ffmpeg/aria2c → Playwright fallback."""
+    await _prog(req.job_id, {"status": "starting", "progress": 5,
+                              "info": f"Resolving {site_name} stream…"})
+    stream = await resolve_fn(req.url)
+    if not stream:
+        await _prog(req.job_id, {"status": "starting", "progress": 15,
+                                  "info": f"Launching headless browser for {site_name}…"})
+        try:
+            _, videos = await asyncio.wait_for(
+                _render_media(req.url, proxy=req.proxy, scroll=False,
+                              timeout_ms=25000, want_video=True), timeout=40)
+            m3u8s = [v for v in videos if ".m3u8" in v]
+            stream = m3u8s[0] if m3u8s else (videos[0] if videos else None)
+        except Exception:
+            stream = None
+    if not stream:
+        raise HTTPException(502, f"Could not extract {site_name} stream URL — video may be unavailable or removed")
+    await _prog(req.job_id, {"status": "downloading", "progress": 20})
+    out = _uniq(job_dir, f"{site_name.lower().replace('.', '_')}_{fid}.mp4")
+    if ".m3u8" in stream:
+        ok = await _run_ffmpeg_hls(stream, out, req.job_id, referer, req.proxy)
+        if not ok:
+            raise HTTPException(502, f"ffmpeg failed to download {site_name} HLS stream")
+    else:
+        ok = await _aria2_dl(stream, out, req.job_id, req.url, req.proxy)
+        if not ok:
+            async with httpx.AsyncClient(follow_redirects=True,
+                                         timeout=httpx.Timeout(None, connect=20),
+                                         verify=VERIFY_SSL, proxy=req.proxy or None,
+                                         headers={"User-Agent": _ua(), "Referer": req.url}) as hc:
+                async with hc.stream("GET", stream) as resp:
+                    resp.raise_for_status()
+                    async with aiofiles.open(out, "wb") as fo:
+                        async for chunk in resp.aiter_bytes(1 << 20):
+                            await fo.write(chunk)
+    files = [f.name for f in job_dir.iterdir() if f.is_file()]
+    await _prog(req.job_id, {"status": "completed", "progress": 100, "files": files})
+
+
+async def _dl_generic_file(req: DownloadReq, job_dir: Path, site_name: str, dl_url: str, fname: str):
+    """Generic downloader for file-hosting sites once a direct URL is resolved."""
+    out = _uniq(job_dir, _safe(fname) or f"{site_name}_file")
+    await _prog(req.job_id, {"status": "downloading", "progress": 15})
+    ok = await _aria2_dl(dl_url, out, req.job_id, req.url, req.proxy)
+    if not ok:
+        async with httpx.AsyncClient(follow_redirects=True,
+                                     timeout=httpx.Timeout(None, connect=20),
+                                     verify=VERIFY_SSL, proxy=req.proxy or None,
+                                     headers={"User-Agent": _ua(), "Referer": req.url}) as hc:
+            async with hc.stream("GET", dl_url) as resp:
+                resp.raise_for_status()
+                total_b = int(resp.headers.get("content-length", 0)) or 0
+                done = 0
+                async with aiofiles.open(out, "wb") as fo:
+                    async for chunk in resp.aiter_bytes(1 << 20):
+                        await fo.write(chunk)
+                        done += len(chunk)
+                        if total_b:
+                            _prog_s(req.job_id, {"status": "downloading",
+                                "progress": min(95, int(done / total_b * 85) + 10)})
+    files = [f.name for f in job_dir.iterdir() if f.is_file()]
+    await _prog(req.job_id, {"status": "completed", "progress": 100, "files": files})
+
+
+# ── Fembed ────────────────────────────────────────────────────────────────────
+
+async def _resolve_fembed(url: str) -> Optional[str]:
+    m = _FEMBED_RE.match(url)
+    if not m:
+        return None
+    fid = m.group(2)
+    # Extract domain from URL
+    domain_m = re.match(r'^https?://(?:www\.)?([^/]+)', url, re.I)
+    domain = domain_m.group(1) if domain_m else "fembed.com"
+    # Try the JSON API first
+    try:
+        async with httpx.AsyncClient(follow_redirects=True,
+                                     timeout=httpx.Timeout(15, connect=10),
+                                     verify=VERIFY_SSL) as c:
+            r = await c.post(f"https://{domain}/api/source/{fid}",
+                headers={"User-Agent": _ua(), "Referer": url,
+                         "Content-Type": "application/x-www-form-urlencoded",
+                         "Accept": "application/json"},
+                content=f"r=&d={domain}".encode())
+            if r.status_code == 200:
+                data = r.json()
+                if data.get("success"):
+                    sources = data.get("data", [])
+                    if sources:
+                        # Prefer highest quality
+                        sources.sort(key=lambda s: s.get("label", ""), reverse=True)
+                        return sources[0].get("file")
+    except Exception:
+        pass
+    return await _scrape_video_url(url)
+
+
+async def _analyze_fembed(url: str) -> dict:
+    m = _FEMBED_RE.match(url)
+    fid = m.group(2) if m else "video"
+    stream = await _resolve_fembed(url)
+    return {"type": "video", "url": url, "title": f"Fembed {fid}",
+            "extractor": "fembed", "stream_url": stream or ""}
+
+
+async def _dl_fembed(req: DownloadReq, job_dir: Path):
+    m = _FEMBED_RE.match(req.url)
+    fid = m.group(2) if m else "video"
+    await _dl_embed_video(req, job_dir, "fembed", _resolve_fembed, fid, req.url)
+
+
+# ── Uqload ────────────────────────────────────────────────────────────────────
+
+async def _resolve_uqload(url: str) -> Optional[str]:
+    return await _scrape_video_url(url)
+
+
+async def _analyze_uqload(url: str) -> dict:
+    m = _UQLOAD_RE.match(url)
+    fid = m.group(1) if m else "video"
+    stream = await _resolve_uqload(url)
+    return {"type": "video", "url": url, "title": f"Uqload {fid}",
+            "extractor": "uqload", "stream_url": stream or ""}
+
+
+async def _dl_uqload(req: DownloadReq, job_dir: Path):
+    m = _UQLOAD_RE.match(req.url)
+    fid = m.group(1) if m else "video"
+    await _dl_embed_video(req, job_dir, "uqload", _resolve_uqload, fid, req.url)
+
+
+# ── Vidoza ────────────────────────────────────────────────────────────────────
+
+async def _resolve_vidoza(url: str) -> Optional[str]:
+    headers = {"User-Agent": _ua(), "Referer": url, "Accept": "text/html,*/*;q=0.9"}
+    try:
+        async with httpx.AsyncClient(follow_redirects=True,
+                                     timeout=httpx.Timeout(15, connect=10),
+                                     verify=VERIFY_SSL) as c:
+            r = await c.get(url, headers=headers)
+            if r.status_code != 200:
+                return None
+            html = r.text
+            # Vidoza uses: sourcesob: [{src: "...", type: "video/mp4"}]
+            for pat in [
+                r'sourcesob\s*:\s*\[\s*\{[^}]*src\s*:\s*["\']([^"\']+)["\']',
+                r'"src"\s*:\s*"([^"]+\.mp4[^"]*)"',
+                r"'src'\s*:\s*'([^']+\.mp4[^']*)'",
+            ]:
+                m = re.search(pat, html, re.I)
+                if m:
+                    return m.group(1)
+            return _extract_m3u8(html) or _extract_mp4(html)
+    except Exception:
+        return None
+
+
+async def _analyze_vidoza(url: str) -> dict:
+    m = _VIDOZA_RE.match(url)
+    fid = m.group(1) if m else "video"
+    stream = await _resolve_vidoza(url)
+    return {"type": "video", "url": url, "title": f"Vidoza {fid}",
+            "extractor": "vidoza", "stream_url": stream or ""}
+
+
+async def _dl_vidoza(req: DownloadReq, job_dir: Path):
+    m = _VIDOZA_RE.match(req.url)
+    fid = m.group(1) if m else "video"
+    await _dl_embed_video(req, job_dir, "vidoza", _resolve_vidoza, fid, req.url)
+
+
+# ── Upstream ──────────────────────────────────────────────────────────────────
+
+async def _resolve_upstream(url: str) -> Optional[str]:
+    return await _scrape_video_url(url)
+
+
+async def _analyze_upstream(url: str) -> dict:
+    m = _UPSTREAM_RE.match(url)
+    fid = m.group(1) if m else "video"
+    stream = await _resolve_upstream(url)
+    return {"type": "video", "url": url, "title": f"Upstream {fid}",
+            "extractor": "upstream", "stream_url": stream or ""}
+
+
+async def _dl_upstream(req: DownloadReq, job_dir: Path):
+    m = _UPSTREAM_RE.match(req.url)
+    fid = m.group(1) if m else "video"
+    await _dl_embed_video(req, job_dir, "upstream", _resolve_upstream, fid, "https://upstream.to/")
+
+
+# ── Kwik ──────────────────────────────────────────────────────────────────────
+
+async def _resolve_kwik(url: str) -> Optional[str]:
+    """Kwik uses a hidden form POST to get the actual video page, then packed JS."""
+    headers = {"User-Agent": _ua(), "Referer": "https://kwik.cx/", "Accept": "text/html,*/*;q=0.9"}
+    try:
+        async with httpx.AsyncClient(follow_redirects=True,
+                                     timeout=httpx.Timeout(20, connect=10),
+                                     verify=VERIFY_SSL) as c:
+            r = await c.get(url, headers=headers)
+            if r.status_code != 200:
+                return None
+            html = r.text
+            # Check if video URL is directly available (some Kwik pages)
+            stream = _extract_m3u8(html) or _extract_mp4(html)
+            if stream:
+                return stream
+            # Kwik POST flow: extract _token from form and POST back
+            tok_m = re.search(r'name=["\']_token["\'][^>]+value=["\']([^"\']+)["\']', html, re.I)
+            if not tok_m:
+                tok_m = re.search(r'value=["\']([^"\']+)["\'][^>]+name=["\']_token["\']', html, re.I)
+            if tok_m:
+                token = tok_m.group(1)
+                post_r = await c.post(url,
+                    headers={**headers, "Content-Type": "application/x-www-form-urlencoded",
+                              "Origin": "https://kwik.cx"},
+                    content=f"_token={token}".encode())
+                if post_r.status_code in (200, 302):
+                    post_html = post_r.text
+                    stream = _extract_m3u8(post_html) or _extract_mp4(post_html)
+                    if stream:
+                        return stream
+    except Exception:
+        pass
+    return None
+
+
+async def _analyze_kwik(url: str) -> dict:
+    m = _KWIK_RE.match(url)
+    fid = m.group(1) if m else "video"
+    stream = await _resolve_kwik(url)
+    return {"type": "video", "url": url, "title": f"Kwik {fid}",
+            "extractor": "kwik", "stream_url": stream or ""}
+
+
+async def _dl_kwik(req: DownloadReq, job_dir: Path):
+    m = _KWIK_RE.match(req.url)
+    fid = m.group(1) if m else "video"
+    await _dl_embed_video(req, job_dir, "kwik", _resolve_kwik, fid, "https://kwik.cx/")
+
+
+# ── StreamSB ──────────────────────────────────────────────────────────────────
+
+async def _resolve_streamsb(url: str) -> Optional[str]:
+    """StreamSB: try packed page scrape, then API endpoint."""
+    headers = {"User-Agent": _ua(), "Referer": url,
+                "watchsb": "streamsb", "Accept": "text/html,*/*;q=0.9"}
+    try:
+        async with httpx.AsyncClient(follow_redirects=True,
+                                     timeout=httpx.Timeout(15, connect=10),
+                                     verify=VERIFY_SSL) as c:
+            r = await c.get(url, headers=headers)
+            if r.status_code != 200:
+                return None
+            stream = _extract_m3u8(r.text) or _extract_mp4(r.text)
+            if stream:
+                return stream
+            # Try dl endpoint
+            m = _STREAMSB_RE.match(url)
+            if m:
+                fid = m.group(2)
+                domain_m = re.match(r'^https?://(?:www\.)?([^/]+)', url, re.I)
+                domain = domain_m.group(1) if domain_m else "streamsb.net"
+                r2 = await c.get(f"https://{domain}/dl?op=download_orig&id={fid}",
+                                 headers={**headers, "Accept": "*/*"})
+                stream = _extract_m3u8(r2.text) or _extract_mp4(r2.text)
+                if stream:
+                    return stream
+    except Exception:
+        pass
+    return None
+
+
+async def _analyze_streamsb(url: str) -> dict:
+    m = _STREAMSB_RE.match(url)
+    fid = m.group(2) if m else "video"
+    stream = await _resolve_streamsb(url)
+    return {"type": "video", "url": url, "title": f"StreamSB {fid}",
+            "extractor": "streamsb", "stream_url": stream or ""}
+
+
+async def _dl_streamsb(req: DownloadReq, job_dir: Path):
+    m = _STREAMSB_RE.match(req.url)
+    fid = m.group(2) if m else "video"
+    await _dl_embed_video(req, job_dir, "streamsb", _resolve_streamsb, fid, req.url)
+
+
+# ── Streamlare ────────────────────────────────────────────────────────────────
+
+async def _resolve_streamlare(url: str) -> Optional[str]:
+    m = _STREAMLARE_RE.match(url)
+    if not m:
+        return None
+    fid = m.group(1)
+    headers = {"User-Agent": _ua(), "Referer": "https://streamlare.com/",
+               "Content-Type": "application/json", "Accept": "application/json"}
+    try:
+        async with httpx.AsyncClient(follow_redirects=True,
+                                     timeout=httpx.Timeout(15, connect=10),
+                                     verify=VERIFY_SSL) as c:
+            r = await c.post("https://streamlare.com/api/video/stream",
+                             headers=headers, json={"id": fid})
+            if r.status_code == 200:
+                data = r.json()
+                result = data.get("result") or data.get("data") or []
+                if isinstance(result, list) and result:
+                    return result[0].get("file") or result[0].get("url")
+                if isinstance(result, dict):
+                    return result.get("file") or result.get("url") or result.get("stream_url")
+    except Exception:
+        pass
+    return await _scrape_video_url(url)
+
+
+async def _analyze_streamlare(url: str) -> dict:
+    m = _STREAMLARE_RE.match(url)
+    fid = m.group(1) if m else "video"
+    stream = await _resolve_streamlare(url)
+    return {"type": "video", "url": url, "title": f"Streamlare {fid}",
+            "extractor": "streamlare", "stream_url": stream or ""}
+
+
+async def _dl_streamlare(req: DownloadReq, job_dir: Path):
+    m = _STREAMLARE_RE.match(req.url)
+    fid = m.group(1) if m else "video"
+    await _dl_embed_video(req, job_dir, "streamlare", _resolve_streamlare, fid, "https://streamlare.com/")
+
+
+# ── Fapello ───────────────────────────────────────────────────────────────────
+
+async def _analyze_fapello(url: str) -> dict:
+    m = _FAPELLO_RE.match(url)
+    user = m.group(1) if m else "?"
+    return {"type": "playlist", "url": url, "title": f"Fapello @{user}",
+            "extractor": "fapello"}
+
+
+async def _dl_fapello(req: DownloadReq, job_dir: Path):
+    await _prog(req.job_id, {"status": "starting", "progress": 5, "info": "Fetching Fapello page…"})
+    headers = {"User-Agent": _ua(), "Referer": "https://fapello.com/", "Accept": "text/html,*/*;q=0.9"}
+    try:
+        async with httpx.AsyncClient(follow_redirects=True,
+                                     timeout=httpx.Timeout(20, connect=10),
+                                     verify=VERIFY_SSL) as c:
+            r = await c.get(req.url, headers=headers)
+            if r.status_code != 200:
+                raise HTTPException(r.status_code, f"Fapello returned HTTP {r.status_code}")
+            html = r.text
+            # Collect all video sources and image sources
+            videos = list(dict.fromkeys(re.findall(
+                r'["\']?(https?://[^"\'<>\s]+\.(?:mp4|webm)[^"\'<>\s]*)["\']?', html, re.I)))
+            images = list(dict.fromkeys(re.findall(
+                r'["\']?(https?://[^"\'<>\s]+fapello[^"\'<>\s]+\.(?:jpg|jpeg|png|webp)[^"\'<>\s]*)["\']?',
+                html, re.I)))
+            media = videos + images
+            if not media:
+                raise HTTPException(404, "No media found on Fapello page — the content may be behind a paywall")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(502, f"Fapello fetch error: {e}")
+
+    for i, murl in enumerate(media):
+        ext = murl.split("?")[0].split(".")[-1].lower()
+        fname = f"fapello_{i:04d}.{ext}"
+        out = _uniq(job_dir, fname)
+        pct = int(10 + (i / len(media)) * 85)
+        await _prog(req.job_id, {"status": "downloading", "progress": pct})
+        await _aria2_dl(murl, out, req.job_id, "https://fapello.com/", req.proxy)
+
+    files = [f.name for f in job_dir.iterdir() if f.is_file()]
+    await _prog(req.job_id, {"status": "completed", "progress": 100, "files": files})
+
+
+# ── Vidmoly ───────────────────────────────────────────────────────────────────
+
+async def _resolve_vidmoly(url: str) -> Optional[str]:
+    return await _scrape_video_url(url)
+
+
+async def _analyze_vidmoly(url: str) -> dict:
+    m = _VIDMOLY_RE.match(url)
+    fid = m.group(1) if m else "video"
+    stream = await _resolve_vidmoly(url)
+    return {"type": "video", "url": url, "title": f"Vidmoly {fid}",
+            "extractor": "vidmoly", "stream_url": stream or ""}
+
+
+async def _dl_vidmoly(req: DownloadReq, job_dir: Path):
+    m = _VIDMOLY_RE.match(req.url)
+    fid = m.group(1) if m else "video"
+    await _dl_embed_video(req, job_dir, "vidmoly", _resolve_vidmoly, fid, "https://vidmoly.to/")
+
+
+# ── File hosts with POST flow (Racaty, Usersdrive, HexUpload) ─────────────────
+
+async def _resolve_post_filehost(url: str, op_param: str = "download2") -> Optional[tuple[str, str]]:
+    """
+    Common POST flow used by many file hosts:
+    1. GET page → extract form fields (op, id, rand, referer, method_free, etc.)
+    2. POST same URL with those fields + op=download2
+    3. Follow redirect or find direct link in response
+    """
+    headers = {"User-Agent": _ua(), "Referer": url, "Accept": "text/html,*/*;q=0.9"}
+    try:
+        async with httpx.AsyncClient(follow_redirects=True,
+                                     timeout=httpx.Timeout(20, connect=10),
+                                     verify=VERIFY_SSL) as c:
+            r = await c.get(url, headers=headers)
+            if r.status_code != 200:
+                return None
+            html = r.text
+            # Extract all hidden form inputs
+            form_data: dict[str, str] = {}
+            for inp in re.finditer(r'<input[^>]+>', html, re.I):
+                tag = inp.group(0)
+                name_m = re.search(r'name=["\']([^"\']+)["\']', tag, re.I)
+                val_m = re.search(r'value=["\']([^"\']*)["\']', tag, re.I)
+                if name_m:
+                    form_data[name_m.group(1)] = val_m.group(1) if val_m else ""
+            if not form_data:
+                return None
+            form_data["op"] = op_param
+            form_data.setdefault("method_free", "")
+            # POST back
+            r2 = await c.post(url, data=form_data,
+                              headers={**headers,
+                                       "Content-Type": "application/x-www-form-urlencoded",
+                                       "Origin": re.sub(r'(https?://[^/]+).*', r'\1', url)})
+            # Look for direct download link
+            for pat in [
+                r'href=["\']([^"\']{20,}(?:download|dl|file)[^"\']{0,100})["\']',
+                r'<a[^>]+class=["\'][^"\']*btn[^"\']*["\'][^>]+href=["\']([^"\']{20,})["\']',
+                r'"direct_link"\s*:\s*"([^"]+)"',
+                r"window\.location\s*=\s*['\"]([^'\"]+)['\"]",
+            ]:
+                m = re.search(pat, r2.text, re.I)
+                if m:
+                    dl_url = m.group(1)
+                    if dl_url.startswith("/"):
+                        base = re.match(r'(https?://[^/]+)', url)
+                        dl_url = base.group(1) + dl_url if base else dl_url
+                    # Try to get filename from Content-Disposition or URL
+                    fname = dl_url.split("?")[0].split("/")[-1] or "file"
+                    return dl_url, fname
+            # Check if the POST response itself is a redirect to a file
+            if r2.url and str(r2.url) != url:
+                fname = str(r2.url).split("?")[0].split("/")[-1] or "file"
+                return str(r2.url), fname
+    except Exception:
+        pass
+    return None
+
+
+async def _analyze_racaty(url: str) -> dict:
+    m = _RACATY_RE.match(url)
+    fid = m.group(1) if m else "?"
+    result = await _resolve_post_filehost(url)
+    if result:
+        return {"type": "file", "url": url, "title": _safe(result[1]),
+                "extractor": "racaty", "direct_url": result[0]}
+    return {"type": "file", "url": url, "title": f"Racaty {fid}", "extractor": "racaty"}
+
+
+async def _dl_racaty(req: DownloadReq, job_dir: Path):
+    await _prog(req.job_id, {"status": "starting", "progress": 5, "info": "Resolving Racaty download link…"})
+    result = await _resolve_post_filehost(req.url)
+    if not result:
+        raise HTTPException(502, "Could not extract Racaty download URL — file may be removed or requires captcha")
+    await _dl_generic_file(req, job_dir, "racaty", result[0], result[1])
+
+
+async def _analyze_usersdrive(url: str) -> dict:
+    m = _USERSDRIVE_RE.match(url)
+    fid = m.group(1) if m else "?"
+    result = await _resolve_post_filehost(url)
+    if result:
+        return {"type": "file", "url": url, "title": _safe(result[1]),
+                "extractor": "usersdrive", "direct_url": result[0]}
+    return {"type": "file", "url": url, "title": f"Usersdrive {fid}", "extractor": "usersdrive"}
+
+
+async def _dl_usersdrive(req: DownloadReq, job_dir: Path):
+    await _prog(req.job_id, {"status": "starting", "progress": 5, "info": "Resolving Usersdrive download link…"})
+    result = await _resolve_post_filehost(req.url)
+    if not result:
+        raise HTTPException(502, "Could not extract Usersdrive download URL — file may be removed or requires captcha")
+    await _dl_generic_file(req, job_dir, "usersdrive", result[0], result[1])
+
+
+async def _analyze_hexupload(url: str) -> dict:
+    m = _HEXUPLOAD_RE.match(url)
+    fid = m.group(1) if m else "?"
+    result = await _resolve_post_filehost(url)
+    if result:
+        return {"type": "file", "url": url, "title": _safe(result[1]),
+                "extractor": "hexupload", "direct_url": result[0]}
+    return {"type": "file", "url": url, "title": f"HexUpload {fid}", "extractor": "hexupload"}
+
+
+async def _dl_hexupload(req: DownloadReq, job_dir: Path):
+    await _prog(req.job_id, {"status": "starting", "progress": 5, "info": "Resolving HexUpload download link…"})
+    result = await _resolve_post_filehost(req.url)
+    if not result:
+        raise HTTPException(502, "Could not extract HexUpload download URL — file may be removed or requires captcha")
+    await _dl_generic_file(req, job_dir, "hexupload", result[0], result[1])
+
+
 async def _pat_login(email: str, password: str) -> Optional[str]:
     """Login to pat.com via auth.externulls.com → returns Bearer JWT or None."""
     try:
@@ -2413,6 +3005,18 @@ async def _do_analyze(url: str) -> dict:
     if _SENDVID_RE.match(url):       return await _analyze_sendvid(url)
     if _MEDIAFIRE_RE.match(url):     return await _analyze_mediafire(url)
     if _KRAKENFILES_RE.match(url):   return await _analyze_krakenfiles(url)
+    if _FEMBED_RE.match(url):        return await _analyze_fembed(url)
+    if _UQLOAD_RE.match(url):        return await _analyze_uqload(url)
+    if _VIDOZA_RE.match(url):        return await _analyze_vidoza(url)
+    if _UPSTREAM_RE.match(url):      return await _analyze_upstream(url)
+    if _KWIK_RE.match(url):          return await _analyze_kwik(url)
+    if _STREAMSB_RE.match(url):      return await _analyze_streamsb(url)
+    if _STREAMLARE_RE.match(url):    return await _analyze_streamlare(url)
+    if _FAPELLO_RE.match(url):       return await _analyze_fapello(url)
+    if _VIDMOLY_RE.match(url):       return await _analyze_vidmoly(url)
+    if _RACATY_RE.match(url):        return await _analyze_racaty(url)
+    if _USERSDRIVE_RE.match(url):    return await _analyze_usersdrive(url)
+    if _HEXUPLOAD_RE.match(url):     return await _analyze_hexupload(url)
     # 0. Torrent / magnet
     if url.startswith("magnet:") or url.split("?")[0].lower().endswith(".torrent"):
         name = "torrent"
@@ -3029,6 +3633,18 @@ async def download(req: DownloadReq):
             elif _SENDVID_RE.match(req.url):    await _dl_sendvid(req, job_dir)
             elif _MEDIAFIRE_RE.match(req.url):  await _dl_mediafire(req, job_dir)
             elif _KRAKENFILES_RE.match(req.url):await _dl_krakenfiles(req, job_dir)
+            elif _FEMBED_RE.match(req.url):     await _dl_fembed(req, job_dir)
+            elif _UQLOAD_RE.match(req.url):     await _dl_uqload(req, job_dir)
+            elif _VIDOZA_RE.match(req.url):     await _dl_vidoza(req, job_dir)
+            elif _UPSTREAM_RE.match(req.url):   await _dl_upstream(req, job_dir)
+            elif _KWIK_RE.match(req.url):       await _dl_kwik(req, job_dir)
+            elif _STREAMSB_RE.match(req.url):   await _dl_streamsb(req, job_dir)
+            elif _STREAMLARE_RE.match(req.url): await _dl_streamlare(req, job_dir)
+            elif _FAPELLO_RE.match(req.url):    await _dl_fapello(req, job_dir)
+            elif _VIDMOLY_RE.match(req.url):    await _dl_vidmoly(req, job_dir)
+            elif _RACATY_RE.match(req.url):     await _dl_racaty(req, job_dir)
+            elif _USERSDRIVE_RE.match(req.url): await _dl_usersdrive(req, job_dir)
+            elif _HEXUPLOAD_RE.match(req.url):  await _dl_hexupload(req, job_dir)
             elif req.capture and req.media_type == "video":
                 await _dl_capture(req, job_dir)
             elif req.media_type in ("playlist","profile"):
