@@ -205,6 +205,7 @@ export default function URLInputSection({ onQueued, initialUrl = '' }: Props) {
         startTime: opts.startTime || undefined, endTime: opts.endTime || undefined,
         delaySeconds: opts.scheduleMinutes ? opts.scheduleMinutes * 60 : undefined,
         repeatEvery: opts.repeatEvery || undefined,
+        webhookUrl: opts.webhookUrl || undefined,
       })
       onQueued(jobId, {
         jobId, url: u, mediaType, format,

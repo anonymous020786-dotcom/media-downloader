@@ -3,7 +3,6 @@ import { useEffect, useState } from 'react'
 import { Wand2, ChevronDown, ChevronUp, Loader2, CheckCircle2, AlertCircle, FolderOpen, Download } from 'lucide-react'
 import { fetchStorage, convertFile, fileDownloadUrl, fmtBytes } from '@/lib/api'
 import type { StorageJob, ConvertRequest } from '@/lib/types'
-import { v4 as uuidv4 } from 'uuid'
 
 const VIDEO_FORMATS = ['mp4', 'webm', 'mkv', 'avi', 'mov', 'gif']
 const AUDIO_FORMATS = ['mp3', 'm4a', 'opus', 'ogg', 'flac', 'wav', 'aac']
@@ -47,7 +46,7 @@ export default function FormatConverter() {
   async function handleConvert() {
     if (!selJobId || !selFile) return
     setStatus('converting'); setError(''); setResult(null)
-    const newJobId = uuidv4()
+    const newJobId = crypto.randomUUID()
     const req: ConvertRequest = {
       job_id: selJobId, filename: selFile, output_format: outFmt,
       new_job_id: newJobId,

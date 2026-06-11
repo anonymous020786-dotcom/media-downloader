@@ -17,7 +17,8 @@ import { createServer } from 'node:http'
 import { startWorker } from './workers/downloadWorker.js'
 import { runMigrations } from './db.js'
 import { initSocket } from './socket.js'
-import notifRouter from './routes/notifications.js'
+import notifRouter   from './routes/notifications.js'
+import historyRouter from './routes/history.js'
 
 const app  = express()
 const PORT = Number(process.env.PORT ?? 4000)
@@ -82,6 +83,7 @@ app.use('/api/content',  contentRouter)
 app.use('/api/tmdb',     tmdbRouter)
 app.use('/api/news',     newsRouter)
 app.use('/api/notifications', notifRouter)
+app.use('/api/history',      historyRouter)
 
 // Serve uploaded media (images/files embedded in blog posts)
 import { UPLOAD_DIR } from './routes/content.js'

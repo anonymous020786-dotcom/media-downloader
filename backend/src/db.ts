@@ -27,6 +27,11 @@ export async function runMigrations(): Promise<void> {
     `ALTER TABLE contact_messages ADD COLUMN IF NOT EXISTS admin_note  TEXT`,
     // add user_id index to download_stats if missing
     `ALTER TABLE download_stats ADD INDEX IF NOT EXISTS idx_user (user_id(32))`,
+    // history columns
+    `ALTER TABLE download_stats ADD COLUMN IF NOT EXISTS job_id VARCHAR(36) DEFAULT NULL`,
+    `ALTER TABLE download_stats ADD COLUMN IF NOT EXISTS title  VARCHAR(500) DEFAULT NULL`,
+    `ALTER TABLE download_stats ADD COLUMN IF NOT EXISTS files  TEXT         DEFAULT NULL`,
+    `ALTER TABLE download_stats ADD INDEX IF NOT EXISTS idx_job_id (job_id)`,
   ]
   for (const sql of migrations) {
     try { await pool.execute(sql) } catch { /* column/index already exists — safe to ignore */ }

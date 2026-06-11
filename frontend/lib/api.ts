@@ -95,6 +95,7 @@ export const queueDownload = (payload: {
       concurrentFragments: payload.concurrentFragments ?? 16,
       delaySeconds:        payload.delaySeconds        ?? undefined,
       repeatEvery:         payload.repeatEvery         || undefined,
+      webhookUrl:          payload.webhookUrl          || undefined,
     }),
   })
 

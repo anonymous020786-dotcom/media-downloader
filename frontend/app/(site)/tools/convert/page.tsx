@@ -1,13 +1,11 @@
 import type { Metadata } from 'next'
-import dynamic from 'next/dynamic'
+import ConvertClient from './ConvertClient'
 
 export const metadata: Metadata = {
   title: 'Format Converter — Re-encode & Convert Files | MediaDL',
   description: 'Convert downloaded files to any format using FFmpeg. Video ↔ video, video → audio, video → GIF. Trim, resize, change codec — all server-side.',
   alternates: { canonical: '/tools/convert' },
 }
-
-const FormatConverter = dynamic(() => import('@/components/widgets/FormatConverter'), { ssr: false })
 
 export default function ConvertPage() {
   return (
@@ -19,7 +17,7 @@ export default function ConvertPage() {
           extract audio, trim a clip, or make a GIF. All processing runs server-side.
         </p>
       </div>
-      <FormatConverter />
+      <ConvertClient />
     </div>
   )
 }

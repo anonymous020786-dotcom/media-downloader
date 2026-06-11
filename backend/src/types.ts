@@ -31,6 +31,7 @@ export interface DownloadJob {
   outputTemplate?:     string
   speedLimit?:         string
   concurrentFragments?: number
+  webhookUrl?:         string   // POST to this URL when job completes or fails
 }
 
 export interface JobProgress {

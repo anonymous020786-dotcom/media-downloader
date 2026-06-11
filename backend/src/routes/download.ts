@@ -11,8 +11,8 @@ const PYTHON = process.env.PYTHON_SERVICE_URL ?? 'http://localhost:8000'
 async function recordStat(job: DownloadJob, userId?: string) {
   try {
     await query(
-      'INSERT INTO download_stats (user_id,url,media_type,format,quality,status) VALUES (?,?,?,?,?,?)',
-      [userId ?? null, job.url.slice(0, 2000), job.mediaType, job.format, job.quality ?? null, 'queued']
+      'INSERT INTO download_stats (job_id,user_id,url,media_type,format,quality,status,title) VALUES (?,?,?,?,?,?,?,?)',
+      [job.jobId, userId ?? null, job.url.slice(0, 2000), job.mediaType, job.format, job.quality ?? null, 'queued', job.title ?? null]
     )
   } catch { /* stats are non-critical */ }
 }
@@ -72,6 +72,7 @@ router.post('/', async (req, res) => {
     outputTemplate:     body.outputTemplate,
     speedLimit:         body.speedLimit,
     concurrentFragments: body.concurrentFragments ?? 16,
+    webhookUrl:         body.webhookUrl,
   }
 
   // Recurring (cron) schedule

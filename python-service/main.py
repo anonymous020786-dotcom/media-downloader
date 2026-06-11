@@ -39,6 +39,7 @@ REDIS_URL        = os.getenv("REDIS_URL",            "redis://redis:6379")
 MAX_CONCURRENT   = int(os.getenv("MAX_CONCURRENT_DOWNLOADS", "5"))
 MAX_PAGE_IMAGES  = int(os.getenv("MAX_PAGE_IMAGES",  "2000"))
 VERIFY_SSL       = os.getenv("VERIFY_SSL", "true").lower() not in ("false", "0", "no")
+DOWNLOAD_TTL_DAYS = int(os.getenv("DOWNLOAD_TTL_DAYS", "7"))   # auto-delete after N days (0 = off)
 
 # ── Globals ───────────────────────────────────────────────────────────────────
 _sem:          asyncio.Semaphore
@@ -67,6 +68,29 @@ _BASE_HDR = {
 def _ua() -> str: return random.choice(_UA_POOL)
 
 # ── Lifespan ──────────────────────────────────────────────────────────────────
+async def _cleanup_old_downloads():
+    """Delete job directories older than DOWNLOAD_TTL_DAYS. Runs every 12 hours."""
+    if DOWNLOAD_TTL_DAYS <= 0:
+        return
+    import time
+    cutoff = time.time() - DOWNLOAD_TTL_DAYS * 86400
+    while True:
+        try:
+            removed = 0
+            for entry in DOWNLOAD_DIR.iterdir():
+                if entry.is_dir() and entry.stat().st_mtime < cutoff:
+                    try:
+                        shutil.rmtree(entry)
+                        removed += 1
+                    except Exception:
+                        pass
+            if removed:
+                print(f"[cleanup] removed {removed} old job dir(s) (>{DOWNLOAD_TTL_DAYS}d old)")
+        except Exception as e:
+            print(f"[cleanup] error: {e}")
+        await asyncio.sleep(12 * 3600)  # run every 12 hours
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global _sem, _aredis, _sredis
@@ -74,7 +98,10 @@ async def lifespan(app: FastAPI):
     _aredis = await aioredis.from_url(REDIS_URL, decode_responses=True)
     _sredis = _sync_redis_lib.Redis.from_url(REDIS_URL, decode_responses=True)
     DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
+    # Start background cleanup task
+    cleanup_task = asyncio.create_task(_cleanup_old_downloads())
     yield
+    cleanup_task.cancel()
     await _aredis.aclose()
     _sredis.close()
 
@@ -324,7 +351,27 @@ def _rank_video(urls: list[str]) -> list[str]:
 # ROUTES
 # ─────────────────────────────────────────────────────────────────────────────
 @app.get("/health")
-async def health(): return {"status":"ok","version":"3.0.0","max_concurrent":MAX_CONCURRENT}
+async def health(): return {"status":"ok","version":"3.0.0","max_concurrent":MAX_CONCURRENT,
+                            "download_ttl_days": DOWNLOAD_TTL_DAYS}
+
+@app.post("/storage/cleanup")
+async def storage_cleanup(older_than_days: int = DOWNLOAD_TTL_DAYS):
+    """Manually trigger cleanup of job directories older than N days."""
+    if older_than_days <= 0:
+        return {"removed": 0, "note": "older_than_days must be > 0"}
+    import time
+    cutoff = time.time() - older_than_days * 86400
+    removed, freed = 0, 0
+    for entry in DOWNLOAD_DIR.iterdir():
+        if entry.is_dir() and entry.stat().st_mtime < cutoff:
+            try:
+                size = sum(f.stat().st_size for f in entry.rglob("*") if f.is_file())
+                shutil.rmtree(entry)
+                removed += 1; freed += size
+            except Exception:
+                pass
+    return {"removed": removed, "freed_bytes": freed,
+            "freed_mb": round(freed / 1_048_576, 1)}
 
 @app.get("/health/deep")
 async def health_deep():
@@ -718,6 +765,32 @@ _DROPAPK_RE = re.compile(
 _ONEFICHIER_RE = re.compile(
     r'^https?://(?:www\.)?\d*\.?1fichier\.com/\?([A-Za-z0-9]+)', re.I)
 
+# Coomer.party  https://coomer.su/onlyfans/user/123  or  /post/456
+_COOMER_RE = re.compile(
+    r'^https?://(?:www\.)?(?:coomer\.(?:party|su|to))'
+    r'/([a-z0-9_-]+)/user/([^/?\s]+)(?:/post/([^/?\s]+))?', re.I)
+
+# Kemono.party  https://kemono.su/patreon/user/123  or  /post/456
+_KEMONO_RE = re.compile(
+    r'^https?://(?:www\.)?(?:kemono\.(?:party|su|to))'
+    r'/([a-z0-9_-]+)/user/([^/?\s]+)(?:/post/([^/?\s]+))?', re.I)
+
+# Turbobit  https://turbobit.net/{id}.html
+_TURBOBIT_RE = re.compile(
+    r'^https?://(?:www\.)?turbobit\.(?:net|com)/([A-Za-z0-9_-]+)(?:\.html)?', re.I)
+
+# Rapidgator  https://rapidgator.net/file/{id}
+_RAPIDGATOR_RE = re.compile(
+    r'^https?://(?:www\.)?(?:rapidgator\.net|rg\.to)/(?:file/)?([A-Za-z0-9]+)', re.I)
+
+# Nitroflare  https://nitroflare.com/view/{id}
+_NITROFLARE_RE = re.compile(
+    r'^https?://(?:www\.)?nitroflare\.com/view/([A-Za-z0-9_-]+)', re.I)
+
+# Upload.ee  https://upload.ee/files/{id}/{filename}
+_UPLOADEE_RE = re.compile(
+    r'^https?://(?:www\.)?upload\.ee/files/([A-Za-z0-9_-]+)', re.I)
+
 
 def _is_custom_site(url: str) -> bool:
     return bool(
@@ -736,7 +809,10 @@ def _is_custom_site(url: str) -> bool:
         _SIBNET_RE.match(url) or _THOTHUB_RE.match(url) or _SIMPCITY_RE.match(url) or
         _DROPGALAXY_RE.match(url) or _FILEAL_RE.match(url) or _CLICKNUPLOAD_RE.match(url) or
         _UPLOADHUB_RE.match(url) or _KATFILE_RE.match(url) or _DROPAPK_RE.match(url) or
-        _ONEFICHIER_RE.match(url)
+        _ONEFICHIER_RE.match(url) or
+        _COOMER_RE.match(url) or _KEMONO_RE.match(url) or
+        _TURBOBIT_RE.match(url) or _RAPIDGATOR_RE.match(url) or
+        _NITROFLARE_RE.match(url) or _UPLOADEE_RE.match(url)
     )
 
 
@@ -2140,7 +2216,7 @@ async def _dl_embed_video(req: DownloadReq, job_dir: Path, site_name: str,
         try:
             _, videos = await asyncio.wait_for(
                 _render_media(req.url, proxy=req.proxy, scroll=False,
-                              timeout_ms=25000, want_video=True), timeout=40)
+                              timeout_ms=22000, want_video=True), timeout=28)
             m3u8s = [v for v in videos if ".m3u8" in v]
             stream = m3u8s[0] if m3u8s else (videos[0] if videos else None)
         except Exception:
@@ -3051,6 +3127,230 @@ async def _dl_1fichier(req: DownloadReq, job_dir: Path):
     await _dl_generic_file(req, job_dir, "1fichier", result[0], result[1])
 
 
+# ── Coomer.party / Kemono.party ───────────────────────────────────────────────
+
+def _coomer_api_base(url: str) -> str:
+    """Return the API base URL matching the given coomer/kemono domain."""
+    if "kemono" in url.lower():
+        return "https://kemono.su"
+    return "https://coomer.su"
+
+def _coomer_file_url(api_base: str, path: str) -> str:
+    """Construct a full CDN URL for a coomer/kemono file path."""
+    if path.startswith("http"):
+        return path
+    return f"{api_base}/data{path}" if not path.startswith("/data") else f"{api_base}{path}"
+
+async def _coomer_fetch_posts(api_base: str, service: str, user_id: str,
+                               post_id: Optional[str] = None) -> list[dict]:
+    """Fetch post(s) from the coomer/kemono JSON API."""
+    hdrs = {"User-Agent": _ua(), "Accept": "application/json"}
+    posts: list[dict] = []
+    try:
+        async with httpx.AsyncClient(follow_redirects=True, timeout=30, verify=VERIFY_SSL) as c:
+            if post_id:
+                r = await c.get(f"{api_base}/api/v1/{service}/user/{user_id}/post/{post_id}", headers=hdrs)
+                if r.status_code == 200:
+                    posts = [r.json()]
+            else:
+                # Paginate all posts (50 per page)
+                offset = 0
+                while True:
+                    r = await c.get(
+                        f"{api_base}/api/v1/{service}/user/{user_id}/posts?o={offset}",
+                        headers=hdrs)
+                    if r.status_code != 200:
+                        break
+                    batch = r.json()
+                    if not batch:
+                        break
+                    posts.extend(batch)
+                    if len(batch) < 50:
+                        break
+                    offset += 50
+                    if offset >= 2000:  # safety cap: first 2000 posts
+                        break
+    except Exception:
+        pass
+    return posts
+
+async def _analyze_coomer(url: str) -> dict:
+    m = _COOMER_RE.match(url) or _KEMONO_RE.match(url)
+    if not m:
+        raise ValueError("Invalid coomer/kemono URL")
+    service, user_id, post_id = m.group(1), m.group(2), m.group(3) if m.lastindex >= 3 else None
+    api_base = _coomer_api_base(url)
+    site = "Kemono" if "kemono" in url.lower() else "Coomer"
+    if post_id:
+        return {"type": "video", "url": url, "title": f"{site} {service}/{user_id} post {post_id}",
+                "extractor": site.lower()}
+    posts = await _coomer_fetch_posts(api_base, service, user_id)
+    return {
+        "type": "playlist", "url": url,
+        "title": f"{site} {service}/{user_id}",
+        "extractor": site.lower(),
+        "playlist_count": len(posts),
+    }
+
+async def _dl_coomer(req: DownloadReq, job_dir: Path):
+    m = _COOMER_RE.match(req.url) or _KEMONO_RE.match(req.url)
+    if not m:
+        raise HTTPException(400, "Invalid coomer/kemono URL")
+    service  = m.group(1)
+    user_id  = m.group(2)
+    post_id  = m.group(3) if m.lastindex >= 3 else None
+    api_base = _coomer_api_base(req.url)
+    site     = "kemono" if "kemono" in req.url.lower() else "coomer"
+
+    await _prog(req.job_id, {"status": "starting", "progress": 3,
+                              "info": f"Fetching {site} posts…"})
+    posts = await _coomer_fetch_posts(api_base, service, user_id, post_id)
+    if not posts:
+        raise HTTPException(404, f"No posts found — {site} profile may be empty or the URL is wrong")
+
+    hdrs = {"User-Agent": _ua(), "Referer": f"{api_base}/"}
+    total_files = sum(
+        len(p.get("attachments", [])) + (1 if p.get("file", {}).get("path") else 0)
+        for p in posts
+    )
+    done = 0
+    for post in posts:
+        all_files: list[str] = []
+        if post.get("file", {}).get("path"):
+            all_files.append(post["file"]["path"])
+        for att in post.get("attachments", []):
+            if att.get("path"):
+                all_files.append(att["path"])
+        for fpath in all_files:
+            cdn_url = _coomer_file_url(api_base, fpath)
+            fname = fpath.split("/")[-1].split("?")[0] or f"{site}_{done}"
+            out = _uniq(job_dir, _safe(fname))
+            ok = await _aria2_dl(cdn_url, out, req.job_id, f"{api_base}/", req.proxy)
+            if not ok:
+                try:
+                    async with httpx.AsyncClient(follow_redirects=True,
+                                                 timeout=httpx.Timeout(None, connect=20),
+                                                 verify=VERIFY_SSL, proxy=req.proxy or None,
+                                                 headers=hdrs) as c:
+                        async with c.stream("GET", cdn_url) as resp:
+                            if resp.status_code in (200, 206):
+                                async with aiofiles.open(out, "wb") as fo:
+                                    async for chunk in resp.aiter_bytes(1 << 20):
+                                        await fo.write(chunk)
+                except Exception:
+                    pass
+            done += 1
+            if total_files:
+                _prog_s(req.job_id, {"status": "downloading",
+                                      "progress": min(95, int(done / total_files * 95))})
+    files = [f.name for f in job_dir.iterdir() if f.is_file()]
+    await _prog(req.job_id, {"status": "completed", "progress": 100, "files": files})
+
+
+# ── Turbobit ──────────────────────────────────────────────────────────────────
+
+async def _analyze_turbobit(url: str) -> dict:
+    m = _TURBOBIT_RE.match(url)
+    fid = m.group(1) if m else "?"
+    result = await _resolve_post_filehost(url, "download")
+    if result:
+        return {"type": "file", "url": url, "title": _safe(result[1]),
+                "extractor": "turbobit", "direct_url": result[0]}
+    return {"type": "file", "url": url, "title": f"Turbobit {fid}", "extractor": "turbobit"}
+
+async def _dl_turbobit(req: DownloadReq, job_dir: Path):
+    await _prog(req.job_id, {"status": "starting", "progress": 5, "info": "Resolving Turbobit link…"})
+    result = await _resolve_post_filehost(req.url, "download")
+    if not result:
+        raise HTTPException(502, "Could not extract Turbobit download URL — free tier has wait times; consider retrying after 60s")
+    await _dl_generic_file(req, job_dir, "turbobit", result[0], result[1])
+
+
+# ── Rapidgator ────────────────────────────────────────────────────────────────
+
+async def _analyze_rapidgator(url: str) -> dict:
+    m = _RAPIDGATOR_RE.match(url)
+    fid = m.group(1) if m else "?"
+    result = await _resolve_post_filehost(url)
+    if result:
+        return {"type": "file", "url": url, "title": _safe(result[1]),
+                "extractor": "rapidgator", "direct_url": result[0]}
+    return {"type": "file", "url": url, "title": f"Rapidgator {fid}", "extractor": "rapidgator"}
+
+async def _dl_rapidgator(req: DownloadReq, job_dir: Path):
+    await _prog(req.job_id, {"status": "starting", "progress": 5, "info": "Resolving Rapidgator link…"})
+    result = await _resolve_post_filehost(req.url)
+    if not result:
+        raise HTTPException(502, "Could not extract Rapidgator download URL — free tier may have wait time or require captcha")
+    await _dl_generic_file(req, job_dir, "rapidgator", result[0], result[1])
+
+
+# ── Nitroflare ────────────────────────────────────────────────────────────────
+
+async def _analyze_nitroflare(url: str) -> dict:
+    m = _NITROFLARE_RE.match(url)
+    fid = m.group(1) if m else "?"
+    result = await _resolve_post_filehost(url)
+    if result:
+        return {"type": "file", "url": url, "title": _safe(result[1]),
+                "extractor": "nitroflare", "direct_url": result[0]}
+    return {"type": "file", "url": url, "title": f"Nitroflare {fid}", "extractor": "nitroflare"}
+
+async def _dl_nitroflare(req: DownloadReq, job_dir: Path):
+    await _prog(req.job_id, {"status": "starting", "progress": 5, "info": "Resolving Nitroflare link…"})
+    result = await _resolve_post_filehost(req.url)
+    if not result:
+        raise HTTPException(502, "Could not extract Nitroflare download URL — free tier may require captcha")
+    await _dl_generic_file(req, job_dir, "nitroflare", result[0], result[1])
+
+
+# ── Upload.ee ─────────────────────────────────────────────────────────────────
+
+async def _resolve_uploadee(url: str) -> Optional[tuple[str, str]]:
+    """Upload.ee: GET page → find Download button href."""
+    headers = {"User-Agent": _ua(), "Referer": "https://upload.ee/", "Accept": "text/html,*/*;q=0.9"}
+    try:
+        async with httpx.AsyncClient(follow_redirects=True, timeout=httpx.Timeout(15, connect=10),
+                                     verify=VERIFY_SSL) as c:
+            r = await c.get(url, headers=headers)
+            if r.status_code != 200:
+                return None
+            html = r.text
+            for pat in [
+                r'href=["\']([^"\']{10,400}upload\.ee[^"\']*)["\'][^>]*>(?:[^<]*)?(?:Download|Get)',
+                r'id=["\']d_l["\'][^>]+href=["\']([^"\']+)["\']',
+                r'href=["\']([^"\']{10,300})["\'][^>]*class=["\'][^"\']*download[^"\']*["\']',
+            ]:
+                m = re.search(pat, html, re.I)
+                if m:
+                    dl = m.group(1)
+                    if not dl.startswith("http"):
+                        dl = "https://upload.ee" + dl
+                    fname = dl.split("/")[-1].split("?")[0] or "upload_ee_file"
+                    return dl, fname
+            # Fallback: direct link from form post
+            return await _resolve_post_filehost(url)
+    except Exception:
+        pass
+    return None
+
+async def _analyze_uploadee(url: str) -> dict:
+    m = _UPLOADEE_RE.match(url)
+    fid = m.group(1) if m else "?"
+    result = await _resolve_uploadee(url)
+    if result:
+        return {"type": "file", "url": url, "title": _safe(result[1]),
+                "extractor": "upload.ee", "direct_url": result[0]}
+    return {"type": "file", "url": url, "title": f"Upload.ee {fid}", "extractor": "upload.ee"}
+
+async def _dl_uploadee(req: DownloadReq, job_dir: Path):
+    await _prog(req.job_id, {"status": "starting", "progress": 5, "info": "Resolving Upload.ee link…"})
+    result = await _resolve_uploadee(req.url)
+    if not result:
+        raise HTTPException(502, "Could not extract Upload.ee download URL")
+    await _dl_generic_file(req, job_dir, "upload.ee", result[0], result[1])
+
+
 async def _pat_login(email: str, password: str) -> Optional[str]:
     """Login to pat.com via auth.externulls.com → returns Bearer JWT or None."""
     try:
@@ -3517,6 +3817,12 @@ async def _do_analyze(url: str) -> dict:
     if _KATFILE_RE.match(url):       return await _analyze_katfile(url)
     if _DROPAPK_RE.match(url):       return await _analyze_dropapk(url)
     if _ONEFICHIER_RE.match(url):    return await _analyze_1fichier(url)
+    if _COOMER_RE.match(url):        return await _analyze_coomer(url)
+    if _KEMONO_RE.match(url):        return await _analyze_coomer(url)
+    if _TURBOBIT_RE.match(url):      return await _analyze_turbobit(url)
+    if _RAPIDGATOR_RE.match(url):    return await _analyze_rapidgator(url)
+    if _NITROFLARE_RE.match(url):    return await _analyze_nitroflare(url)
+    if _UPLOADEE_RE.match(url):      return await _analyze_uploadee(url)
     # 0. Torrent / magnet
     if url.startswith("magnet:") or url.split("?")[0].lower().endswith(".torrent"):
         name = "torrent"
@@ -4161,6 +4467,12 @@ async def download(req: DownloadReq):
             elif _KATFILE_RE.match(req.url):      await _dl_katfile(req, job_dir)
             elif _DROPAPK_RE.match(req.url):      await _dl_dropapk(req, job_dir)
             elif _ONEFICHIER_RE.match(req.url):   await _dl_1fichier(req, job_dir)
+            elif _COOMER_RE.match(req.url):        await _dl_coomer(req, job_dir)
+            elif _KEMONO_RE.match(req.url):        await _dl_coomer(req, job_dir)
+            elif _TURBOBIT_RE.match(req.url):      await _dl_turbobit(req, job_dir)
+            elif _RAPIDGATOR_RE.match(req.url):    await _dl_rapidgator(req, job_dir)
+            elif _NITROFLARE_RE.match(req.url):    await _dl_nitroflare(req, job_dir)
+            elif _UPLOADEE_RE.match(req.url):      await _dl_uploadee(req, job_dir)
             elif req.capture and req.media_type == "video":
                 await _dl_capture(req, job_dir)
             elif req.media_type in ("playlist","profile"):

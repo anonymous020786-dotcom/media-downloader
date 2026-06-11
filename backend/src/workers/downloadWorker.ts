@@ -73,6 +73,23 @@ export function startWorker() {
       emitJobDone(d.jobId, { files })
       kfk.downloadCompleted(d.jobId, d.url, files).catch(() => {})
 
+      // ── Persist completed status to download_stats ────────────────────────────
+      try {
+        const { query } = await import('../db.js')
+        await query(
+          'UPDATE download_stats SET status=?, files=?, title=? WHERE job_id=?',
+          ['completed', JSON.stringify(files), (d.title ?? null), d.jobId]
+        )
+      } catch { /* non-critical */ }
+
+      // ── Webhook notification ──────────────────────────────────────────────────
+      if (d.webhookUrl) {
+        axios.post(d.webhookUrl, {
+          jobId: d.jobId, status: 'completed',
+          url: d.url, title: d.title ?? null, files,
+        }, { timeout: 10_000 }).catch(() => {})
+      }
+
       // ── Push notification to user (if signed in and token registered) ────────
       if (d.userId) {
         const { notifyUser } = await import('../services/fcm.js')
@@ -101,6 +118,21 @@ export function startWorker() {
     const { kafka: kfk }    = await import('../services/kafka.js')
     emitJobFailed(job.data.jobId, err.message.slice(0, 300))
     kfk.downloadFailed(job.data.jobId, job.data.url, err.message.slice(0, 300)).catch(() => {})
+
+    // Persist failed status + webhook
+    try {
+      const { query } = await import('../db.js')
+      await query('UPDATE download_stats SET status=? WHERE job_id=?',
+        ['failed', job.data.jobId])
+    } catch { /* non-critical */ }
+
+    if (job.data.webhookUrl) {
+      axios.post(job.data.webhookUrl, {
+        jobId: job.data.jobId, status: 'failed',
+        url: job.data.url, title: job.data.title ?? null,
+        error: err.message.slice(0, 300),
+      }, { timeout: 10_000 }).catch(() => {})
+    }
 
     console.error(`[worker] job ${job.id} failed: ${err.message}`)
   })

@@ -6,6 +6,7 @@ import { toast } from 'sonner'
 import URLInputSection from '@/components/URLInputSection'
 import DownloadQueue from '@/components/DownloadQueue'
 import StoragePanel from '@/components/StoragePanel'
+import HistoryPanel from '@/components/download/HistoryPanel'
 import type { Job } from '@/lib/types'
 import { fetchStats } from '@/lib/api'
 
@@ -150,6 +151,27 @@ export default function DownloadTool() {
       />
 
       <StoragePanel />
+      <HistoryPanel />
+
+      {/* Bookmarklet */}
+      <div className="rounded-xl border border-[#21293a] p-4 space-y-2">
+        <p className="text-xs font-semibold text-slate-400 flex items-center gap-2">
+          <Zap size={12} className="text-amber-400" />
+          Browser bookmarklet
+        </p>
+        <p className="text-[11px] text-slate-600 leading-relaxed">
+          Drag the button below to your bookmarks bar. Click it on any page to send the current URL straight to MediaDL.
+        </p>
+        {/* eslint-disable-next-line jsx-a11y/anchor-is-valid */}
+        <a
+          href={`javascript:(function(){window.open('${typeof window !== 'undefined' ? window.location.origin : ''}/download?url='+encodeURIComponent(location.href),'_blank');})()`}
+          className="inline-block px-3 py-1.5 rounded-lg bg-amber-600/20 border border-amber-600/40 text-amber-300 text-xs font-bold hover:bg-amber-600/30 transition-colors cursor-grab"
+          onClick={(e) => e.preventDefault()}
+          draggable
+        >
+          ⬇ MediaDL
+        </a>
+      </div>
     </div>
   )
 }

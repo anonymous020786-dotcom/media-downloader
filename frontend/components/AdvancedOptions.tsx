@@ -332,6 +332,18 @@ export default function AdvancedOptions({ opts, onChange, showPlaylistOptions = 
             </select>
           </Row>
 
+          {/* ── Webhook ──────────────────────────────────────────── */}
+          <SectionHeader icon={<Wifi size={10} />} label="Webhook" />
+          <Row label="Completion webhook URL" hint="POST JSON to this URL when the download completes or fails (jobId, status, files)">
+            <input
+              value={opts.webhookUrl}
+              onChange={(e) => set('webhookUrl', e.target.value)}
+              placeholder="https://your-server.com/hook"
+              type="url"
+              className="w-56 bg-[#161b27] border border-[#21293a] focus:border-indigo-500/60 rounded-lg px-2 py-1 text-xs text-slate-300 placeholder-slate-600 font-mono outline-none"
+            />
+          </Row>
+
           {/* ── Queue Priority ────────────────────────────────────── */}
           <SectionHeader icon={<Gauge size={10} />} label="Queue priority" />
           <Row label="Priority" hint="High-priority jobs jump the queue ahead of normal ones">

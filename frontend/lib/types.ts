@@ -96,6 +96,8 @@ export interface AdvancedOptions {
   endTime:              string
   // Queue priority
   priority:             1 | 5 | 10    // 1=high, 5=normal, 10=low
+  // Webhook
+  webhookUrl:           string
 }
 
 export const DEFAULT_ADVANCED: AdvancedOptions = {
@@ -119,6 +121,7 @@ export const DEFAULT_ADVANCED: AdvancedOptions = {
   startTime:           '',
   endTime:             '',
   priority:            5,
+  webhookUrl:          '',
 }
 
 // ── RSS / M3U feed types ──────────────────────────────────────────────────────
