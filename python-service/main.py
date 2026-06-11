@@ -652,6 +652,72 @@ _USERSDRIVE_RE = re.compile(
 _HEXUPLOAD_RE = re.compile(
     r'^https?://(?:www\.)?hexupload\.net/([A-Za-z0-9_-]+)', re.I)
 
+# Supervideo  https://supervideo.tv/v/{id}
+_SUPERVIDEO_RE = re.compile(
+    r'^https?://(?:www\.)?(?:supervideo\.tv|supervideo\.cc|supervideo\.cam|supervideo\.ru)'
+    r'/(?:v/|e/|embed/)?([A-Za-z0-9_-]+)', re.I)
+
+# Netu / HQQ  https://netu.ac/embed/?v={id}  https://hqq.tv/player/embed_player.php?vid={id}
+_NETU_RE = re.compile(
+    r'^https?://(?:www\.)?(?:netu\.ac|hqq\.tv|hqq1\.com|hqq2\.com|waaw\.tv|'
+    r'hqq\.watch|hqq\.today|netu\.to)/(?:[^?]+\??)?(?:v|vid)=([A-Za-z0-9_-]{4,})', re.I)
+
+# ClipWatching  https://clipwatching.com/embed-{id}.html
+_CLIPWATCHING_RE = re.compile(
+    r'^https?://(?:www\.)?clipwatching\.com/(?:embed-)?([A-Za-z0-9_-]+)(?:\.html)?', re.I)
+
+# Evoload  https://evoload.io/e/{id}
+_EVOLOAD_RE = re.compile(
+    r'^https?://(?:www\.)?evoload\.io/(?:e/|embed/)?([A-Za-z0-9_-]+)', re.I)
+
+# Vidlox  https://vidlox.me/embed-{id}.html
+_VIDLOX_RE = re.compile(
+    r'^https?://(?:www\.)?vidlox\.(?:me|tv)/(?:embed-)?([A-Za-z0-9_-]+)(?:\.html)?', re.I)
+
+# Jetload  https://jetload.net/e/{id}
+_JETLOAD_RE = re.compile(
+    r'^https?://(?:www\.)?jetload\.net/(?:e/|embed/)?([A-Za-z0-9_-]+)', re.I)
+
+# Sibnet  https://video.sibnet.ru/video{id}/  or  /shell.php?videoid={id}
+_SIBNET_RE = re.compile(
+    r'^https?://video\.sibnet\.ru/(?:shell\.php\?videoid=|video)(\d+)', re.I)
+
+# ThotHub  https://thothub.to/videos/{slug}
+_THOTHUB_RE = re.compile(
+    r'^https?://(?:www\.)?thothub\.(?:to|lol|ru|me|live)/(?:videos/)?([A-Za-z0-9_-]+)', re.I)
+
+# Simpcity  https://simpcity.su/threads/{slug}/  (forum thread with embedded media)
+_SIMPCITY_RE = re.compile(
+    r'^https?://(?:www\.)?simpcity\.su/threads/([A-Za-z0-9_.-]+)', re.I)
+
+# DropGalaxy  https://dropgalaxy.com/d/{id}
+_DROPGALAXY_RE = re.compile(
+    r'^https?://(?:www\.)?dropgalaxy\.(?:com|in|co)/(?:d/)?([A-Za-z0-9_-]+)', re.I)
+
+# FileAl  https://fileal.com/{id}
+_FILEAL_RE = re.compile(
+    r'^https?://(?:www\.)?fileal\.(?:com|net)/([A-Za-z0-9_-]+)', re.I)
+
+# ClicknUpload  https://clicknupload.cc/{id}
+_CLICKNUPLOAD_RE = re.compile(
+    r'^https?://(?:www\.)?clicknupload\.(?:cc|to|club|link|me)/([A-Za-z0-9_-]+)', re.I)
+
+# UploadHub  https://uploadhub.ws/f/{id}
+_UPLOADHUB_RE = re.compile(
+    r'^https?://(?:www\.)?uploadhub\.(?:ws|to|net)/(?:f/|d/)?([A-Za-z0-9_-]+)', re.I)
+
+# Katfile  https://katfile.com/{id}
+_KATFILE_RE = re.compile(
+    r'^https?://(?:www\.)?katfile\.com/([A-Za-z0-9_-]+)', re.I)
+
+# DropApk  https://dropapk.to/{id}
+_DROPAPK_RE = re.compile(
+    r'^https?://(?:www\.)?dropapk\.(?:to|com)/([A-Za-z0-9_-]+)', re.I)
+
+# 1fichier  https://1fichier.com/?{hash}
+_ONEFICHIER_RE = re.compile(
+    r'^https?://(?:www\.)?\d*\.?1fichier\.com/\?([A-Za-z0-9]+)', re.I)
+
 
 def _is_custom_site(url: str) -> bool:
     return bool(
@@ -664,7 +730,13 @@ def _is_custom_site(url: str) -> bool:
         _FEMBED_RE.match(url) or _UQLOAD_RE.match(url) or _VIDOZA_RE.match(url) or
         _UPSTREAM_RE.match(url) or _KWIK_RE.match(url) or _STREAMSB_RE.match(url) or
         _STREAMLARE_RE.match(url) or _FAPELLO_RE.match(url) or _VIDMOLY_RE.match(url) or
-        _RACATY_RE.match(url) or _USERSDRIVE_RE.match(url) or _HEXUPLOAD_RE.match(url)
+        _RACATY_RE.match(url) or _USERSDRIVE_RE.match(url) or _HEXUPLOAD_RE.match(url) or
+        _SUPERVIDEO_RE.match(url) or _NETU_RE.match(url) or _CLIPWATCHING_RE.match(url) or
+        _EVOLOAD_RE.match(url) or _VIDLOX_RE.match(url) or _JETLOAD_RE.match(url) or
+        _SIBNET_RE.match(url) or _THOTHUB_RE.match(url) or _SIMPCITY_RE.match(url) or
+        _DROPGALAXY_RE.match(url) or _FILEAL_RE.match(url) or _CLICKNUPLOAD_RE.match(url) or
+        _UPLOADHUB_RE.match(url) or _KATFILE_RE.match(url) or _DROPAPK_RE.match(url) or
+        _ONEFICHIER_RE.match(url)
     )
 
 
@@ -2567,6 +2639,418 @@ async def _dl_hexupload(req: DownloadReq, job_dir: Path):
     await _dl_generic_file(req, job_dir, "hexupload", result[0], result[1])
 
 
+# ── Supervideo ────────────────────────────────────────────────────────────────
+
+async def _resolve_supervideo(url: str) -> Optional[str]:
+    return await _scrape_video_url(url)
+
+async def _analyze_supervideo(url: str) -> dict:
+    m = _SUPERVIDEO_RE.match(url)
+    fid = m.group(1) if m else "video"
+    stream = await _resolve_supervideo(url)
+    return {"type": "video", "url": url, "title": f"Supervideo {fid}",
+            "extractor": "supervideo", "stream_url": stream or ""}
+
+async def _dl_supervideo(req: DownloadReq, job_dir: Path):
+    m = _SUPERVIDEO_RE.match(req.url)
+    fid = m.group(1) if m else "video"
+    await _dl_embed_video(req, job_dir, "supervideo", _resolve_supervideo, fid, req.url)
+
+
+# ── Netu / HQQ ────────────────────────────────────────────────────────────────
+
+async def _resolve_netu(url: str) -> Optional[str]:
+    headers = {"User-Agent": _ua(), "Referer": url, "Accept": "text/html,*/*;q=0.9"}
+    try:
+        async with httpx.AsyncClient(follow_redirects=True, timeout=httpx.Timeout(15, connect=10),
+                                     verify=VERIFY_SSL) as c:
+            r = await c.get(url, headers=headers)
+            if r.status_code != 200:
+                return None
+            html = r.text
+            for pat in [
+                r'"file"\s*:\s*"([^"]+\.m3u8[^"]*)"',
+                r'"src"\s*:\s*"([^"]+\.m3u8[^"]*)"',
+                r'"file"\s*:\s*"([^"]+\.mp4[^"]*)"',
+            ]:
+                m = re.search(pat, html, re.I)
+                if m:
+                    return m.group(1)
+            return _extract_m3u8(html) or _extract_mp4(html)
+    except Exception:
+        return None
+
+async def _analyze_netu(url: str) -> dict:
+    m = _NETU_RE.match(url)
+    fid = m.group(1) if m else "video"
+    stream = await _resolve_netu(url)
+    return {"type": "video", "url": url, "title": f"Netu/HQQ {fid}",
+            "extractor": "netu", "stream_url": stream or ""}
+
+async def _dl_netu(req: DownloadReq, job_dir: Path):
+    m = _NETU_RE.match(req.url)
+    fid = m.group(1) if m else "video"
+    await _dl_embed_video(req, job_dir, "netu", _resolve_netu, fid, req.url)
+
+
+# ── ClipWatching ──────────────────────────────────────────────────────────────
+
+async def _resolve_clipwatching(url: str) -> Optional[str]:
+    return await _scrape_video_url(url)
+
+async def _analyze_clipwatching(url: str) -> dict:
+    m = _CLIPWATCHING_RE.match(url)
+    fid = m.group(1) if m else "video"
+    stream = await _resolve_clipwatching(url)
+    return {"type": "video", "url": url, "title": f"ClipWatching {fid}",
+            "extractor": "clipwatching", "stream_url": stream or ""}
+
+async def _dl_clipwatching(req: DownloadReq, job_dir: Path):
+    m = _CLIPWATCHING_RE.match(req.url)
+    fid = m.group(1) if m else "video"
+    await _dl_embed_video(req, job_dir, "clipwatching", _resolve_clipwatching, fid, req.url)
+
+
+# ── Evoload ───────────────────────────────────────────────────────────────────
+
+async def _resolve_evoload(url: str) -> Optional[str]:
+    m = _EVOLOAD_RE.match(url)
+    if not m:
+        return None
+    fid = m.group(1)
+    headers = {"User-Agent": _ua(), "Referer": url, "Accept": "text/html,*/*;q=0.9"}
+    try:
+        async with httpx.AsyncClient(follow_redirects=True, timeout=httpx.Timeout(15, connect=10),
+                                     verify=VERIFY_SSL) as c:
+            r = await c.get(url, headers=headers)
+            if r.status_code != 200:
+                return None
+            html = r.text
+            # Find CSRF or file token then POST to JSON API
+            tok_m = re.search(r'csrf_token["\s:=]+["\']([^"\']{10,80})["\']', html, re.I)
+            if not tok_m:
+                tok_m = re.search(r'["\']token["\']\s*:\s*["\']([^"\']{10,80})["\']', html, re.I)
+            if tok_m:
+                r2 = await c.post("https://evoload.io/api/source",
+                    headers={**headers, "Content-Type": "application/json",
+                             "Accept": "application/json"},
+                    json={"code": fid, "token": tok_m.group(1)})
+                if r2.status_code == 200:
+                    data = r2.json()
+                    link = data.get("link") or data.get("src") or data.get("url")
+                    if link:
+                        return link
+            return _extract_m3u8(html) or _extract_mp4(html)
+    except Exception:
+        return None
+
+async def _analyze_evoload(url: str) -> dict:
+    m = _EVOLOAD_RE.match(url)
+    fid = m.group(1) if m else "video"
+    stream = await _resolve_evoload(url)
+    return {"type": "video", "url": url, "title": f"Evoload {fid}",
+            "extractor": "evoload", "stream_url": stream or ""}
+
+async def _dl_evoload(req: DownloadReq, job_dir: Path):
+    m = _EVOLOAD_RE.match(req.url)
+    fid = m.group(1) if m else "video"
+    await _dl_embed_video(req, job_dir, "evoload", _resolve_evoload, fid, "https://evoload.io/")
+
+
+# ── Vidlox ────────────────────────────────────────────────────────────────────
+
+async def _resolve_vidlox(url: str) -> Optional[str]:
+    return await _scrape_video_url(url)
+
+async def _analyze_vidlox(url: str) -> dict:
+    m = _VIDLOX_RE.match(url)
+    fid = m.group(1) if m else "video"
+    stream = await _resolve_vidlox(url)
+    return {"type": "video", "url": url, "title": f"Vidlox {fid}",
+            "extractor": "vidlox", "stream_url": stream or ""}
+
+async def _dl_vidlox(req: DownloadReq, job_dir: Path):
+    m = _VIDLOX_RE.match(req.url)
+    fid = m.group(1) if m else "video"
+    await _dl_embed_video(req, job_dir, "vidlox", _resolve_vidlox, fid, "https://vidlox.me/")
+
+
+# ── Jetload ───────────────────────────────────────────────────────────────────
+
+async def _resolve_jetload(url: str) -> Optional[str]:
+    return await _scrape_video_url(url)
+
+async def _analyze_jetload(url: str) -> dict:
+    m = _JETLOAD_RE.match(url)
+    fid = m.group(1) if m else "video"
+    stream = await _resolve_jetload(url)
+    return {"type": "video", "url": url, "title": f"Jetload {fid}",
+            "extractor": "jetload", "stream_url": stream or ""}
+
+async def _dl_jetload(req: DownloadReq, job_dir: Path):
+    m = _JETLOAD_RE.match(req.url)
+    fid = m.group(1) if m else "video"
+    await _dl_embed_video(req, job_dir, "jetload", _resolve_jetload, fid, "https://jetload.net/")
+
+
+# ── Sibnet ────────────────────────────────────────────────────────────────────
+
+async def _resolve_sibnet(url: str) -> Optional[str]:
+    """GET /shell.php?videoid={id} → JSON with src field."""
+    m = _SIBNET_RE.match(url)
+    if not m:
+        return None
+    vid = m.group(1)
+    headers = {"User-Agent": _ua(), "Referer": "https://video.sibnet.ru/", "Accept": "*/*"}
+    try:
+        async with httpx.AsyncClient(follow_redirects=True, timeout=httpx.Timeout(15, connect=10),
+                                     verify=VERIFY_SSL) as c:
+            r = await c.get(f"https://video.sibnet.ru/shell.php?videoid={vid}", headers=headers)
+            if r.status_code == 200:
+                src_m = re.search(r'"src"\s*:\s*"([^"]+)"', r.text)
+                if src_m:
+                    src = src_m.group(1)
+                    return src if src.startswith("http") else "https://video.sibnet.ru" + src
+                url_m = re.search(r'https?://[^"\'<>\s]+\.mp4[^"\'<>\s]*', r.text)
+                if url_m:
+                    return url_m.group(0)
+    except Exception:
+        pass
+    return await _scrape_video_url(url)
+
+async def _analyze_sibnet(url: str) -> dict:
+    m = _SIBNET_RE.match(url)
+    fid = m.group(1) if m else "video"
+    stream = await _resolve_sibnet(url)
+    return {"type": "video", "url": url, "title": f"Sibnet {fid}",
+            "extractor": "sibnet", "stream_url": stream or ""}
+
+async def _dl_sibnet(req: DownloadReq, job_dir: Path):
+    m = _SIBNET_RE.match(req.url)
+    fid = m.group(1) if m else "video"
+    await _dl_embed_video(req, job_dir, "sibnet", _resolve_sibnet, fid, "https://video.sibnet.ru/")
+
+
+# ── ThotHub ───────────────────────────────────────────────────────────────────
+
+async def _resolve_thothub(url: str) -> Optional[str]:
+    headers = {"User-Agent": _ua(), "Referer": "https://thothub.to/", "Accept": "text/html,*/*;q=0.9"}
+    try:
+        async with httpx.AsyncClient(follow_redirects=True, timeout=httpx.Timeout(20, connect=10),
+                                     verify=VERIFY_SSL) as c:
+            r = await c.get(url, headers=headers)
+            if r.status_code == 200:
+                return _extract_m3u8(r.text) or _extract_mp4(r.text)
+    except Exception:
+        pass
+    return None
+
+async def _analyze_thothub(url: str) -> dict:
+    m = _THOTHUB_RE.match(url)
+    slug = m.group(1) if m else "?"
+    stream = await _resolve_thothub(url)
+    return {"type": "video", "url": url, "title": f"ThotHub {slug}",
+            "extractor": "thothub", "stream_url": stream or ""}
+
+async def _dl_thothub(req: DownloadReq, job_dir: Path):
+    m = _THOTHUB_RE.match(req.url)
+    fid = m.group(1) if m else "video"
+    await _dl_embed_video(req, job_dir, "thothub", _resolve_thothub, fid, req.url)
+
+
+# ── Simpcity ──────────────────────────────────────────────────────────────────
+
+async def _analyze_simpcity(url: str) -> dict:
+    m = _SIMPCITY_RE.match(url)
+    slug = m.group(1) if m else "?"
+    return {"type": "playlist", "url": url, "title": f"Simpcity {slug}",
+            "extractor": "simpcity"}
+
+async def _dl_simpcity(req: DownloadReq, job_dir: Path):
+    """Scrape a Simpcity forum thread for embedded images and videos."""
+    await _prog(req.job_id, {"status": "starting", "progress": 5, "info": "Fetching Simpcity thread…"})
+    headers = {"User-Agent": _ua(), "Referer": "https://simpcity.su/", "Accept": "text/html,*/*;q=0.9"}
+    media: list[str] = []
+    try:
+        async with httpx.AsyncClient(follow_redirects=True, timeout=httpx.Timeout(20, connect=10),
+                                     verify=VERIFY_SSL) as c:
+            r = await c.get(req.url, headers=headers)
+            if r.status_code != 200:
+                raise HTTPException(r.status_code, f"Simpcity returned HTTP {r.status_code}")
+            html = r.text
+            media = list(dict.fromkeys(re.findall(
+                r'https?://[^"\'<>\s]+\.(?:jpg|jpeg|png|gif|webp|mp4|webm)[^"\'<>\s]{0,60}',
+                html, re.I)))
+            media = [u for u in media if not any(x in u for x in ("icon", "logo", "avatar", "emoji"))]
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(502, f"Simpcity fetch error: {e}")
+    if not media:
+        raise HTTPException(404, "No media found in Simpcity thread — it may require login")
+    for i, murl in enumerate(media):
+        ext = murl.split("?")[0].split(".")[-1].lower()
+        out = _uniq(job_dir, f"simpcity_{i:04d}.{ext}")
+        await _prog(req.job_id, {"status": "downloading",
+                                  "progress": int(10 + (i / len(media)) * 85)})
+        await _aria2_dl(murl, out, req.job_id, "https://simpcity.su/", req.proxy)
+    files = [f.name for f in job_dir.iterdir() if f.is_file()]
+    await _prog(req.job_id, {"status": "completed", "progress": 100, "files": files})
+
+
+# ── File hosts via POST flow ───────────────────────────────────────────────────
+# DropGalaxy, FileAl, ClicknUpload, UploadHub, Katfile, DropApk all share the
+# standard _resolve_post_filehost() flow.
+
+async def _analyze_dropgalaxy(url: str) -> dict:
+    m = _DROPGALAXY_RE.match(url)
+    fid = m.group(1) if m else "?"
+    result = await _resolve_post_filehost(url)
+    if result:
+        return {"type": "file", "url": url, "title": _safe(result[1]),
+                "extractor": "dropgalaxy", "direct_url": result[0]}
+    return {"type": "file", "url": url, "title": f"DropGalaxy {fid}", "extractor": "dropgalaxy"}
+
+async def _dl_dropgalaxy(req: DownloadReq, job_dir: Path):
+    await _prog(req.job_id, {"status": "starting", "progress": 5, "info": "Resolving DropGalaxy link…"})
+    result = await _resolve_post_filehost(req.url)
+    if not result:
+        raise HTTPException(502, "Could not extract DropGalaxy download URL — file may be removed or captcha required")
+    await _dl_generic_file(req, job_dir, "dropgalaxy", result[0], result[1])
+
+
+async def _analyze_fileal(url: str) -> dict:
+    m = _FILEAL_RE.match(url)
+    fid = m.group(1) if m else "?"
+    result = await _resolve_post_filehost(url)
+    if result:
+        return {"type": "file", "url": url, "title": _safe(result[1]),
+                "extractor": "fileal", "direct_url": result[0]}
+    return {"type": "file", "url": url, "title": f"FileAl {fid}", "extractor": "fileal"}
+
+async def _dl_fileal(req: DownloadReq, job_dir: Path):
+    await _prog(req.job_id, {"status": "starting", "progress": 5, "info": "Resolving FileAl link…"})
+    result = await _resolve_post_filehost(req.url)
+    if not result:
+        raise HTTPException(502, "Could not extract FileAl download URL")
+    await _dl_generic_file(req, job_dir, "fileal", result[0], result[1])
+
+
+async def _analyze_clicknupload(url: str) -> dict:
+    m = _CLICKNUPLOAD_RE.match(url)
+    fid = m.group(1) if m else "?"
+    result = await _resolve_post_filehost(url)
+    if result:
+        return {"type": "file", "url": url, "title": _safe(result[1]),
+                "extractor": "clicknupload", "direct_url": result[0]}
+    return {"type": "file", "url": url, "title": f"ClicknUpload {fid}", "extractor": "clicknupload"}
+
+async def _dl_clicknupload(req: DownloadReq, job_dir: Path):
+    await _prog(req.job_id, {"status": "starting", "progress": 5, "info": "Resolving ClicknUpload link…"})
+    result = await _resolve_post_filehost(req.url)
+    if not result:
+        raise HTTPException(502, "Could not extract ClicknUpload download URL")
+    await _dl_generic_file(req, job_dir, "clicknupload", result[0], result[1])
+
+
+async def _analyze_uploadhub(url: str) -> dict:
+    m = _UPLOADHUB_RE.match(url)
+    fid = m.group(1) if m else "?"
+    result = await _resolve_post_filehost(url)
+    if result:
+        return {"type": "file", "url": url, "title": _safe(result[1]),
+                "extractor": "uploadhub", "direct_url": result[0]}
+    return {"type": "file", "url": url, "title": f"UploadHub {fid}", "extractor": "uploadhub"}
+
+async def _dl_uploadhub(req: DownloadReq, job_dir: Path):
+    await _prog(req.job_id, {"status": "starting", "progress": 5, "info": "Resolving UploadHub link…"})
+    result = await _resolve_post_filehost(req.url)
+    if not result:
+        raise HTTPException(502, "Could not extract UploadHub download URL")
+    await _dl_generic_file(req, job_dir, "uploadhub", result[0], result[1])
+
+
+async def _analyze_katfile(url: str) -> dict:
+    m = _KATFILE_RE.match(url)
+    fid = m.group(1) if m else "?"
+    result = await _resolve_post_filehost(url)
+    if result:
+        return {"type": "file", "url": url, "title": _safe(result[1]),
+                "extractor": "katfile", "direct_url": result[0]}
+    return {"type": "file", "url": url, "title": f"Katfile {fid}", "extractor": "katfile"}
+
+async def _dl_katfile(req: DownloadReq, job_dir: Path):
+    await _prog(req.job_id, {"status": "starting", "progress": 5, "info": "Resolving Katfile link…"})
+    result = await _resolve_post_filehost(req.url)
+    if not result:
+        raise HTTPException(502, "Could not extract Katfile download URL — free tier may have wait times")
+    await _dl_generic_file(req, job_dir, "katfile", result[0], result[1])
+
+
+async def _analyze_dropapk(url: str) -> dict:
+    m = _DROPAPK_RE.match(url)
+    fid = m.group(1) if m else "?"
+    result = await _resolve_post_filehost(url)
+    if result:
+        return {"type": "file", "url": url, "title": _safe(result[1]),
+                "extractor": "dropapk", "direct_url": result[0]}
+    return {"type": "file", "url": url, "title": f"DropApk {fid}", "extractor": "dropapk"}
+
+async def _dl_dropapk(req: DownloadReq, job_dir: Path):
+    await _prog(req.job_id, {"status": "starting", "progress": 5, "info": "Resolving DropApk link…"})
+    result = await _resolve_post_filehost(req.url)
+    if not result:
+        raise HTTPException(502, "Could not extract DropApk download URL")
+    await _dl_generic_file(req, job_dir, "dropapk", result[0], result[1])
+
+
+# ── 1fichier ──────────────────────────────────────────────────────────────────
+
+async def _resolve_1fichier(url: str) -> Optional[tuple[str, str]]:
+    """1fichier: GET page → POST pass1fid field → direct download link."""
+    headers = {"User-Agent": _ua(), "Referer": "https://1fichier.com/",
+               "Accept": "text/html,*/*;q=0.9"}
+    try:
+        async with httpx.AsyncClient(follow_redirects=True, timeout=httpx.Timeout(20, connect=10),
+                                     verify=VERIFY_SSL) as c:
+            r = await c.get(url, headers=headers)
+            if r.status_code != 200:
+                return None
+            html = r.text
+            fn_m = re.search(r'<td[^>]*class=["\']normal["\'][^>]*>\s*([^<]{1,200})\s*</td>', html)
+            fname = fn_m.group(1).strip() if fn_m else "1fichier_file"
+            pid_m = re.search(r'name=["\']pass1fid["\'][^>]+value=["\']([^"\']+)["\']', html, re.I)
+            if not pid_m:
+                pid_m = re.search(r'value=["\']([^"\']+)["\'][^>]+name=["\']pass1fid["\']', html, re.I)
+            if pid_m:
+                r2 = await c.post(url,
+                    data={"pass1fid": pid_m.group(1), "dl_no_ssl": "on", "dlinline": "on"},
+                    headers={**headers, "Content-Type": "application/x-www-form-urlencoded"})
+                dl_m = re.search(r'href=["\']([^"\']{20,400}1fichier\.com[^"\']+)["\']',
+                                 r2.text, re.I)
+                if dl_m:
+                    return dl_m.group(1), fname
+                if str(r2.url) != url and "1fichier.com" in str(r2.url):
+                    return str(r2.url), fname
+    except Exception:
+        pass
+    return None
+
+async def _analyze_1fichier(url: str) -> dict:
+    result = await _resolve_1fichier(url)
+    if result:
+        return {"type": "file", "url": url, "title": _safe(result[1]),
+                "extractor": "1fichier", "direct_url": result[0]}
+    return {"type": "file", "url": url, "title": "1fichier file", "extractor": "1fichier"}
+
+async def _dl_1fichier(req: DownloadReq, job_dir: Path):
+    await _prog(req.job_id, {"status": "starting", "progress": 5, "info": "Resolving 1fichier link…"})
+    result = await _resolve_1fichier(req.url)
+    if not result:
+        raise HTTPException(502, "Could not extract 1fichier download URL — may require premium or has a wait time")
+    await _dl_generic_file(req, job_dir, "1fichier", result[0], result[1])
+
+
 async def _pat_login(email: str, password: str) -> Optional[str]:
     """Login to pat.com via auth.externulls.com → returns Bearer JWT or None."""
     try:
@@ -3017,6 +3501,22 @@ async def _do_analyze(url: str) -> dict:
     if _RACATY_RE.match(url):        return await _analyze_racaty(url)
     if _USERSDRIVE_RE.match(url):    return await _analyze_usersdrive(url)
     if _HEXUPLOAD_RE.match(url):     return await _analyze_hexupload(url)
+    if _SUPERVIDEO_RE.match(url):    return await _analyze_supervideo(url)
+    if _NETU_RE.match(url):          return await _analyze_netu(url)
+    if _CLIPWATCHING_RE.match(url):  return await _analyze_clipwatching(url)
+    if _EVOLOAD_RE.match(url):       return await _analyze_evoload(url)
+    if _VIDLOX_RE.match(url):        return await _analyze_vidlox(url)
+    if _JETLOAD_RE.match(url):       return await _analyze_jetload(url)
+    if _SIBNET_RE.match(url):        return await _analyze_sibnet(url)
+    if _THOTHUB_RE.match(url):       return await _analyze_thothub(url)
+    if _SIMPCITY_RE.match(url):      return await _analyze_simpcity(url)
+    if _DROPGALAXY_RE.match(url):    return await _analyze_dropgalaxy(url)
+    if _FILEAL_RE.match(url):        return await _analyze_fileal(url)
+    if _CLICKNUPLOAD_RE.match(url):  return await _analyze_clicknupload(url)
+    if _UPLOADHUB_RE.match(url):     return await _analyze_uploadhub(url)
+    if _KATFILE_RE.match(url):       return await _analyze_katfile(url)
+    if _DROPAPK_RE.match(url):       return await _analyze_dropapk(url)
+    if _ONEFICHIER_RE.match(url):    return await _analyze_1fichier(url)
     # 0. Torrent / magnet
     if url.startswith("magnet:") or url.split("?")[0].lower().endswith(".torrent"):
         name = "torrent"
@@ -3644,7 +4144,23 @@ async def download(req: DownloadReq):
             elif _VIDMOLY_RE.match(req.url):    await _dl_vidmoly(req, job_dir)
             elif _RACATY_RE.match(req.url):     await _dl_racaty(req, job_dir)
             elif _USERSDRIVE_RE.match(req.url): await _dl_usersdrive(req, job_dir)
-            elif _HEXUPLOAD_RE.match(req.url):  await _dl_hexupload(req, job_dir)
+            elif _HEXUPLOAD_RE.match(req.url):   await _dl_hexupload(req, job_dir)
+            elif _SUPERVIDEO_RE.match(req.url):  await _dl_supervideo(req, job_dir)
+            elif _NETU_RE.match(req.url):         await _dl_netu(req, job_dir)
+            elif _CLIPWATCHING_RE.match(req.url): await _dl_clipwatching(req, job_dir)
+            elif _EVOLOAD_RE.match(req.url):      await _dl_evoload(req, job_dir)
+            elif _VIDLOX_RE.match(req.url):       await _dl_vidlox(req, job_dir)
+            elif _JETLOAD_RE.match(req.url):      await _dl_jetload(req, job_dir)
+            elif _SIBNET_RE.match(req.url):       await _dl_sibnet(req, job_dir)
+            elif _THOTHUB_RE.match(req.url):      await _dl_thothub(req, job_dir)
+            elif _SIMPCITY_RE.match(req.url):     await _dl_simpcity(req, job_dir)
+            elif _DROPGALAXY_RE.match(req.url):   await _dl_dropgalaxy(req, job_dir)
+            elif _FILEAL_RE.match(req.url):       await _dl_fileal(req, job_dir)
+            elif _CLICKNUPLOAD_RE.match(req.url): await _dl_clicknupload(req, job_dir)
+            elif _UPLOADHUB_RE.match(req.url):    await _dl_uploadhub(req, job_dir)
+            elif _KATFILE_RE.match(req.url):      await _dl_katfile(req, job_dir)
+            elif _DROPAPK_RE.match(req.url):      await _dl_dropapk(req, job_dir)
+            elif _ONEFICHIER_RE.match(req.url):   await _dl_1fichier(req, job_dir)
             elif req.capture and req.media_type == "video":
                 await _dl_capture(req, job_dir)
             elif req.media_type in ("playlist","profile"):
