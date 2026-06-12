@@ -7,11 +7,11 @@ import DeviceSupport from '@/components/landing/DeviceSupport'
 
 export const metadata: Metadata = {
   title: 'MediaDL — Download Any Video or Image from Any Website Free',
-  description: 'Free online video & image downloader. YouTube, Instagram, TikTok, Twitter, Facebook + 1000 more sites. HD/4K/8K, MP4, MP3, bulk download, playlists. No install required.',
+  description: 'Free online video & image downloader. YouTube, Instagram, TikTok, Twitter, Facebook + 14,000 more sites. HD/4K/8K, MP4, MP3, bulk download, playlists. No install required.',
 }
 
 const STATS = [
-  { value: '1,000+', label: 'Websites Supported' },
+  { value: '14,000+', label: 'Websites Supported' },
   { value: '50M+',   label: 'Downloads Served' },
   { value: '20+',    label: 'Output Formats' },
   { value: '99.9%',  label: 'Uptime' },
@@ -28,7 +28,7 @@ const FEATURES = [
   { icon: <Film size={20} />, title: 'HD/4K/8K Downloads', desc: 'Download videos in any available resolution — from 360p up to 8K. Best quality automatically selected.', color: 'text-blue-400 bg-blue-900/20' },
   { icon: <Zap size={20} />, title: '10× Faster Downloads', desc: 'Parallel fragment downloading (16 simultaneous connections) delivers speeds up to 10× faster than standard tools.', color: 'text-amber-400 bg-amber-900/20' },
   { icon: <List size={20} />, title: 'Playlist & Profiles', desc: 'Download entire YouTube playlists, channel archives, and social media profiles in one click — unlimited items.', color: 'text-violet-400 bg-violet-900/20' },
-  { icon: <Globe size={20} />, title: '1,000+ Sites', desc: 'Powered by yt-dlp with support for YouTube, Instagram, TikTok, Twitter, Facebook, Reddit, Vimeo, Twitch and 994 more.', color: 'text-emerald-400 bg-emerald-900/20' },
+  { icon: <Globe size={20} />, title: '14,000+ Sites', desc: 'Powered by yt-dlp, gallery-dl and streamlink with support for YouTube, Instagram, TikTok, Twitter, Facebook, Reddit, Vimeo, Twitch and 13,990+ more.', color: 'text-emerald-400 bg-emerald-900/20' },
   { icon: <ImageIcon size={20} />, title: 'Bulk Image Scraping', desc: 'Paste any webpage URL and scrape all images at once. Preview them first, select which ones you want, then download.', color: 'text-cyan-400 bg-cyan-900/20' },
   { icon: <Music size={20} />, title: 'MP4, MP3 + 20 Formats', desc: 'Convert to MP4, WebM, MKV, AVI, MOV, MP3, M4A, Opus, and more. HLS/DASH/AES-128 encrypted streams supported.', color: 'text-pink-400 bg-pink-900/20' },
   { icon: <Shield size={20} />, title: 'No Ads. No Limits.', desc: 'No watermarks, no registration, no download limits, no tracking. Pure fast downloads with zero interruptions.', color: 'text-red-400 bg-red-900/20' },
@@ -51,7 +51,7 @@ const PLATFORMS = [
   { name:'Flickr',     emoji:'🌸', href:'/flickr-downloader',     color:'bg-pink-600/80'          },
   { name:'Imgur',      emoji:'🖼', href:'/imgur-downloader',      color:'bg-green-700/80'         },
   { name:'Bilibili',   emoji:'📺', href:'/bilibili-downloader',   color:'bg-cyan-700/80'          },
-  { name:'1000+ Sites',emoji:'🌐', href:'/download',              color:'bg-[var(--bg-hover)]'    },
+  { name:'14,000+ Sites',emoji:'🌐', href:'/download',              color:'bg-[var(--bg-hover)]'    },
 ]
 
 const TESTIMONIALS = [
@@ -76,7 +76,7 @@ export default function LandingPage() {
         <div className="relative max-w-4xl mx-auto px-4 text-center">
           <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full border border-[var(--border)] bg-[var(--bg-card)] text-sm text-[var(--text-2)] mb-8 animate-fade-in">
             <span className="w-2 h-2 rounded-full bg-emerald-400 pulse-dot" />
-            Free • 1,000+ Sites • No Registration Required
+            Free • 14,000+ Sites • No Registration Required
           </div>
 
           <HeroHeadline />
@@ -102,7 +102,7 @@ export default function LandingPage() {
       <section className="py-16 border-y border-[var(--border)]">
         <div className="max-w-7xl mx-auto px-4">
           <p className="text-center text-xs text-[var(--text-3)] uppercase tracking-widest font-bold mb-8">
-            Download from 1,000+ websites
+            Download from 14,000+ websites
           </p>
           <div className="grid grid-cols-4 sm:grid-cols-6 md:grid-cols-8 gap-3">
             {PLATFORMS.map((p) => (
@@ -167,7 +167,7 @@ export default function LandingPage() {
                 'HD / 4K / 8K video downloads',
                 'MP4, MP3 and 20+ formats',
                 '10× faster parallel downloads',
-                '1,000+ supported websites',
+                '14,000+ supported websites',
                 'Unlimited batch downloads',
                 'No ads, no watermarks, no limits',
               ].map((f) => (
@@ -228,7 +228,7 @@ export default function LandingPage() {
             <ArrowRight size={18} />
           </Link>
           <p className="mt-4 text-xs text-[var(--text-3)]">
-            Supports YouTube · Instagram · TikTok · Twitter · Facebook · 1000+ more
+            Supports YouTube · Instagram · TikTok · Twitter · Facebook · 14,000+ more
           </p>
         </div>
       </section>
