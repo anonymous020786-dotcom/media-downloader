@@ -363,3 +363,89 @@ button, a, [role="button"] {
 /* ── Safe-area padding for notched phones ────────────────────────────────── */
 .safe-bottom { padding-bottom: env(safe-area-inset-bottom); }
 .safe-top    { padding-top:    env(safe-area-inset-top); }
+
+/* ── Global responsive rules ─────────────────────────────────────────────── */
+
+/* Prevent horizontal overflow on all screens */
+html, body { overflow-x: hidden; max-width: 100vw; }
+
+/* All images/videos/iframes are responsive by default */
+img, video, iframe, embed, object {
+  max-width: 100%;
+  height: auto;
+}
+
+/* Tables scroll horizontally on small screens instead of breaking layout */
+table { width: 100%; border-collapse: collapse; }
+.table-wrap { overflow-x: auto; }
+
+/* Text never overflows its container */
+p, h1, h2, h3, h4, h5, h6, li, span, label {
+  overflow-wrap: break-word;
+  word-break: break-word;
+}
+
+/* Pre/code blocks scroll instead of breaking layout */
+pre, code { max-width: 100%; overflow-x: auto; white-space: pre-wrap; }
+pre { padding: 1rem; border-radius: var(--radius-md); background: var(--bg-card); }
+
+/* Flex and grid items don't overflow their containers */
+.flex-row-wrap { display: flex; flex-wrap: wrap; }
+
+/* ── Responsive typography scale ─────────────────────────────────────────── */
+@media (max-width: 480px) {
+  h1 { font-size: clamp(1.5rem, 6vw, 2.25rem) !important; }
+  h2 { font-size: clamp(1.25rem, 5vw, 1.75rem) !important; }
+  h3 { font-size: clamp(1rem, 4vw, 1.375rem) !important; }
+}
+
+/* ── Responsive grid helpers ─────────────────────────────────────────────── */
+.grid-auto-fill-200 { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 1rem; }
+.grid-auto-fill-280 { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 1rem; }
+.grid-auto-fill-320 { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 1.5rem; }
+
+/* ── Mobile-specific overrides ───────────────────────────────────────────── */
+@media (max-width: 640px) {
+  /* Full-width cards on tiny screens */
+  .card { border-radius: var(--radius-md); }
+
+  /* Inputs/buttons should be full-width in stacked layouts */
+  .mobile-full { width: 100% !important; }
+
+  /* Reduce excessive padding on mobile */
+  .mobile-px { padding-left: 1rem; padding-right: 1rem; }
+  .mobile-py { padding-top: 1.5rem; padding-bottom: 1.5rem; }
+
+  /* Hide decorative blobs that cause scroll on mobile */
+  .hero-blob { opacity: 0.4; }
+}
+
+@media (max-width: 480px) {
+  /* Reduce hero padding on very small screens */
+  .hero-section { padding-top: 4rem; padding-bottom: 3rem; }
+
+  /* Stack horizontal button groups */
+  .btn-group-stack { flex-direction: column; align-items: stretch; }
+  .btn-group-stack > * { width: 100%; justify-content: center; }
+
+  /* Compact stats grids */
+  .stats-grid { grid-template-columns: repeat(2, 1fr) !important; }
+}
+
+/* ── Tablet (641px – 1023px) ─────────────────────────────────────────────── */
+@media (min-width: 641px) and (max-width: 1023px) {
+  .tablet-2col { grid-template-columns: repeat(2, 1fr) !important; }
+  .tablet-px { padding-left: 1.5rem; padding-right: 1.5rem; }
+}
+
+/* ── Large screen enhancements ───────────────────────────────────────────── */
+@media (min-width: 1536px) {
+  .container-fluid { max-width: 1536px; }
+}
+
+/* ── Print styles ────────────────────────────────────────────────────────── */
+@media print {
+  .no-print { display: none !important; }
+  body { background: #fff !important; color: #000 !important; }
+  a { color: #000 !important; text-decoration: underline; }
+}
