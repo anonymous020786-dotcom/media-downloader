@@ -34,6 +34,7 @@ const NAV_ITEMS = [
   { label: 'Movies',     href: '/movies'    },
   { label: 'News',       href: '/news'      },
   { label: 'People',     href: '/people'    },
+  { label: 'Player',     href: '/player'        },
   { label: 'Tools',      href: '/tools/convert' },
   { label: 'Pricing',    href: '/pricing'   },
   { label: 'Blog',       href: '/blog'      },
@@ -103,7 +104,7 @@ export default function Header() {
               <button
                 type="button"
                 onClick={() => setMegaOpen(v => !v)}
-                aria-expanded={megaOpen ? 'true' : 'false'}
+                aria-expanded={megaOpen}
                 aria-haspopup="true"
                 className={`flex items-center gap-1 px-3 py-2 rounded-xl text-sm font-medium transition-colors ${
                   megaOpen
@@ -140,7 +141,7 @@ export default function Header() {
                   <div className="px-4 pt-2 border-t border-[var(--border)]">
                     <Link href="/supported-sites"
                       className="flex items-center gap-1 text-xs font-semibold text-[var(--brand)] hover:text-[var(--brand-light)] transition-colors">
-                      View all 1,000+ supported sites <ChevronRight size={12} />
+                      View all 14,000+ supported sites <ChevronRight size={12} />
                     </Link>
                   </div>
                 </div>
@@ -204,7 +205,7 @@ export default function Header() {
               type="button"
               onClick={() => setMobileOpen(v => !v)}
               aria-label={mobileOpen ? 'Close menu' : 'Open menu'}
-              aria-expanded={mobileOpen ? 'true' : 'false'}
+              aria-expanded={mobileOpen}
               aria-controls="mobile-nav"
               className="lg:hidden flex items-center justify-center w-10 h-10 rounded-xl border border-[var(--border)] text-[var(--text-2)] hover:text-[var(--text)] hover:bg-[var(--bg-hover)] transition-colors"
             >

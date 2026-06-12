@@ -2,7 +2,6 @@ import type { Metadata, Viewport } from 'next'
 import Script from 'next/script'
 import { Inter, Lexend } from 'next/font/google'
 import { ClerkProvider } from '@clerk/nextjs'
-import { dark } from '@clerk/themes'
 import { Toaster } from 'sonner'
 import ThemeProvider from '@/components/layout/ThemeProvider'
 import WhatsAppButton from '@/components/widgets/WhatsAppButton'
@@ -115,7 +114,7 @@ const SCHEMA = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <ClerkProvider
-      appearance={{ baseTheme: dark, variables: { colorPrimary: '#6366f1' } }}
+      appearance={{ variables: { colorPrimary: '#6366f1', colorBackground: '#080c17' } }}
       signInUrl="/sign-in"
       signUpUrl="/sign-up"
       afterSignOutUrl="/"

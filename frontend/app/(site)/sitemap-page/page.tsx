@@ -49,6 +49,7 @@ const SECTIONS: SitemapSection[] = [
     color: 'text-violet-400', bgColor: 'bg-violet-500/10 border-violet-500/20',
     links: [
       { label: 'Download Tool',    href: '/download',       badge: 'Free' },
+      { label: 'Video Player',      href: '/player',         badge: 'New' },
       { label: 'Format Converter', href: '/tools/convert'               },
       { label: 'Screen Capture',   href: '/screen-capture'              },
       { label: 'Download History', href: '/history'                     },
@@ -103,6 +104,7 @@ const SECTIONS: SitemapSection[] = [
 
 // Badge colours
 const BADGE_COLORS: Record<string, string> = {
+  New:     'bg-green-500/20 text-green-300 border-green-500/30',
   Popular: 'bg-indigo-500/20 text-indigo-300 border-indigo-500/30',
   Core:    'bg-violet-500/20 text-violet-300 border-violet-500/30',
   Free:    'bg-emerald-500/20 text-emerald-300 border-emerald-500/30',
