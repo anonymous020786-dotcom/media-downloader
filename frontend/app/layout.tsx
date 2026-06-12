@@ -12,6 +12,7 @@ import { CountryProvider } from '@/components/widgets/CountrySwitcher'
 import PWAInstall from '@/components/widgets/PWAInstall'
 import CookieBanner from '@/components/widgets/CookieBanner'
 import WelcomeBanner from '@/components/widgets/WelcomeBanner'
+import ScrollButtons from '@/components/widgets/ScrollButtons'
 import './globals.css'
 
 // ── Fonts — self-hosted via next/font (no external network request) ───────────
@@ -171,6 +172,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             <PWAInstall />
             <CookieBanner />
             <WelcomeBanner />
+            <ScrollButtons />
           </CountryProvider>
           </LanguageProvider>
         </ThemeProvider>

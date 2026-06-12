@@ -1,16 +1,17 @@
 import Link from 'next/link'
 import Image from 'next/image'
+import { BUILD_INFO } from '@/lib/buildInfo'
 
 const YEAR = new Date().getFullYear()
 
 const LINKS = {
   Product: [
     { label: 'Download Tool',        href: '/download'              },
+    { label: 'Video Player',         href: '/player'                },
     { label: 'YouTube Downloader',   href: '/youtube-downloader'    },
     { label: 'Instagram Downloader', href: '/instagram-downloader'  },
     { label: 'TikTok Downloader',    href: '/tiktok-downloader'     },
-    { label: 'Twitter Downloader',   href: '/twitter-downloader'    },
-    { label: 'All Platforms',        href: '/download'              },
+    { label: 'All 14,000+ Sites',    href: '/supported-sites'       },
   ],
   Company: [
     { label: 'About',    href: '/about'   },
@@ -20,31 +21,27 @@ const LINKS = {
     { label: 'Contact',  href: '/contact' },
   ],
   Support: [
-    { label: 'FAQ',           href: '/faq'             },
+    { label: 'FAQ',            href: '/faq'             },
     { label: 'Supported Sites',href: '/supported-sites' },
-    { label: 'How It Works',  href: '/#how-it-works'   },
-    { label: 'Report Issue',  href: '/contact'         },
-    { label: 'Sitemap',       href: '/sitemap-page'    },
+    { label: 'How It Works',   href: '/#how-it-works'   },
+    { label: 'Report Issue',   href: '/contact'         },
+    { label: 'Sitemap',        href: '/sitemap-page'    },
   ],
   Legal: [
     { label: 'Privacy Policy',   href: '/privacy-policy'   },
     { label: 'Terms of Service', href: '/terms-of-service' },
     { label: 'Cookie Policy',    href: '/cookie-policy'    },
     { label: 'DMCA',             href: '/dmca'             },
-    { label: 'Refund Policy',    href: '/refund-policy'    },
     { label: 'GDPR',             href: '/gdpr'             },
-    { label: 'CCPA',             href: '/ccpa'             },
-    { label: 'Acceptable Use',   href: '/acceptable-use'   },
-    { label: 'Disclaimer',       href: '/disclaimer'       },
     { label: 'Accessibility',    href: '/accessibility'    },
   ],
   'Related Tools': [
-    { label: 'YouTube to MP3',    href: '/youtube-downloader'    },
-    { label: 'Instagram Saver',   href: '/instagram-downloader'  },
-    { label: 'TikTok No Watermark', href: '/tiktok-downloader'   },
-    { label: 'Twitter Video DL',  href: '/twitter-downloader'    },
-    { label: 'SoundCloud to MP3', href: '/soundcloud-downloader' },
-    { label: 'Pinterest Saver',   href: '/pinterest-downloader'  },
+    { label: 'YouTube to MP3',      href: '/youtube-downloader'    },
+    { label: 'Instagram Saver',     href: '/instagram-downloader'  },
+    { label: 'TikTok No Watermark', href: '/tiktok-downloader'     },
+    { label: 'Twitter Video DL',    href: '/twitter-downloader'    },
+    { label: 'SoundCloud to MP3',   href: '/soundcloud-downloader' },
+    { label: 'Format Converter',    href: '/tools/convert'         },
   ],
 }
 
@@ -55,12 +52,35 @@ const SOCIAL = [
   { name: 'YouTube',   href: 'https://youtube.com/@mediadl', svg: <svg viewBox="0 0 24 24" fill="currentColor" className="w-4 h-4"><path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z"/></svg> },
 ]
 
+// ── Helpers ───────────────────────────────────────────────────────────────────
+function buildDate(iso: string) {
+  try {
+    return new Date(iso).toLocaleString('en-GB', {
+      day: '2-digit', month: 'short', year: 'numeric',
+      hour: '2-digit', minute: '2-digit', timeZoneName: 'short',
+    })
+  } catch {
+    return iso
+  }
+}
+
+const ENV_BADGE: Record<string, string> = {
+  production:  'bg-emerald-500/20 text-emerald-400 border-emerald-500/30',
+  development: 'bg-amber-500/20 text-amber-400 border-amber-500/30',
+  test:        'bg-blue-500/20 text-blue-400 border-blue-500/30',
+}
+
 export default function Footer() {
+  const bi = BUILD_INFO
+  const commitShort = bi.commitHash.length > 7 ? bi.commitHash.slice(0, 7) : bi.commitHash
+
   return (
     <footer className="border-t border-[var(--border)] bg-[var(--bg-surface)] mt-20">
       <div className="max-w-7xl mx-auto px-4 py-16">
+
         {/* Top row */}
         <div className="grid grid-cols-2 md:grid-cols-7 gap-8 mb-12">
+
           {/* Brand */}
           <div className="col-span-2">
             <Link href="/" className="flex items-center gap-2.5 mb-4">
@@ -68,7 +88,7 @@ export default function Footer() {
               <span className="font-black text-[var(--text)] text-lg">Media<span className="gradient-text">DL</span></span>
             </Link>
             <p className="text-sm text-[var(--text-2)] leading-relaxed mb-3 max-w-xs">
-              Download any video or image from any website. 1000+ sites, unlimited downloads, HD/4K/8K quality.
+              Download any video or image from any website. 14,000+ sites, unlimited downloads, HD/4K/8K quality.
             </p>
             <p className="text-xs text-[var(--text-3)] mb-1">
               Built by <span className="text-[var(--text-2)] font-semibold">Naushad Alam</span> · India 🇮🇳
@@ -77,7 +97,6 @@ export default function Footer() {
               className="text-xs text-[var(--brand)] hover:text-[var(--accent)] transition-colors mb-5 block">
               contact@zestcommerce.in
             </a>
-            {/* Social links */}
             <div className="flex items-center gap-2">
               {SOCIAL.map((s) => (
                 <a key={s.name} href={s.href} target="_blank" rel="noopener noreferrer" aria-label={s.name}
@@ -94,7 +113,7 @@ export default function Footer() {
               <h3 className="text-xs font-bold text-[var(--text-3)] uppercase tracking-widest mb-4">{col}</h3>
               <ul className="space-y-2.5">
                 {items.map((item) => (
-                  <li key={item.href}>
+                  <li key={item.label}>
                     <Link href={item.href}
                       className="text-sm text-[var(--text-2)] hover:text-[var(--text)] transition-colors">
                       {item.label}
@@ -104,6 +123,88 @@ export default function Footer() {
               </ul>
             </div>
           ))}
+        </div>
+
+        {/* ── Build version strip ────────────────────────────────────────────── */}
+        <div className="border border-[var(--border)] rounded-2xl bg-[var(--bg-card)] px-4 py-4 mb-6">
+          <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
+
+            {/* Title */}
+            <div className="flex items-center gap-2 shrink-0">
+              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" aria-hidden="true" />
+              <span className="text-xs font-bold text-[var(--text)] uppercase tracking-widest">Build Info</span>
+            </div>
+
+            {/* Version */}
+            <div className="flex items-center gap-1.5">
+              <span className="text-[10px] text-[var(--text-3)] uppercase tracking-wider">Version</span>
+              <span className="px-1.5 py-0.5 text-[10px] font-mono font-bold rounded-md bg-[var(--brand)]/15 text-[var(--brand)] border border-[var(--brand)]/25">
+                v{bi.version}
+              </span>
+            </div>
+
+            {/* Environment */}
+            <div className="flex items-center gap-1.5">
+              <span className="text-[10px] text-[var(--text-3)] uppercase tracking-wider">Env</span>
+              <span className={`px-1.5 py-0.5 text-[10px] font-bold rounded-md border ${ENV_BADGE[bi.env] ?? ENV_BADGE.development}`}>
+                {bi.env}
+              </span>
+            </div>
+
+            {/* Commit */}
+            {commitShort !== 'local' && (
+              <div className="flex items-center gap-1.5">
+                <span className="text-[10px] text-[var(--text-3)] uppercase tracking-wider">Commit</span>
+                <span className="px-1.5 py-0.5 text-[10px] font-mono rounded-md bg-[var(--bg)] border border-[var(--border)] text-[var(--text-2)]">
+                  {commitShort}
+                </span>
+              </div>
+            )}
+
+            {/* Next.js */}
+            <div className="flex items-center gap-1.5">
+              <span className="text-[10px] text-[var(--text-3)] uppercase tracking-wider">Next.js</span>
+              <span className="px-1.5 py-0.5 text-[10px] font-mono rounded-md bg-[var(--bg)] border border-[var(--border)] text-[var(--text-2)]">
+                {bi.nextVersion || '16'}
+              </span>
+            </div>
+
+            {/* Node */}
+            <div className="flex items-center gap-1.5">
+              <span className="text-[10px] text-[var(--text-3)] uppercase tracking-wider">Node</span>
+              <span className="px-1.5 py-0.5 text-[10px] font-mono rounded-md bg-[var(--bg)] border border-[var(--border)] text-[var(--text-2)]">
+                {bi.nodeVersion}
+              </span>
+            </div>
+
+            {/* Build time */}
+            {bi.buildTime && (
+              <div className="flex items-center gap-1.5 ml-auto">
+                <span className="text-[10px] text-[var(--text-3)] uppercase tracking-wider">Built</span>
+                <time
+                  dateTime={bi.buildTime}
+                  className="text-[10px] font-mono text-[var(--text-2)]"
+                  title={bi.buildTime}
+                >
+                  {buildDate(bi.buildTime)}
+                </time>
+              </div>
+            )}
+          </div>
+
+          {/* Stack badges row */}
+          <div className="mt-3 pt-3 border-t border-[var(--border)] flex flex-wrap gap-1.5">
+            {[
+              'Next.js 16', 'TypeScript', 'Tailwind CSS', 'Express.js',
+              'FastAPI', 'Python', 'yt-dlp', 'gallery-dl', 'FFmpeg',
+              'MySQL 8', 'Redis 7', 'BullMQ', 'Kafka', 'Docker', 'Nginx', 'Clerk',
+            ].map(t => (
+              <span key={t}
+                className="px-2 py-0.5 text-[9px] font-semibold rounded-full bg-[var(--bg)] border border-[var(--border)] text-[var(--text-3)] hover:border-[var(--border-hover)] hover:text-[var(--text-2)] transition-colors">
+                {t}
+              </span>
+            ))}
+          </div>
         </div>
 
         {/* Bottom bar */}
