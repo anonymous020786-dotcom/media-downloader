@@ -127,6 +127,7 @@ class DownloadReq(BaseModel):
     media_type:      Literal["video","image","page","playlist","profile","file","torrent"]
     format:          str            = "mp4"
     quality:         Optional[str]  = "best"
+    format_id:       Optional[str]  = None   # pin exact yt-dlp format_id (avoids re-analysis)
     # Playlist / profile options
     max_items:       Optional[int]  = None   # None = unlimited
     start_index:     int            = 1
@@ -5163,6 +5164,7 @@ async def _dl_video(req: DownloadReq, job_dir: Path, cookie_file: Optional[str])
             req.sponsor_block, req.split_chapters, req.normalize_audio,
             req.write_thumbnail, req.output_template,
             req.speed_limit, req.concurrent_fragments,
+            req.format_id,
         )
         return
     except Exception: pass
@@ -5232,6 +5234,7 @@ async def _dl_playlist(req: DownloadReq, job_dir: Path, cookie_file: Optional[st
             req.sponsor_block, req.split_chapters, req.normalize_audio,
             req.write_thumbnail, req.output_template,
             req.speed_limit, req.concurrent_fragments,
+            req.format_id,
         )
     except Exception:
         pass  # fall through to gallery-dl
@@ -5285,12 +5288,15 @@ def _ytdlp_dl(
     output_template: Optional[str] = None,
     speed_limit: Optional[str] = None,
     concurrent_fragments: int = 16,
+    format_id: Optional[str] = None,
 ):
     fmt = (fmt or "mp4").lower()
     cap = None if quality in ("best","0","") else quality.replace("p","").strip()
 
-    # Build format string
-    if fmt in ("mp3","m4a","opus","ogg","flac","wav","aac","vorbis"):
+    # Build format string — pin to format_id if provided (adds bestaudio for video-only streams)
+    if format_id:
+        fstr = f"{format_id}+bestaudio[ext=m4a]/{format_id}+bestaudio/{format_id}"
+    elif fmt in ("mp3","m4a","opus","ogg","flac","wav","aac","vorbis"):
         fstr = "bestaudio/best"
     elif cap:
         fstr = (f"bestvideo[height<={cap}][ext=mp4]+bestaudio[ext=m4a]"

@@ -90,6 +90,8 @@ export default function VideoPlayer({ initialUrl = '' }: Props) {
   const [loop,         setLoop]         = useState(false)
   const [queueing,     setQueueing]     = useState('')
   const [queued,       setQueued]       = useState('')
+  const [dlJobs,       setDlJobs]       = useState<Array<{ jobId: string; label: string; title?: string }>>([])
+  const [showDlPanel,  setShowDlPanel]  = useState(false)
   const [hint,         setHint]         = useState('')
   const [seekTooltip,  setSeekTooltip]  = useState<{x: number; time: number} | null>(null)
 
@@ -319,14 +321,25 @@ export default function VideoPlayer({ initialUrl = '' }: Props) {
     try {
       const res = await fetch(`${API_BASE}/api/download`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url, mediaType: format.vcodec === 'none' ? 'audio' : 'video',
-          format: format.ext, quality: format.height ? `${format.height}p` : 'best', formatId: format.format_id }),
+        body: JSON.stringify({
+          url,
+          mediaType: format.vcodec === 'none' ? 'audio' : 'video',
+          format: format.ext ?? 'mp4',
+          quality: format.height ? `${format.height}p` : 'best',
+          formatId: format.format_id,
+          title: result?.title,
+        }),
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error)
       setQueued(format.format_id)
       setTimeout(() => setQueued(''), 3000)
-      toast.success('Added to download queue')
+      setDlJobs(prev => {
+        const next = [{ jobId: data.jobId, label: fmtLabel(format), title: result?.title }, ...prev]
+        if (next.length === 1) setShowDlPanel(true)
+        return next
+      })
+      toast.success('Download queued — see progress below')
     } catch (e: any) { toast.error(`Download failed: ${e.message}`) }
     finally { setQueueing('') }
   }
@@ -733,6 +746,32 @@ export default function VideoPlayer({ initialUrl = '' }: Props) {
           </div>
         )}
       </div>
+
+      {/* ── Download progress panel ───────────────────────────────────────── */}
+      {dlJobs.length > 0 && (
+        <div className="mt-4">
+          <button
+            type="button"
+            onClick={() => setShowDlPanel(v => !v)}
+            className="flex items-center gap-2 w-full px-4 py-2.5 rounded-xl bg-[var(--bg-card)] border border-[var(--border)] hover:bg-[var(--bg-hover)] transition-colors text-sm font-semibold text-[var(--text)]"
+          >
+            <Download size={14} className="text-[var(--brand)]" />
+            Downloads
+            <span className="ml-1 px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-[var(--brand)]/15 text-[var(--brand)]">
+              {dlJobs.length}
+            </span>
+            <span className="ml-auto text-[var(--text-3)] text-xs">{showDlPanel ? '▲ Hide' : '▼ Show'}</span>
+          </button>
+          {showDlPanel && (
+            <div className="mt-2 flex flex-col gap-2">
+              {dlJobs.map(j => (
+                <DownloadJobRow key={j.jobId} jobId={j.jobId} label={j.label} title={j.title} apiBase={API_BASE}
+                  onRemove={() => setDlJobs(prev => prev.filter(x => x.jobId !== j.jobId))} />
+              ))}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   )
 }
@@ -740,6 +779,108 @@ export default function VideoPlayer({ initialUrl = '' }: Props) {
 // ── Ctrl button helper class ───────────────────────────────────────────────────
 // Applied via className="ctrl-btn" — defined in globals.css
 // (inline here for clarity)
+
+// ── Download job row with live SSE progress ───────────────────────────────────
+function DownloadJobRow({ jobId, label, title, apiBase, onRemove }: {
+  jobId: string; label: string; title?: string; apiBase: string; onRemove: () => void
+}) {
+  const [prog, setProg]   = useState<{ status: string; progress: number; speed?: number | null; eta?: number | null; files?: string[]; error?: string; filename?: string } | null>(null)
+  const [files, setFiles] = useState<string[]>([])
+  const doneRef = useRef(false)
+
+  useEffect(() => {
+    if (doneRef.current) return
+    const es = new EventSource(`${apiBase}/api/jobs/${jobId}/progress`)
+    es.onmessage = (e) => {
+      try {
+        const d = JSON.parse(e.data)
+        setProg(d)
+        if (d.status === 'completed') {
+          setFiles(d.files ?? [])
+          doneRef.current = true
+          es.close()
+        } else if (d.status === 'failed') {
+          doneRef.current = true
+          es.close()
+        }
+      } catch {}
+    }
+    es.onerror = () => es.close()
+    return () => es.close()
+  }, [jobId, apiBase])
+
+  const status   = prog?.status ?? 'queued'
+  const pct      = prog?.progress ?? 0
+  const isDone   = status === 'completed'
+  const isFailed = status === 'failed'
+  const isActive = !isDone && !isFailed
+
+  const statusColor = isDone ? 'text-green-400' : isFailed ? 'text-red-400' : 'text-[var(--brand)]'
+  const badgeBg     = isDone ? 'bg-green-500/15 border-green-500/25 text-green-400'
+                   : isFailed ? 'bg-red-500/15 border-red-500/25 text-red-400'
+                   : 'bg-[var(--brand)]/15 border-[var(--brand)]/25 text-[var(--brand)]'
+
+  function fmtSpeed(s?: number | null) {
+    if (!s) return ''
+    return s > 1e6 ? `${(s/1e6).toFixed(1)} MB/s` : `${(s/1e3).toFixed(0)} KB/s`
+  }
+  function fmtEta(s?: number | null) {
+    if (!s || s <= 0) return ''
+    if (s < 60) return `${s}s`
+    return `${Math.floor(s/60)}m ${s%60}s`
+  }
+
+  return (
+    <div className="bg-[var(--bg-card)] border border-[var(--border)] rounded-xl p-3 flex flex-col gap-2">
+      <div className="flex items-start gap-2">
+        <div className="flex-1 min-w-0">
+          <p className="text-xs font-semibold text-[var(--text)] truncate">{title ?? label}</p>
+          <p className="text-[10px] text-[var(--text-3)] truncate">{label} · {jobId.slice(0, 8)}</p>
+        </div>
+        <span className={`shrink-0 text-[9px] font-bold px-2 py-0.5 rounded-full border ${badgeBg}`}>
+          {status.toUpperCase()}
+        </span>
+        <button type="button" onClick={onRemove} className="shrink-0 p-1 rounded-lg hover:bg-[var(--bg-hover)] text-[var(--text-3)]" title="Dismiss">
+          ✕
+        </button>
+      </div>
+
+      {/* Progress bar */}
+      {isActive && (
+        <div className="flex flex-col gap-1">
+          <div className="h-1.5 bg-[var(--bg)] rounded-full overflow-hidden">
+            <div className="h-full bg-[var(--brand)] rounded-full transition-all duration-300" style={{ width: `${pct}%` }} />
+          </div>
+          <div className="flex items-center justify-between text-[9px] text-[var(--text-3)]">
+            <span className={statusColor}>{pct}% {prog?.filename ? `· ${prog.filename.slice(0,30)}` : ''}</span>
+            <span>{fmtSpeed(prog?.speed)}{prog?.eta ? ` · ETA ${fmtEta(prog.eta)}` : ''}</span>
+          </div>
+        </div>
+      )}
+
+      {/* Error */}
+      {isFailed && prog?.error && (
+        <p className="text-[10px] text-red-400 bg-red-500/10 rounded-lg px-2 py-1 break-words">{prog.error}</p>
+      )}
+
+      {/* Download links */}
+      {isDone && files.length > 0 && (
+        <div className="flex flex-col gap-1">
+          {files.map(f => (
+            <a key={f}
+              href={`${apiBase}/api/files/${jobId}/${encodeURIComponent(f)}`}
+              download={f}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-green-500/10 border border-green-500/20
+                text-green-400 hover:bg-green-500/20 text-[10px] font-semibold transition-colors truncate">
+              <Download size={10} className="shrink-0" />
+              <span className="truncate">{f}</span>
+            </a>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
 
 // ── Format row ────────────────────────────────────────────────────────────────
 function FormatRow({ format: f, queueing, queued, onDownload }: {

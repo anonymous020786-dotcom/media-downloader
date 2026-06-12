@@ -6,6 +6,7 @@ export interface DownloadJob {
   mediaType:      MediaType
   format:         string
   quality?:       string
+  formatId?:      string   // yt-dlp format_id to pin exact stream (avoids re-analysis)
   title?:         string
   thumbnail?:     string
   addedAt:        number

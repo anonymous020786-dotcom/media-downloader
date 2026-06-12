@@ -46,6 +46,7 @@ export function startWorker() {
         media_type:       d.mediaType,
         format:           d.format,
         quality:          d.quality  ?? 'best',
+        format_id:        d.formatId ?? null,
         max_items:        d.maxItems  ?? null,
         start_index:      d.startIndex ?? 1,
         subtitles:        d.subtitles  ?? false,

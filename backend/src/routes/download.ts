@@ -49,6 +49,7 @@ router.post('/', async (req, res) => {
     url, jobId, mediaType,
     format:         body.format         ?? 'mp4',
     quality:        body.quality         ?? 'best',
+    formatId:       body.formatId,
     title:          body.title,
     thumbnail:      body.thumbnail,
     addedAt:        Date.now(),
