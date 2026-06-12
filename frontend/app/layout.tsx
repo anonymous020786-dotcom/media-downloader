@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from 'next'
 import Script from 'next/script'
+import { Inter, Lexend } from 'next/font/google'
 import { ClerkProvider } from '@clerk/nextjs'
 import { dark } from '@clerk/themes'
 import { Toaster } from 'sonner'
@@ -14,8 +15,23 @@ import CookieBanner from '@/components/widgets/CookieBanner'
 import WelcomeBanner from '@/components/widgets/WelcomeBanner'
 import './globals.css'
 
-const SITE  = process.env.NEXT_PUBLIC_SITE_URL  ?? 'https://mediadl.app'
-const GA_ID = process.env.NEXT_PUBLIC_GA_ID     ?? ''
+// ── Fonts — self-hosted via next/font (no external network request) ───────────
+const inter = Inter({
+  subsets:  ['latin'],
+  display:  'swap',
+  variable: '--font-inter',
+  preload:  true,
+})
+
+const lexend = Lexend({
+  subsets:  ['latin'],
+  display:  'swap',
+  variable: '--font-lexend',
+  preload:  false,
+})
+
+const SITE  = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://mediadl.app'
+const GA_ID = process.env.NEXT_PUBLIC_GA_ID    ?? ''
 
 export const metadata: Metadata = {
   metadataBase: new URL(SITE),
@@ -41,79 +57,56 @@ export const metadata: Metadata = {
   robots:  { index: true, follow: true, googleBot: { index: true, follow: true, 'max-image-preview': 'large' } },
   icons:   { icon: '/logo.svg', shortcut: '/logo.svg', apple: '/logo.svg' },
   manifest: '/manifest.json',
-  // hreflang — 18 supported languages mapped to x-default + lang codes
   alternates: {
     canonical: SITE,
     languages: {
-      'x-default': SITE,
-      'en': SITE,
-      'es': `${SITE}`,
-      'pt': `${SITE}`,
-      'fr': `${SITE}`,
-      'de': `${SITE}`,
-      'it': `${SITE}`,
-      'nl': `${SITE}`,
-      'ru': `${SITE}`,
-      'pl': `${SITE}`,
-      'ar': `${SITE}`,
-      'tr': `${SITE}`,
-      'hi': `${SITE}`,
-      'zh': `${SITE}`,
-      'ja': `${SITE}`,
-      'ko': `${SITE}`,
-      'id': `${SITE}`,
-      'vi': `${SITE}`,
-      'th': `${SITE}`,
+      'x-default': SITE, 'en': SITE, 'es': SITE, 'pt': SITE,
+      'fr': SITE, 'de': SITE, 'it': SITE, 'nl': SITE, 'ru': SITE,
+      'pl': SITE, 'ar': SITE, 'tr': SITE, 'hi': SITE, 'zh': SITE,
+      'ja': SITE, 'ko': SITE, 'id': SITE, 'vi': SITE, 'th': SITE,
     },
   },
 }
 
 export const viewport: Viewport = {
-  themeColor:  [{ media: '(prefers-color-scheme: dark)', color: '#0a0e1a' }, { media: '(prefers-color-scheme: light)', color: '#ffffff' }],
-  colorScheme: 'dark light',
-  width:       'device-width',
+  themeColor:   [{ media: '(prefers-color-scheme: dark)', color: '#080c17' }, { media: '(prefers-color-scheme: light)', color: '#ffffff' }],
+  colorScheme:  'dark light',
+  width:        'device-width',
   initialScale: 1,
+  viewportFit:  'cover',
 }
 
 const SCHEMA = {
   '@context': 'https://schema.org',
   '@graph': [
     {
-      '@type':       'Organization',
-      '@id':         `${SITE}/#organization`,
-      name:          'MediaDL',
-      url:           SITE,
-      logo:          { '@type': 'ImageObject', url: `${SITE}/logo.svg` },
-      sameAs:        ['https://twitter.com/mediadl','https://github.com/mediadl'],
+      '@type': 'Organization', '@id': `${SITE}/#organization`,
+      name: 'MediaDL', url: SITE,
+      logo: { '@type': 'ImageObject', url: `${SITE}/logo.svg` },
+      sameAs: ['https://twitter.com/mediadl', 'https://github.com/mediadl'],
     },
     {
-      '@type':           'WebSite',
-      '@id':             `${SITE}/#website`,
-      url:               SITE,
-      name:              'MediaDL',
-      publisher:         { '@id': `${SITE}/#organization` },
-      potentialAction:   { '@type': 'SearchAction', target: `${SITE}/download?q={search_term_string}`, 'query-input': 'required name=search_term_string' },
+      '@type': 'WebSite', '@id': `${SITE}/#website`,
+      url: SITE, name: 'MediaDL',
+      publisher: { '@id': `${SITE}/#organization` },
+      potentialAction: { '@type': 'SearchAction', target: `${SITE}/download?q={search_term_string}`, 'query-input': 'required name=search_term_string' },
     },
     {
-      '@type':             'SoftwareApplication',
-      name:                'MediaDL',
-      applicationCategory:'MultimediaApplication',
-      operatingSystem:    'Web, iOS, Android',
-      url:                 SITE,
-      offers:              { '@type': 'Offer', price: '0', priceCurrency: 'USD' },
-      description:         'Free online video and image downloader supporting 1000+ websites.',
-      aggregateRating:     { '@type': 'AggregateRating', ratingValue: '4.9', reviewCount: '12847', bestRating: '5' },
-      featureList:         'YouTube, Instagram, TikTok, Twitter, Facebook, Reddit, Vimeo, Twitch, HD/4K/8K, MP4, MP3, Bulk download, Playlists',
+      '@type': 'SoftwareApplication',
+      name: 'MediaDL', applicationCategory: 'MultimediaApplication',
+      operatingSystem: 'Web, iOS, Android', url: SITE,
+      offers: { '@type': 'Offer', price: '0', priceCurrency: 'USD' },
+      description: 'Free online video and image downloader supporting 1000+ websites.',
+      aggregateRating: { '@type': 'AggregateRating', ratingValue: '4.9', reviewCount: '12847', bestRating: '5' },
     },
     {
-      '@type': 'HowTo',
-      name:    'How to Download a Video with MediaDL',
+      '@type': 'HowTo', name: 'How to Download a Video with MediaDL',
       description: 'Download any video or image from 1000+ websites in 4 steps.',
       step: [
-        { '@type': 'HowToStep', name: 'Copy URL',       text: 'Copy the video URL from YouTube, Instagram, TikTok or any supported site.' },
-        { '@type': 'HowToStep', name: 'Paste & Analyze',text: 'Paste the URL into the MediaDL download box. The tool instantly detects quality options.' },
-        { '@type': 'HowToStep', name: 'Select format',  text: 'Choose your format (MP4, MP3, WebM…) and quality (Best, 4K, 1080p…).' },
-        { '@type': 'HowToStep', name: 'Download',       text: 'Click Download. Your file is processed and saved to your device.' },
+        { '@type': 'HowToStep', name: 'Copy URL',        text: 'Copy the video URL from YouTube, Instagram, TikTok or any supported site.' },
+        { '@type': 'HowToStep', name: 'Paste & Analyze', text: 'Paste the URL into the MediaDL download box. The tool instantly detects quality options.' },
+        { '@type': 'HowToStep', name: 'Select format',   text: 'Choose your format (MP4, MP3, WebM…) and quality (Best, 4K, 1080p…).' },
+        { '@type': 'HowToStep', name: 'Download',        text: 'Click Download. Your file is processed and saved to your device.' },
       ],
     },
   ],
@@ -127,11 +120,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       signUpUrl="/sign-up"
       afterSignOutUrl="/"
     >
-    <html lang="en" suppressHydrationWarning>
+    <html lang="en" suppressHydrationWarning
+      className={`${inter.variable} ${lexend.variable}`}
+    >
       <head>
-        {/* Schema.org JSON-LD */}
         <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(SCHEMA) }} />
-        {/* Google AdSense */}
         {process.env.NEXT_PUBLIC_ADSENSE_CLIENT && (
           <script
             async
@@ -140,60 +133,45 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           />
         )}
       </head>
-      <body>
-        {/* Google Analytics — loads only after analytics consent granted */}
+      <body className={inter.className}>
         {GA_ID && (
-          <Script id="ga-consent" strategy="afterInteractive">
-            {`
-              (function(){
-                function loadGA(){
-                  if(window.__ga_loaded) return;
-                  window.__ga_loaded=true;
-                  var s=document.createElement('script');
-                  s.src='https://www.googletagmanager.com/gtag/js?id=${GA_ID}';
-                  s.async=true; document.head.appendChild(s);
-                  window.dataLayer=window.dataLayer||[];
-                  function gtag(){dataLayer.push(arguments);}
-                  window.gtag=gtag;
-                  gtag('js',new Date());
-                  gtag('config','${GA_ID}',{page_path:window.location.pathname});
-                }
-                try{
-                  var c=JSON.parse(localStorage.getItem('cookie_consent')||'{}');
-                  if(c.analytics) loadGA();
-                }catch(e){}
-                window.addEventListener('cookie-consent',function(e){
-                  if(e.detail&&e.detail.analytics) loadGA();
-                });
-              })();
-            `}
-          </Script>
+          <Script id="ga-consent" strategy="afterInteractive">{`
+            (function(){
+              function loadGA(){
+                if(window.__ga_loaded)return;window.__ga_loaded=true;
+                var s=document.createElement('script');s.src='https://www.googletagmanager.com/gtag/js?id=${GA_ID}';s.async=true;document.head.appendChild(s);
+                window.dataLayer=window.dataLayer||[];function gtag(){dataLayer.push(arguments);}window.gtag=gtag;
+                gtag('js',new Date());gtag('config','${GA_ID}',{page_path:window.location.pathname});
+              }
+              try{var c=JSON.parse(localStorage.getItem('cookie_consent')||'{}');if(c.analytics)loadGA();}catch(e){}
+              window.addEventListener('cookie-consent',function(e){if(e.detail&&e.detail.analytics)loadGA();});
+            })();
+          `}</Script>
         )}
 
-        {/* Service worker registration */}
-        <Script id="sw-register" strategy="afterInteractive">
-          {`if('serviceWorker' in navigator){navigator.serviceWorker.register('/sw.js',{scope:'/'}).catch(()=>{})}`}
-        </Script>
+        <Script id="sw-register" strategy="afterInteractive">{`
+          if('serviceWorker' in navigator){navigator.serviceWorker.register('/sw.js',{scope:'/'}).catch(()=>{});}
+        `}</Script>
 
         <ThemeProvider>
           <LanguageProvider>
           <CountryProvider>
-          <AuthSync />
-          {children}
-          <WhatsAppButton phone={process.env.NEXT_PUBLIC_WHATSAPP_NUMBER ?? '+1234567890'} />
-          <TawkChat
-            propertyId={process.env.NEXT_PUBLIC_TAWK_PROPERTY_ID ?? ''}
-            widgetId={process.env.NEXT_PUBLIC_TAWK_WIDGET_ID ?? 'default'}
-          />
-          <Toaster
-            theme="system"
-            position="bottom-right"
-            richColors
-            toastOptions={{ style: { fontSize: '13px' } }}
-          />
-          <PWAInstall />
-          <CookieBanner />
-          <WelcomeBanner />
+            <AuthSync />
+            {children}
+            <WhatsAppButton phone={process.env.NEXT_PUBLIC_WHATSAPP_NUMBER ?? '+1234567890'} />
+            <TawkChat
+              propertyId={process.env.NEXT_PUBLIC_TAWK_PROPERTY_ID  ?? ''}
+              widgetId={process.env.NEXT_PUBLIC_TAWK_WIDGET_ID    ?? 'default'}
+            />
+            <Toaster
+              theme="system"
+              position="bottom-right"
+              richColors
+              toastOptions={{ style: { fontSize: '13px' } }}
+            />
+            <PWAInstall />
+            <CookieBanner />
+            <WelcomeBanner />
           </CountryProvider>
           </LanguageProvider>
         </ThemeProvider>
