@@ -1,5 +1,6 @@
 'use client'
 import { useRef, useEffect, useState, useCallback } from 'react'
+import { toast } from 'sonner'
 import {
   Play, Pause, Volume2, VolumeX, Maximize, Minimize,
   SkipBack, SkipForward, Settings, Download, Loader2,
@@ -299,7 +300,7 @@ export default function VideoPlayer({ initialUrl = '' }: Props) {
       setQueued(format.format_id)
       setTimeout(() => setQueued(''), 3000)
     } catch (e: any) {
-      alert(`Download failed: ${e.message}`)
+      toast.error(`Download failed: ${e.message}`)
     } finally {
       setQueueing('')
     }
@@ -616,7 +617,7 @@ function FormatRow({ format: f, queueing, queued, onDownload }: {
   queued: boolean
   onDownload: () => void
 }) {
-  const isAudio = f.vcodec === 'none' || (!f.height && f.acodec)
+  const isAudio = f.vcodec === 'none' || (!f.height && f.acodec && f.acodec !== 'none')
   return (
     <div className="flex items-center justify-between gap-2 px-3 py-2 rounded-xl hover:bg-[var(--bg-hover)] transition-colors group">
       <div className="min-w-0">
