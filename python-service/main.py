@@ -509,6 +509,165 @@ async def analyze(req: AnalyzeReq):
     return result
 
 
+def _pick_stream_url(info: dict) -> dict:
+    """Pick the best playable URL from a yt-dlp info dict.
+
+    Priority:
+      1. HLS master manifest (m3u8) — best for adaptive streaming in the browser
+      2. DASH manifest (mpd)
+      3. Best MP4 with both video+audio tracks
+      4. Any format that has a URL
+      5. Top-level `url` (single-format extractors)
+    Returns a dict with stream_url, protocol, ext, height, title, thumbnail, duration.
+    """
+    formats = info.get("formats") or []
+
+    # 1. HLS manifest
+    for f in formats:
+        proto = f.get("protocol", "")
+        u = f.get("url", "") or ""
+        if proto in ("m3u8", "m3u8_native") or ".m3u8" in u:
+            return {
+                "stream_url": u, "protocol": "hls",
+                "ext": "m3u8", "height": f.get("height"),
+            }
+
+    # 2. DASH manifest
+    for f in formats:
+        u = f.get("url", "") or ""
+        if ".mpd" in u or f.get("protocol") == "http_dash_segments":
+            return {"stream_url": u, "protocol": "dash", "ext": "mpd", "height": None}
+
+    # 3. Best mp4 with video+audio
+    mp4s = [
+        f for f in formats
+        if f.get("ext") == "mp4"
+        and f.get("vcodec", "none") not in ("none", None)
+        and f.get("acodec", "none") not in ("none", None)
+        and f.get("url")
+    ]
+    if mp4s:
+        best = sorted(mp4s, key=lambda f: (f.get("height") or 0), reverse=True)[0]
+        return {
+            "stream_url": best["url"], "protocol": "https",
+            "ext": "mp4", "height": best.get("height"),
+        }
+
+    # 4. Best video-only mp4 (player can play without audio track)
+    vid_only = [
+        f for f in formats
+        if f.get("ext") == "mp4"
+        and f.get("vcodec", "none") not in ("none", None)
+        and f.get("url")
+    ]
+    if vid_only:
+        best = sorted(vid_only, key=lambda f: (f.get("height") or 0), reverse=True)[0]
+        return {
+            "stream_url": best["url"], "protocol": "https",
+            "ext": "mp4", "height": best.get("height"),
+        }
+
+    # 5. Any format with a URL
+    for f in formats:
+        if f.get("url"):
+            return {
+                "stream_url": f["url"], "protocol": "https",
+                "ext": f.get("ext", "mp4"), "height": f.get("height"),
+            }
+
+    # 6. Single-format extractors expose `url` at top level
+    top_url = info.get("url")
+    if top_url:
+        is_hls = ".m3u8" in top_url
+        return {
+            "stream_url": top_url,
+            "protocol": "hls" if is_hls else "https",
+            "ext": "m3u8" if is_hls else info.get("ext", "mp4"),
+            "height": info.get("height"),
+        }
+
+    return {}
+
+
+@app.post("/stream-url")
+async def stream_url_endpoint(req: AnalyzeReq):
+    """Resolve an actual playable stream URL for the video player.
+
+    Unlike /analyze (which strips URLs to avoid leaking expiring CDN tokens in
+    analytics/cache), this endpoint returns the live stream URL so the browser
+    player can play it directly.  Short cache (60 s) to handle page refreshes
+    without hammering yt-dlp; real CDN tokens typically last minutes.
+    """
+    url = req.url
+    if not url:
+        raise HTTPException(status_code=400, detail="url is required")
+
+    ck = _cache_key("stream-url", url)
+    cached = await _cache_get(ck)
+    if cached:
+        return cached
+
+    # Custom extractor paths that expose a direct HLS URL
+    if _PAT_CDN_RE.match(url):
+        r = await _analyze_pat_cdn(url)
+        m3u8 = r.get("_pat_m3u8_url")
+        if m3u8:
+            result = {"stream_url": m3u8, "protocol": "hls", "ext": "m3u8",
+                      "title": r.get("title"), "thumbnail": r.get("thumbnail"),
+                      "duration": r.get("duration")}
+            await _cache_set(ck, result, ttl=55)
+            return result
+
+    try:
+        info = await asyncio.wait_for(
+            asyncio.get_event_loop().run_in_executor(None, _ytdlp_info, url, False),
+            timeout=40,
+        )
+    except asyncio.TimeoutError:
+        raise HTTPException(status_code=504, detail="yt-dlp timed out extracting stream URL")
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"yt-dlp error: {exc}")
+
+    if not info:
+        raise HTTPException(status_code=404, detail="No media info returned")
+
+    picked = _pick_stream_url(info)
+    if not picked.get("stream_url"):
+        raise HTTPException(status_code=404, detail="No streamable URL found for this media")
+
+    result = {
+        **picked,
+        "title":     info.get("title"),
+        "thumbnail": info.get("thumbnail"),
+        "duration":  info.get("duration"),
+        "uploader":  info.get("uploader", ""),
+        "extractor": info.get("extractor", ""),
+        # Also include available format URLs so the player can offer quality switching
+        "formats": [
+            {
+                "format_id": f.get("format_id"),
+                "ext":       f.get("ext"),
+                "height":    f.get("height"),
+                "fps":       f.get("fps"),
+                "filesize":  f.get("filesize"),
+                "tbr":       f.get("tbr"),
+                "abr":       f.get("abr"),
+                "acodec":    f.get("acodec"),
+                "vcodec":    f.get("vcodec"),
+                "format_note": f.get("format_note"),
+                "url":       f.get("url"),
+                "protocol":  f.get("protocol"),
+            }
+            for f in (info.get("formats") or [])
+            if f.get("url")
+        ],
+    }
+
+    # Short TTL — CDN tokens expire; 55 s handles page-refresh without stale-URL risk
+    await _cache_set(ck, result, ttl=55)
+    return result
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # CUSTOM SITE EXTRACTORS  (sites yt-dlp doesn't support)
 # ─────────────────────────────────────────────────────────────────────────────

@@ -15,6 +15,18 @@ router.post('/', async (req, res) => {
   }
 })
 
+// Resolve actual playable stream URL for the video player
+router.post('/stream-url', async (req, res) => {
+  const { url } = req.body as { url?: string }
+  if (!url || typeof url !== 'string') { res.status(400).json({ error: 'url is required' }); return }
+  try {
+    const { data } = await axios.post(`${PYTHON}/stream-url`, { url }, { timeout: 45_000 })
+    res.json(data)
+  } catch (e: any) {
+    res.status(e.response?.status ?? 502).json({ error: e.response?.data?.detail ?? e.message })
+  }
+})
+
 // Preview images from a page (for MediaPreviewGrid)
 router.post('/preview-page', async (req, res) => {
   const { url } = req.body as { url?: string }

@@ -118,6 +118,28 @@ export default function VideoPlayer({ initialUrl = '' }: Props) {
   const [queueing,    setQueueing]    = useState('')
   const [queued,      setQueued]      = useState('')
 
+  // ── Resolve actual stream URL via dedicated endpoint ──────────────────────
+  const resolveStreamUrl = useCallback(async (url: string): Promise<boolean> => {
+    try {
+      const res = await fetch(`${API_BASE}/api/analyze/stream-url`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error ?? 'Could not resolve stream URL')
+      if (data.stream_url) {
+        loadVideoSrc(data.stream_url)
+        // Merge stream formats back into result for download panel
+        setResult(prev => prev ? { ...prev, formats: data.formats ?? prev.formats } : prev)
+        return true
+      }
+      return false
+    } catch {
+      return false
+    }
+  }, [])
+
   // ── Analyze URL ────────────────────────────────────────────────────────────
   const analyzeUrl = useCallback(async (url: string) => {
     if (!url.trim()) return
@@ -135,14 +157,19 @@ export default function VideoPlayer({ initialUrl = '' }: Props) {
       if (!res.ok) throw new Error(data.error ?? 'Analyze failed')
       setResult(data)
       const streamUrl = bestStreamUrl(data)
-      if (streamUrl) loadVideoSrc(streamUrl)
-      else setAnalyzeError('No streamable URL found. Try downloading instead.')
+      if (streamUrl) {
+        loadVideoSrc(streamUrl)
+      } else {
+        // Analyze returned metadata only — resolve actual stream URL separately
+        const ok = await resolveStreamUrl(url)
+        if (!ok) setAnalyzeError('No streamable URL found. Try downloading instead.')
+      }
     } catch (e: any) {
       setAnalyzeError(e.message)
     } finally {
       setAnalyzing(false)
     }
-  }, [])
+  }, [resolveStreamUrl])
 
   // Try loading as direct URL first, then analyze
   const handleLoad = useCallback(async (url: string) => {
