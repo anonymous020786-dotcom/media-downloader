@@ -19,3 +19,5 @@ venv/
 .pytest_cache/
 coverage/
 .turbo/
+*.tsbuildinfo
+next-env.d.ts
