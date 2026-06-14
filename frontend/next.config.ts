@@ -5,13 +5,13 @@ const SITE = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://mediadl.app'
 // ── Strict Content-Security-Policy ───────────────────────────────────────────
 const CSP = [
   "default-src 'self'",
-  "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://www.googletagmanager.com https://pagead2.googlesyndication.com https://www.gstatic.com https://js.clerk.com https://*.clerk.accounts.dev https://embed.tawk.to https://va.vercel-scripts.com",
+  "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://www.googletagmanager.com https://pagead2.googlesyndication.com https://www.gstatic.com https://embed.tawk.to https://va.vercel-scripts.com",
   "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
   "font-src 'self' data: https://fonts.gstatic.com",
   "img-src 'self' data: blob: https: http:",
   "media-src 'self' blob: https: http:",
-  "connect-src 'self' wss: ws: https: http: https://api.clerk.com https://*.clerk.accounts.dev",
-  "frame-src 'self' https://*.clerk.com https://*.clerk.accounts.dev https://www.youtube.com https://player.vimeo.com https://tawk.to",
+  "connect-src 'self' wss: ws: https: http:",
+  "frame-src 'self' https://www.youtube.com https://player.vimeo.com https://tawk.to",
   "worker-src 'self' blob:",
   "manifest-src 'self'",
   "object-src 'none'",
@@ -99,7 +99,7 @@ const nextConfig: NextConfig = {
   experimental: {
     optimizePackageImports: [
       'lucide-react',
-      '@clerk/nextjs',
+      '@supabase/supabase-js',
       'sonner',
     ],
   },

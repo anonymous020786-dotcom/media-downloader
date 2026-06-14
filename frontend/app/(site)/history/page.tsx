@@ -1,7 +1,7 @@
 'use client'
 import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
-import { useUser } from '@clerk/nextjs'
+import { useAuth } from '@/components/auth/AuthContext'
 import {
   History, RefreshCw, Trash2, Film, ImageIcon, FileDown, Globe, List,
   LogIn, Download, Search, X, FileText, TrendingUp,
@@ -66,7 +66,7 @@ function exportCSV(rows: HistoryRow[]) {
 }
 
 export default function HistoryPage() {
-  const { isSignedIn, isLoaded } = useUser()
+  const { isSignedIn, isLoaded } = useAuth()
   const [rows,    setRows]    = useState<HistoryRow[]>([])
   const [loading, setLoading] = useState(true)
   const [search,  setSearch]  = useState('')

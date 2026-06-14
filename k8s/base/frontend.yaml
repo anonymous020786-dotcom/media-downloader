@@ -29,12 +29,15 @@ spec:
             - configMapRef:
                 name: mediadl-config
           env:
-            - name: CLERK_SECRET_KEY
+            - name: NEXT_PUBLIC_SUPABASE_URL
               valueFrom:
-                secretKeyRef: { name: mediadl-secrets, key: CLERK_SECRET_KEY }
-            - name: ADMIN_EMAILS
+                secretKeyRef: { name: mediadl-secrets, key: NEXT_PUBLIC_SUPABASE_URL }
+            - name: NEXT_PUBLIC_SUPABASE_ANON_KEY
               valueFrom:
-                secretKeyRef: { name: mediadl-secrets, key: ADMIN_EMAILS }
+                secretKeyRef: { name: mediadl-secrets, key: NEXT_PUBLIC_SUPABASE_ANON_KEY }
+            - name: SUPER_ADMIN_EMAIL
+              valueFrom:
+                secretKeyRef: { name: mediadl-secrets, key: SUPER_ADMIN_EMAIL }
           resources:
             requests: { memory: 256Mi, cpu: 100m  }
             limits:   { memory: 1Gi,   cpu: 500m  }

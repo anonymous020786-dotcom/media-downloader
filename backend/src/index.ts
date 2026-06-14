@@ -19,6 +19,10 @@ import { runMigrations } from './db.js'
 import { initSocket } from './socket.js'
 import notifRouter   from './routes/notifications.js'
 import historyRouter from './routes/history.js'
+import usersRouter   from './routes/users.js'
+import uploadRouter  from './routes/upload.js'
+import otpRouter     from './routes/otp.js'
+import mfaRouter     from './routes/mfa.js'
 
 const app  = express()
 const PORT = Number(process.env.PORT ?? 4000)
@@ -33,13 +37,25 @@ app.use((_req, res, next) => {
 // ── Security ──────────────────────────────────────────────────────────────────
 app.use(helmet({
   crossOriginResourcePolicy: { policy: 'cross-origin' },
-  contentSecurityPolicy: false,   // API — no HTML served
+  contentSecurityPolicy: false,
   hsts: { maxAge: 31536000, includeSubDomains: true },
 }))
+
+const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS ?? '')
+  .split(',').map(o => o.trim()).filter(Boolean)
+
 app.use(cors({
-  origin: '*',
+  origin: (origin, cb) => {
+    // Allow same-origin / server-to-server (no origin header)
+    if (!origin) return cb(null, true)
+    // In dev allow all; in prod check allowlist
+    if (process.env.NODE_ENV !== 'production') return cb(null, true)
+    if (ALLOWED_ORIGINS.length === 0 || ALLOWED_ORIGINS.includes(origin)) return cb(null, true)
+    cb(new Error(`CORS: ${origin} not allowed`))
+  },
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'X-Request-Id', 'X-User-Id', 'Authorization'],
+  allowedHeaders: ['Content-Type', 'X-Request-Id', 'Authorization'],
+  credentials: true,
   maxAge: 86400,
 }))
 
@@ -48,12 +64,20 @@ app.use(compression({ level: 6 }))
 app.use(express.json({ limit: '256kb' }))
 
 // ── Rate limiting (per-user when authenticated, else per-IP) ──────────────────
-// Frontend forwards the Clerk user id via X-User-Id; signed-in users get higher quotas.
-const keyByUserOrIp = (req: express.Request): string => {
-  const uid = req.header('X-User-Id')
-  return uid ? `u:${uid}` : `ip:${req.ip}`
+// We extract the Supabase sub from the JWT for rate-limiting without a DB round-trip.
+import jwt from 'jsonwebtoken'
+const _JWT_SECRET = process.env.SUPABASE_JWT_SECRET ?? ''
+function _extractSub(req: express.Request): string | null {
+  const header = req.header('Authorization') ?? ''
+  const token = header.startsWith('Bearer ') ? header.slice(7) : ''
+  if (!token || !_JWT_SECRET) return null
+  try { return (jwt.decode(token) as any)?.sub ?? null } catch { return null }
 }
-const isAuthed = (req: express.Request) => !!req.header('X-User-Id')
+const keyByUserOrIp = (req: express.Request): string => {
+  const sub = _extractSub(req)
+  return sub ? `u:${sub}` : `ip:${req.ip}`
+}
+const isAuthed = (req: express.Request) => !!_extractSub(req)
 
 const stdLimit = rateLimit({
   windowMs: 60_000,
@@ -84,6 +108,10 @@ app.use('/api/tmdb',     tmdbRouter)
 app.use('/api/news',     newsRouter)
 app.use('/api/notifications', notifRouter)
 app.use('/api/history',      historyRouter)
+app.use('/api/users',        usersRouter)
+app.use('/api/upload',       uploadRouter)
+app.use('/api/otp',          otpRouter)
+app.use('/api/mfa',          mfaRouter)
 
 // Serve uploaded media (images/files embedded in blog posts)
 import { UPLOAD_DIR } from './routes/content.js'

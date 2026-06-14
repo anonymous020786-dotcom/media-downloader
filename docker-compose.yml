@@ -96,9 +96,10 @@ services:
       MYSQL_DATABASE: mediadl
       MYSQL_USER: mediadl
       MYSQL_PASSWORD: ${MYSQL_PASSWORD:-mediadlpass}
-      # Admin auth: verify Clerk session tokens server-side
-      CLERK_SECRET_KEY: ${CLERK_SECRET_KEY}
-      ADMIN_EMAILS: ${ADMIN_EMAILS:-}
+      # Auth: verify Supabase JWTs server-side
+      SUPABASE_JWT_SECRET: ${SUPABASE_JWT_SECRET}
+      SUPER_ADMIN_EMAIL: ${SUPER_ADMIN_EMAIL:-}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:3000,http://localhost}
       TMDB_API_KEY: ${TMDB_API_KEY:-}
       TMDB_ACCESS_TOKEN: ${TMDB_ACCESS_TOKEN:-}
       # Socket.io is always on (same port as HTTP)
@@ -116,6 +117,22 @@ services:
       SMTP_SECURE: ${SMTP_SECURE:-false}
       SMTP_FROM: ${SMTP_FROM:-}
       SMTP_ADMIN_TO: ${SMTP_ADMIN_TO:-}
+      # Storage — profile images / avatars
+      STORAGE_PROVIDER: ${STORAGE_PROVIDER:-supabase}
+      HOSTINGER_UPLOAD_URL: ${HOSTINGER_UPLOAD_URL:-}
+      HOSTINGER_DELETE_URL: ${HOSTINGER_DELETE_URL:-}
+      HOSTINGER_API_KEY: ${HOSTINGER_API_KEY:-}
+      HOSTINGER_DOMAIN: ${HOSTINGER_DOMAIN:-}
+      HOSTINGER_FTP_HOST: ${HOSTINGER_FTP_HOST:-}
+      HOSTINGER_FTP_USER: ${HOSTINGER_FTP_USER:-}
+      HOSTINGER_FTP_PASS: ${HOSTINGER_FTP_PASS:-}
+      HOSTINGER_FTP_ROOT: ${HOSTINGER_FTP_ROOT:-/public_html/uploads}
+      # AWS S3 (optional alternative)
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      AWS_REGION: ${AWS_REGION:-us-east-1}
+      AWS_S3_BUCKET: ${AWS_S3_BUCKET:-}
+      AWS_S3_DOWNLOADS_BUCKET: ${AWS_S3_DOWNLOADS_BUCKET:-}
     depends_on:
       redis:
         condition: service_healthy
@@ -142,7 +159,8 @@ services:
       args:
         NEXT_PUBLIC_API_URL: http://localhost:4000
         NEXT_PUBLIC_SITE_URL: http://localhost
-        NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY}
+        NEXT_PUBLIC_SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL}
+        NEXT_PUBLIC_SUPABASE_ANON_KEY: ${NEXT_PUBLIC_SUPABASE_ANON_KEY}
         NEXT_PUBLIC_GA_ID: ${NEXT_PUBLIC_GA_ID:-}
         NEXT_PUBLIC_RECAPTCHA_SITE_KEY: ${NEXT_PUBLIC_RECAPTCHA_SITE_KEY:-}
         NEXT_PUBLIC_ADSENSE_CLIENT: ${NEXT_PUBLIC_ADSENSE_CLIENT:-}
@@ -163,9 +181,9 @@ services:
       BACKEND_INTERNAL_URL: http://backend:4000
       NEXT_PUBLIC_SITE_URL: http://localhost
       NODE_ENV: production
-      CLERK_SECRET_KEY: ${CLERK_SECRET_KEY}
-      NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY}
-      ADMIN_EMAILS: ${ADMIN_EMAILS:-}
+      NEXT_PUBLIC_SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL}
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: ${NEXT_PUBLIC_SUPABASE_ANON_KEY}
+      SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY:-}
     depends_on:
       backend:
         condition: service_healthy

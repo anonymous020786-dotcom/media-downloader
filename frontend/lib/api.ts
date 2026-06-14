@@ -7,11 +7,11 @@ const BASE = typeof window === 'undefined'
   ? (process.env.BACKEND_INTERNAL_URL ?? PUBLIC_BASE).replace(/\/$/, '')
   : PUBLIC_BASE
 
-// Set by <AuthSync> when a Clerk user is signed in — forwarded for per-user rate limits.
+// Set by <AuthSync> when a Supabase user is signed in — forwarded for per-user rate limits.
 let _userId: string | null = null
 export function setApiUserId(id: string | null) { _userId = id }
 
-// Set by <AuthSync> — returns a fresh Clerk session JWT for verified admin calls.
+// Set by <AuthSync> — returns a fresh Supabase session JWT for verified admin calls.
 let _getToken: (() => Promise<string | null>) | null = null
 export function setApiTokenGetter(fn: (() => Promise<string | null>) | null) { _getToken = fn }
 

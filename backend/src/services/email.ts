@@ -175,3 +175,79 @@ export function tplAutoReply(data: { name: string }): string {
 function escHtml(s: string): string {
   return (s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')
 }
+
+// ── OTP / Welcome / Admin templates ──────────────────────────────────────────
+function darkTemplate(content: string): string {
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>MediaDL</title>
+</head>
+<body style="margin:0;padding:0;background:#0f0f12;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#e2e8f0;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#0f0f12;padding:40px 20px;">
+    <tr><td align="center">
+      <table width="560" cellpadding="0" cellspacing="0" style="background:#1a1a24;border:1px solid #2d2d3d;border-radius:16px;overflow:hidden;max-width:100%;">
+        <tr><td style="background:linear-gradient(135deg,#6c63ff 0%,#9b5de5 100%);padding:28px 32px;text-align:center;">
+          <h1 style="margin:0;font-size:26px;font-weight:900;color:#fff;letter-spacing:-0.5px;">MediaDL</h1>
+          <p style="margin:4px 0 0;font-size:13px;color:rgba(255,255,255,0.7);">Your media download platform</p>
+        </td></tr>
+        <tr><td style="padding:32px;">${content}</td></tr>
+        <tr><td style="padding:16px 32px;border-top:1px solid #2d2d3d;text-align:center;font-size:11px;color:#4b5563;">
+          &copy; ${new Date().getFullYear()} MediaDL. All rights reserved.
+        </td></tr>
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>`
+}
+
+const OTP_LABELS: Record<string, string> = {
+  verify:       'Email Verification',
+  reset:        'Password Reset',
+  login:        'Sign In',
+  backup_email: 'Backup Email Verification',
+  mfa:          'Two-Factor Verification',
+}
+
+export async function sendOtpEmail(to: string, otp: string, type: string): Promise<void> {
+  const label = OTP_LABELS[type] ?? 'Verification'
+  const html = darkTemplate(`
+    <p style="font-size:16px;font-weight:600;margin:0 0 8px;color:#e2e8f0;">${label} Code</p>
+    <p style="font-size:14px;color:#94a3b8;margin:0 0 24px;">Use the code below to complete your ${label.toLowerCase()}. It expires in 10 minutes.</p>
+    <div style="background:#0f0f12;border:1px solid #2d2d3d;border-radius:12px;padding:28px;text-align:center;margin-bottom:24px;">
+      <span style="font-size:44px;font-weight:900;letter-spacing:14px;color:#6c63ff;">${otp}</span>
+    </div>
+    <p style="font-size:12px;color:#64748b;margin:0;">Never share this code with anyone. It is valid for 10 minutes only.</p>
+  `)
+  await sendEmail({ to, subject: `[MediaDL] Your ${label} Code: ${otp}`, html })
+}
+
+export async function sendWelcomeEmail(to: string, name: string): Promise<void> {
+  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://mediadl.app'
+  const html = darkTemplate(`
+    <p style="font-size:18px;font-weight:700;margin:0 0 12px;color:#e2e8f0;">Welcome to MediaDL, ${escHtml(name)}!</p>
+    <p style="font-size:14px;color:#94a3b8;margin:0 0 24px;line-height:1.7;">Your account is all set up. Start downloading videos, music, and more from hundreds of platforms — all in one place.</p>
+    <a href="${siteUrl}/download" style="display:inline-block;background:linear-gradient(135deg,#6c63ff,#9b5de5);color:#fff;font-weight:700;font-size:14px;padding:12px 28px;border-radius:10px;text-decoration:none;">Start Downloading</a>
+  `)
+  await sendEmail({ to, subject: 'Welcome to MediaDL!', html })
+}
+
+export async function sendPasswordResetEmail(to: string, resetUrl: string): Promise<void> {
+  const html = darkTemplate(`
+    <p style="font-size:16px;font-weight:600;margin:0 0 8px;color:#e2e8f0;">Reset Your Password</p>
+    <p style="font-size:14px;color:#94a3b8;margin:0 0 24px;line-height:1.7;">Click the button below to set a new password. This link expires in 1 hour.</p>
+    <a href="${resetUrl}" style="display:inline-block;background:linear-gradient(135deg,#6c63ff,#9b5de5);color:#fff;font-weight:700;font-size:14px;padding:12px 28px;border-radius:10px;text-decoration:none;">Reset Password</a>
+    <p style="font-size:12px;color:#64748b;margin-top:24px;">If you didn't request this, ignore this email.</p>
+  `)
+  await sendEmail({ to, subject: '[MediaDL] Password Reset Request', html })
+}
+
+export async function sendAdminNotification(subject: string, body: string): Promise<void> {
+  const adminTo = process.env.SMTP_ADMIN_TO ?? ''
+  if (!adminTo) return
+  const html = darkTemplate(`<pre style="font-size:13px;color:#94a3b8;white-space:pre-wrap;word-break:break-word;">${escHtml(body)}</pre>`)
+  await sendEmail({ to: adminTo, subject: `[MediaDL Admin] ${subject}`, html })
+}

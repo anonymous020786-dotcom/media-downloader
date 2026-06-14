@@ -1,5 +1,6 @@
 import { redirect } from 'next/navigation'
 import { isSuperAdmin, listUsers } from '@/lib/auth'
+import { createClient } from '@/lib/supabase/server'
 import UserTable from './UserTable'
 
 export const dynamic = 'force-dynamic'
@@ -7,7 +8,11 @@ export const dynamic = 'force-dynamic'
 export default async function AdminUsersPage() {
   if (!(await isSuperAdmin())) redirect('/admin')
 
-  const users = await listUsers()
+  const supabase = await createClient()
+  const { data: { session } } = await supabase.auth.getSession()
+  const token = session?.access_token ?? ''
+
+  const users = await listUsers(token)
 
   return (
     <div className="p-8 max-w-5xl">

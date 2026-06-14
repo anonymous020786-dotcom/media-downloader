@@ -21,8 +21,11 @@ kubectl apply -f k8s/base/namespace.yaml
 kubectl create secret generic mediadl-secrets \
   --from-literal=MYSQL_ROOT_PASSWORD="$(grep MYSQL_ROOT_PASSWORD .env.prod | cut -d= -f2)" \
   --from-literal=MYSQL_PASSWORD="$(grep MYSQL_PASSWORD .env.prod | cut -d= -f2)" \
-  --from-literal=CLERK_SECRET_KEY="$(grep CLERK_SECRET_KEY .env.prod | cut -d= -f2)" \
-  --from-literal=ADMIN_EMAILS="$(grep ADMIN_EMAILS .env.prod | cut -d= -f2)" \
+  --from-literal=SUPABASE_JWT_SECRET="$(grep SUPABASE_JWT_SECRET .env.prod | cut -d= -f2)" \
+  --from-literal=SUPABASE_SERVICE_ROLE_KEY="$(grep SUPABASE_SERVICE_ROLE_KEY .env.prod | cut -d= -f2)" \
+  --from-literal=NEXT_PUBLIC_SUPABASE_URL="$(grep NEXT_PUBLIC_SUPABASE_URL .env.prod | cut -d= -f2)" \
+  --from-literal=NEXT_PUBLIC_SUPABASE_ANON_KEY="$(grep NEXT_PUBLIC_SUPABASE_ANON_KEY .env.prod | cut -d= -f2)" \
+  --from-literal=SUPER_ADMIN_EMAIL="$(grep SUPER_ADMIN_EMAIL .env.prod | cut -d= -f2)" \
   --from-literal=TMDB_API_KEY="$(grep TMDB_API_KEY .env.prod | cut -d= -f2)" \
   --from-literal=TMDB_ACCESS_TOKEN="$(grep TMDB_ACCESS_TOKEN .env.prod | cut -d= -f2)" \
   --from-literal=SMTP_USER="$(grep SMTP_USER .env.prod | cut -d= -f2)" \

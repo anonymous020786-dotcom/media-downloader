@@ -11,8 +11,8 @@ export const redisConnection = new IORedis(REDIS_URL, {
   maxRetriesPerRequest: null, enableReadyCheck: false,
 })
 
-export const downloadQueue = new Queue<DownloadJob>('downloads', {
-  connection: redisConnection,
+export const downloadQueue = new Queue<DownloadJob, any, string>('downloads', {
+  connection: redisConnection as any,
   defaultJobOptions: {
     attempts: 3,
     backoff: { type: 'exponential', delay: 5_000 },
@@ -104,7 +104,7 @@ export function startWorker() {
       }
     },
     {
-      connection: new IORedis(REDIS_URL, { maxRetriesPerRequest: null, enableReadyCheck: false }),
+      connection: new IORedis(REDIS_URL, { maxRetriesPerRequest: null, enableReadyCheck: false }) as any,
       concurrency: CONCURRENCY,
     }
   )

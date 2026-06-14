@@ -50,9 +50,26 @@ CREATE TABLE IF NOT EXISTS site_settings (
   updated_at  DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 );
 
+-- ── Users (Supabase auth UUIDs + app roles) ──────────────────────────────────
+-- Roles are owned by this table; Supabase auth owns identity only.
+-- super_admin is seeded at backend startup via SUPER_ADMIN_EMAIL env var.
+-- No API endpoint can elevate a user to super_admin.
+CREATE TABLE IF NOT EXISTS users (
+  id          VARCHAR(36)  PRIMARY KEY,           -- Supabase auth.users UUID
+  email       VARCHAR(200) NOT NULL UNIQUE,
+  name        VARCHAR(200),
+  avatar_url  VARCHAR(500),
+  role        ENUM('user','admin','super_admin') NOT NULL DEFAULT 'user',
+  last_sign_in DATETIME    DEFAULT NULL,
+  created_at  DATETIME     DEFAULT CURRENT_TIMESTAMP,
+  updated_at  DATETIME     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  INDEX idx_email (email),
+  INDEX idx_role  (role)
+);
+
 CREATE TABLE IF NOT EXISTS download_stats (
   id          BIGINT AUTO_INCREMENT PRIMARY KEY,
-  user_id     VARCHAR(100),
+  user_id     VARCHAR(36),
   url         TEXT,
   media_type  VARCHAR(50),
   format      VARCHAR(20),

@@ -1,9 +1,9 @@
 import type { Metadata, Viewport } from 'next'
 import Script from 'next/script'
 import { Inter, Lexend } from 'next/font/google'
-import { ClerkProvider } from '@clerk/nextjs'
 import { Toaster } from 'sonner'
 import ThemeProvider from '@/components/layout/ThemeProvider'
+import { AuthProvider } from '@/components/auth/AuthContext'
 import WhatsAppButton from '@/components/widgets/WhatsAppButton'
 import TawkChat from '@/components/widgets/TawkChat'
 import AuthSync from '@/components/auth/AuthSync'
@@ -114,12 +114,6 @@ const SCHEMA = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <ClerkProvider
-      appearance={{ variables: { colorPrimary: '#6366f1', colorBackground: '#080c17' } }}
-      signInUrl="/sign-in"
-      signUpUrl="/sign-up"
-      afterSignOutUrl="/"
-    >
     <html lang="en" suppressHydrationWarning
       className={`${inter.variable} ${lexend.variable}`}
     >
@@ -153,6 +147,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           if('serviceWorker' in navigator){navigator.serviceWorker.register('/sw.js',{scope:'/'}).catch(()=>{});}
         `}</Script>
 
+        <AuthProvider>
         <ThemeProvider>
           <LanguageProvider>
           <CountryProvider>
@@ -176,8 +171,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           </CountryProvider>
           </LanguageProvider>
         </ThemeProvider>
+        </AuthProvider>
       </body>
     </html>
-    </ClerkProvider>
   )
 }

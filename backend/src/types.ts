@@ -10,7 +10,7 @@ export interface DownloadJob {
   title?:         string
   thumbnail?:     string
   addedAt:        number
-  userId?:        string   // Clerk user id — used for FCM push notifications
+  userId?:        string   // Supabase user id — used for FCM push notifications
   priority?:      number   // BullMQ priority: 1=high, 5=normal (default), 10=low
   // Advanced options
   maxItems?:      number

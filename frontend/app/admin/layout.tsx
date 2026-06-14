@@ -7,21 +7,17 @@ import {
   Settings, Users, ArrowLeft, ShieldAlert, BarChart2,
 } from 'lucide-react'
 import { getCurrentAppUser } from '@/lib/auth'
-import { auth } from '@clerk/nextjs/server'
+import { createClient } from '@/lib/supabase/server'
 
 export const metadata: Metadata = {
   title: 'Admin Panel | MediaDL',
   robots: { index: false, follow: false },
 }
 
-// ── Fetch unread count via internal backend API ───────────────────────────────
-async function getUnreadCount(): Promise<number> {
+async function getUnreadCount(token: string): Promise<number> {
   try {
-    const { getToken } = await auth()
-    const token = await getToken()
-    if (!token) return 0
     const base = process.env.BACKEND_INTERNAL_URL ?? process.env.NEXT_PUBLIC_API_URL ?? 'http://backend:4000'
-    const res = await fetch(`${base}/api/content/admin/messages?status=unread`, {
+    const res  = await fetch(`${base}/api/content/admin/messages?status=unread`, {
       headers: { Authorization: `Bearer ${token}` },
       next: { revalidate: 30 },
     })
@@ -47,7 +43,6 @@ export default async function AdminLayout({ children }: { children: React.ReactN
           <h1 className="text-2xl font-black text-[var(--text)] mb-2">Access Denied</h1>
           <p className="text-[var(--text-2)] mb-6">
             Your account ({user.email}) does not have admin privileges.
-            Contact the super administrator to request access.
           </p>
           <Link href="/" className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-[var(--brand)] text-white font-semibold text-sm">
             <ArrowLeft size={14} /> Back to site
@@ -57,20 +52,21 @@ export default async function AdminLayout({ children }: { children: React.ReactN
     )
   }
 
-  const unread = await getUnreadCount()
+  // Get token for backend call
+  const supabase = await createClient()
+  const { data: { session } } = await supabase.auth.getSession()
+  const token  = session?.access_token ?? ''
+  const unread = token ? await getUnreadCount(token) : 0
 
   const NAV = [
-    { label: 'Dashboard', href: '/admin',             icon: <LayoutDashboard size={16} />, show: true },
-    { label: 'Analytics', href: '/admin/analytics',   icon: <BarChart2 size={16} />,       show: true },
-    { label: 'Downloads', href: '/admin/downloads',   icon: <Download size={16} />,        show: true },
-    {
-      label: 'Messages',  href: '/admin/messages',    icon: <MessageSquare size={16} />,   show: true,
-      badge: unread > 0 ? unread : undefined,
-    },
-    { label: 'Blog',      href: '/admin/blog',         icon: <FileText size={16} />,        show: true },
-    { label: 'Users',     href: '/admin/users',        icon: <Users size={16} />,           show: user.role === 'super_admin' },
-    { label: 'Settings',  href: '/admin/settings',     icon: <Settings size={16} />,        show: true },
-  ].filter((n) => n.show)
+    { label: 'Dashboard', href: '/admin',           icon: <LayoutDashboard size={16} />, show: true },
+    { label: 'Analytics', href: '/admin/analytics', icon: <BarChart2 size={16} />,       show: true },
+    { label: 'Downloads', href: '/admin/downloads', icon: <Download size={16} />,        show: true },
+    { label: 'Messages',  href: '/admin/messages',  icon: <MessageSquare size={16} />,   show: true, badge: unread > 0 ? unread : undefined },
+    { label: 'Blog',      href: '/admin/blog',      icon: <FileText size={16} />,        show: true },
+    { label: 'Users',     href: '/admin/users',     icon: <Users size={16} />,           show: user.role === 'super_admin' },
+    { label: 'Settings',  href: '/admin/settings',  icon: <Settings size={16} />,        show: true },
+  ].filter(n => n.show)
 
   return (
     <div className="min-h-screen flex bg-[var(--bg)]" data-theme="dark">
@@ -84,26 +80,28 @@ export default async function AdminLayout({ children }: { children: React.ReactN
         </div>
 
         <nav className="flex-1 p-3 space-y-1">
-          {NAV.map((n) => (
+          {NAV.map(n => (
             <Link key={n.href} href={n.href}
               className="flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm text-[var(--text-2)] hover:text-[var(--text)] hover:bg-[var(--bg-hover)] transition-colors">
               {n.icon}
               <span className="flex-1">{n.label}</span>
               {'badge' in n && n.badge && (
                 <span className="min-w-[18px] h-[18px] px-1 rounded-full bg-blue-500 text-white text-[10px] font-bold flex items-center justify-center">
-                  {n.badge > 99 ? '99+' : n.badge}
+                  {(n.badge as number) > 99 ? '99+' : n.badge}
                 </span>
               )}
             </Link>
           ))}
         </nav>
 
-        {/* Current user */}
         <div className="p-3 border-t border-[var(--border)] space-y-2">
           <div className="flex items-center gap-2.5 px-2 py-1.5">
-            {user.imageUrl
-              ? <img src={user.imageUrl} alt="" className="w-7 h-7 rounded-full" />
-              : <div className="w-7 h-7 rounded-full bg-[var(--brand)]/30" />}
+            {user.avatarUrl
+              ? <img src={user.avatarUrl} alt="" className="w-7 h-7 rounded-full" />
+              : <div className="w-7 h-7 rounded-full bg-[var(--brand)]/30 flex items-center justify-center text-[10px] font-bold text-[var(--brand)]">
+                  {user.name.slice(0,2).toUpperCase()}
+                </div>
+            }
             <div className="min-w-0">
               <p className="text-xs font-semibold text-[var(--text)] truncate">{user.name}</p>
               <p className="text-[10px] text-[var(--brand)] uppercase tracking-wide font-bold">{user.role.replace('_', ' ')}</p>

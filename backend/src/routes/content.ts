@@ -11,7 +11,7 @@ import { sendEmail, isEmailConfigured, tplNewMessage, tplReply, tplAutoReply } f
 const router = Router()
 const PYTHON = process.env.PYTHON_SERVICE_URL ?? 'http://localhost:8000'
 
-// Every /admin/* route requires a cryptographically-verified Clerk admin session.
+// Every /admin/* route requires a cryptographically-verified Supabase admin session.
 router.use('/admin', requireAdmin)
 
 // ── Media uploads (for embedding images/files in blog posts) ──────────────────

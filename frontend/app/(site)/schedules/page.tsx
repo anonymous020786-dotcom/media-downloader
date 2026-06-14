@@ -1,7 +1,7 @@
 'use client'
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
-import { useUser } from '@clerk/nextjs'
+import { useAuth } from '@/components/auth/AuthContext'
 import { CalendarClock, Trash2, RefreshCw, LogIn, Plus, Clock, RepeatIcon } from 'lucide-react'
 import { toast } from 'sonner'
 import { fetchSchedules, deleteSchedule, type ScheduleRow } from '@/lib/api'
@@ -26,7 +26,7 @@ function nextRun(ts: number) {
 }
 
 export default function SchedulesPage() {
-  const { isSignedIn, isLoaded } = useUser()
+  const { isSignedIn, isLoaded } = useAuth()
   const [rows,    setRows]    = useState<ScheduleRow[]>([])
   const [loading, setLoading] = useState(true)
   const [deleting, setDeleting] = useState<string | null>(null)

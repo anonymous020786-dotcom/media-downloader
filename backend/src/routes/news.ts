@@ -50,7 +50,7 @@ async function loadFeed(f: { url: string; name: string; category: string }): Pro
   const hit = feedCache.get(f.url)
   if (hit && Date.now() - hit.at < FEED_TTL) return hit.items
   try {
-    const parsed = await gate(() => parser.parseURL(f.url))
+    const parsed = await gate(() => parser.parseURL(f.url)) as { items?: any[] }
     const items: Item[] = (parsed.items ?? []).slice(0, 100).map((it: any) => ({
       title: (it.title ?? '').trim(),
       link: it.link ?? it.guid ?? '',

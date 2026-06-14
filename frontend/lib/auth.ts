@@ -1,47 +1,58 @@
-import { auth, currentUser } from '@clerk/nextjs/server'
-import { clerkClient } from '@clerk/nextjs/server'
+import { createClient } from '@/lib/supabase/server'
 
-export type Role = 'super_admin' | 'admin' | 'individual'
-
-const ADMIN_EMAILS = (process.env.ADMIN_EMAILS ?? '')
-  .split(',').map((e) => e.trim().toLowerCase()).filter(Boolean)
+export type Role = 'user' | 'admin' | 'super_admin'
 
 export interface AppUser {
-  id:        string
-  email:     string
-  name:      string
-  imageUrl:  string
-  role:      Role
-  createdAt: number
+  id:          string
+  email:       string
+  name:        string
+  avatarUrl:   string
+  role:        Role
+  createdAt:   string
 }
 
-/** Resolve a user's role: publicMetadata.role wins; bootstrap emails get super_admin. */
-export function resolveRole(email: string | undefined, metaRole: unknown): Role {
-  if (metaRole === 'super_admin' || metaRole === 'admin' || metaRole === 'individual') {
-    return metaRole
-  }
-  if (email && ADMIN_EMAILS.includes(email.toLowerCase())) return 'super_admin'
-  return 'individual'
-}
+const API_BASE = (process.env.BACKEND_INTERNAL_URL ?? process.env.NEXT_PUBLIC_API_URL ?? 'http://backend:4000').replace(/\/$/, '')
 
-/** Get the current signed-in user with resolved role (or null). */
+/** Get the current signed-in user with their role from our MySQL users table. */
 export async function getCurrentAppUser(): Promise<AppUser | null> {
-  const user = await currentUser()
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
   if (!user) return null
-  const email = user.primaryEmailAddress?.emailAddress ?? user.emailAddresses[0]?.emailAddress ?? ''
+
+  // Fetch role from our backend (which reads MySQL)
+  try {
+    const session = await supabase.auth.getSession()
+    const token   = session.data.session?.access_token
+    const res     = await fetch(`${API_BASE}/api/users/me`, {
+      headers: { Authorization: `Bearer ${token}` },
+      next: { revalidate: 60 },
+    })
+    if (res.ok) {
+      const data = await res.json()
+      return {
+        id:        user.id,
+        email:     user.email ?? '',
+        name:      data.name ?? user.user_metadata?.full_name ?? user.email?.split('@')[0] ?? '',
+        avatarUrl: data.avatar_url ?? user.user_metadata?.avatar_url ?? '',
+        role:      data.role ?? 'user',
+        createdAt: user.created_at,
+      }
+    }
+  } catch { /* fall through to defaults */ }
+
   return {
     id:        user.id,
-    email,
-    name:      [user.firstName, user.lastName].filter(Boolean).join(' ') || user.username || email.split('@')[0],
-    imageUrl:  user.imageUrl,
-    role:      resolveRole(email, user.publicMetadata?.role),
-    createdAt: user.createdAt,
+    email:     user.email ?? '',
+    name:      user.user_metadata?.full_name ?? user.email?.split('@')[0] ?? '',
+    avatarUrl: user.user_metadata?.avatar_url ?? '',
+    role:      'user',
+    createdAt: user.created_at,
   }
 }
 
 export async function getRole(): Promise<Role> {
   const u = await getCurrentAppUser()
-  return u?.role ?? 'individual'
+  return u?.role ?? 'user'
 }
 
 export async function isAdmin(): Promise<boolean> {
@@ -53,25 +64,32 @@ export async function isSuperAdmin(): Promise<boolean> {
   return (await getRole()) === 'super_admin'
 }
 
-/** List all users (super_admin / admin). */
-export async function listUsers(): Promise<AppUser[]> {
-  const client = await clerkClient()
-  const res = await client.users.getUserList({ limit: 100, orderBy: '-created_at' })
-  return res.data.map((u) => {
-    const email = u.primaryEmailAddress?.emailAddress ?? u.emailAddresses[0]?.emailAddress ?? ''
-    return {
-      id:        u.id,
-      email,
-      name:      [u.firstName, u.lastName].filter(Boolean).join(' ') || u.username || email.split('@')[0],
-      imageUrl:  u.imageUrl,
-      role:      resolveRole(email, u.publicMetadata?.role),
-      createdAt: u.createdAt,
-    }
+/** List all users — calls our backend (admin-only endpoint). */
+export async function listUsers(token: string): Promise<AppUser[]> {
+  const res = await fetch(`${API_BASE}/api/users`, {
+    headers: { Authorization: `Bearer ${token}` },
+    next: { revalidate: 0 },
   })
+  if (!res.ok) return []
+  const rows = await res.json() as Array<{
+    id: string; email: string; name: string | null
+    avatar_url: string | null; role: string; created_at: string
+  }>
+  return rows.map(u => ({
+    id:        u.id,
+    email:     u.email,
+    name:      u.name ?? u.email.split('@')[0],
+    avatarUrl: u.avatar_url ?? '',
+    role:      u.role as Role,
+    createdAt: u.created_at,
+  }))
 }
 
-/** Change a user's role (writes to publicMetadata). */
-export async function setUserRole(userId: string, role: Role): Promise<void> {
-  const client = await clerkClient()
-  await client.users.updateUserMetadata(userId, { publicMetadata: { role } })
+/** Change a user's role — calls our backend. Only admin→user or user→admin allowed. */
+export async function setUserRole(userId: string, role: 'user' | 'admin', token: string): Promise<void> {
+  await fetch(`${API_BASE}/api/users/${userId}/role`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ role }),
+  })
 }

@@ -7,7 +7,7 @@
 #   • Mounts Let's Encrypt certs into nginx
 #   • Uses the production nginx config
 #   • Injects real domain URLs into frontend build args + environment
-#   • Uses production Clerk keys (pk_live_ / sk_live_) from .env.prod
+#   • Uses production Supabase keys (URL / anon / service-role / JWT secret) from .env.prod
 
 services:
 

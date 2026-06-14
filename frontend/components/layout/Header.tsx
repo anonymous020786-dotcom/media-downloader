@@ -8,7 +8,8 @@ import {
   Play, Camera, MessageCircle, Users, Film,
   Music, Globe, Zap, List, User, ChevronRight,
 } from 'lucide-react'
-import { UserButton, useUser } from '@clerk/nextjs'
+import { useAuth } from '@/components/auth/AuthContext'
+import UserMenu from '@/components/auth/UserMenu'
 import ThemeChanger from '@/components/widgets/ThemeChanger'
 import LanguageSwitcher from '@/components/i18n/LanguageSwitcher'
 import NotifBell from '@/components/widgets/NotifBell'
@@ -46,7 +47,7 @@ export default function Header() {
   const [megaOpen,     setMegaOpen]     = useState(false)
   const [scrolled,     setScrolled]     = useState(false)
   const [mobileDropOpen, setMobileDropOpen] = useState(false)
-  const { isSignedIn, isLoaded } = useUser()
+  const { isSignedIn, isLoaded } = useAuth()
   const pathname = usePathname()
   const megaRef  = useRef<HTMLDivElement>(null)
   const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -196,9 +197,7 @@ export default function Header() {
             </Link>
 
             {/* User avatar */}
-            {isLoaded && isSignedIn && (
-              <UserButton appearance={{ elements: { avatarBox: 'w-8 h-8' } }} />
-            )}
+            {isLoaded && isSignedIn && <UserMenu />}
 
             {/* Hamburger */}
             <button
@@ -289,8 +288,7 @@ export default function Header() {
             )}
             {isLoaded && isSignedIn && (
               <div className="flex items-center gap-3 px-3 py-2 rounded-xl bg-[var(--bg-card)]">
-                <UserButton appearance={{ elements: { avatarBox: 'w-8 h-8' } }} />
-                <span className="text-sm text-[var(--text-2)]">My account</span>
+                <UserMenu showLabel />
               </div>
             )}
           </div>
