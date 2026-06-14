@@ -1,8 +1,7 @@
 'use client'
 import { useEffect, useState } from 'react'
 import { History, ChevronDown, ChevronUp, RefreshCw, CheckCircle2, XCircle, Clock, Film, ImageIcon, Globe, FileText } from 'lucide-react'
-
-const API_BASE = (process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000').replace(/\/$/, '')
+import { fetchDownloadHistory } from '@/lib/api'
 
 interface HistoryItem {
   id:           number
@@ -50,8 +49,7 @@ export default function HistoryPanel() {
   const load = async (p = 1) => {
     setLoading(true)
     try {
-      const res = await fetch(`${API_BASE}/api/history?page=${p}&limit=20`)
-      const data = await res.json()
+      const data = await fetchDownloadHistory(p, 20)
       if (p === 1) {
         setItems(data.items)
       } else {
@@ -59,7 +57,7 @@ export default function HistoryPanel() {
       }
       setTotal(data.total)
       setPage(p)
-    } catch { }
+    } catch { setItems([]); setTotal(0) }
     finally { setLoading(false) }
   }
 

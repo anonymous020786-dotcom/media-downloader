@@ -2,7 +2,7 @@ import { Router } from 'express'
 import path from 'path'
 import fs from 'fs'
 import archiver from 'archiver'
-import { requireAuth } from '../middleware/requireAuth.js'
+import { optionalAuth, type AuthUser } from '../middleware/requireAuth.js'
 import { query } from '../db.js'
 
 const router = Router()
@@ -26,21 +26,23 @@ function getMime(filename: string): string {
   return MIME[ext] ?? 'application/octet-stream'
 }
 
-// Verify the requesting user owns this job (or is admin).
-async function ownsJob(userId: string, role: string, jobId: string): Promise<boolean> {
-  if (role === 'admin' || role === 'super_admin') return true
+// Verify the requester may access this job's files.
+// Anonymous jobs (no user_id) are public so logged-out downloads work;
+// jobs owned by a user are restricted to that user (or any admin).
+async function ownsJob(user: AuthUser | undefined, jobId: string): Promise<boolean> {
+  if (user && (user.role === 'admin' || user.role === 'super_admin')) return true
   const rows = await query<{ user_id: string | null }>(
     'SELECT user_id FROM download_stats WHERE job_id = ? LIMIT 1', [jobId]
   )
-  // Allow access if the job belongs to this user, or was anonymous (no user_id).
-  return !rows[0]?.user_id || rows[0].user_id === userId
+  const owner = rows[0]?.user_id
+  return !owner || owner === user?.id
 }
 
 // ── List files for a job ──────────────────────────────────────────────────────
-router.get('/:jobId', requireAuth, async (req, res) => {
+router.get('/:jobId', optionalAuth, async (req, res) => {
   const jobId = req.params.jobId as string
   if (!UUID_RE.test(jobId)) { res.status(400).json({ error: 'Invalid job ID' }); return }
-  if (!(await ownsJob(req.authUser!.id, req.authUser!.role, jobId))) {
+  if (!(await ownsJob(req.authUser, jobId))) {
     res.status(403).json({ error: 'Forbidden' }); return
   }
   const dir = path.join(DOWNLOAD_DIR, jobId)
@@ -55,10 +57,10 @@ router.get('/:jobId', requireAuth, async (req, res) => {
 })
 
 // ── ZIP download ──────────────────────────────────────────────────────────────
-router.get('/:jobId/zip', requireAuth, async (req, res) => {
+router.get('/:jobId/zip', optionalAuth, async (req, res) => {
   const jobId = req.params.jobId as string
   if (!UUID_RE.test(jobId)) { res.status(400).json({ error: 'Invalid job ID' }); return }
-  if (!(await ownsJob(req.authUser!.id, req.authUser!.role, jobId))) {
+  if (!(await ownsJob(req.authUser, jobId))) {
     res.status(403).json({ error: 'Forbidden' }); return
   }
   const dir = path.join(DOWNLOAD_DIR, jobId)
@@ -80,10 +82,10 @@ router.get('/:jobId/zip', requireAuth, async (req, res) => {
 })
 
 // ── Stream/download a file ────────────────────────────────────────────────────
-router.get('/:jobId/:filename', requireAuth, async (req, res) => {
+router.get('/:jobId/:filename', optionalAuth, async (req, res) => {
   const jobId = req.params.jobId as string
   if (!UUID_RE.test(jobId)) { res.status(400).json({ error: 'Invalid job ID' }); return }
-  if (!(await ownsJob(req.authUser!.id, req.authUser!.role, jobId))) {
+  if (!(await ownsJob(req.authUser, jobId))) {
     res.status(403).json({ error: 'Forbidden' }); return
   }
   const safe     = path.basename(req.params.filename as string)
