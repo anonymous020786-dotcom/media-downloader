@@ -24,6 +24,7 @@ const LINKS = {
     { label: 'FAQ',            href: '/faq'             },
     { label: 'Supported Sites',href: '/supported-sites' },
     { label: 'How It Works',   href: '/#how-it-works'   },
+    { label: 'System Status',  href: '/status'          },
     { label: 'Report Issue',   href: '/contact'         },
     { label: 'Sitemap',        href: '/sitemap-page'    },
   ],

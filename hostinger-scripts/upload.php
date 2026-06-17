@@ -29,7 +29,7 @@ function fail($msg, $code = 400) {
 // ── Auth ──────────────────────────────────────────────────────────────────────
 $headers = function_exists('getallheaders') ? getallheaders() : [];
 $key = $headers['X-API-Key'] ?? $headers['x-api-key'] ?? ($_SERVER['HTTP_X_API_KEY'] ?? '');
-if (!hash_equals($API_KEY, (string) $key)) {
+if ($API_KEY === '' || !hash_equals($API_KEY, (string) $key)) {
   fail('Unauthorized', 401);
 }
 

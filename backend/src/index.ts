@@ -26,6 +26,7 @@ import mfaRouter     from './routes/mfa.js'
 import proxyRouter   from './routes/proxy.js'
 import streamRouter  from './routes/stream.js'
 import cookiesRouter from './routes/cookies.js'
+import statusRouter  from './routes/status.js'
 
 const app  = express()
 const PORT = Number(process.env.PORT ?? 4000)
@@ -118,6 +119,7 @@ app.use('/api/mfa',          mfaRouter)
 app.use('/api/proxy',        proxyRouter)
 app.use('/api/stream',       streamRouter)
 app.use('/api/cookies',      cookiesRouter)
+app.use('/api/status',       statusRouter)
 
 // Serve uploaded media (images/files embedded in blog posts)
 import { UPLOAD_DIR } from './routes/content.js'

@@ -365,6 +365,17 @@ export const setDefaultProxy = (id: string) =>
 export const deleteProxy = (id: string) =>
   _f<{ success: boolean }>(`/api/proxy/${id}`, { method: 'DELETE' })
 
+// ── Public system status ──────────────────────────────────────────────────────
+export interface SystemStatus {
+  status: 'operational' | 'degraded' | 'major_outage'
+  updated_at: string
+  checks: Record<string, 'ok' | 'down'>
+  engines: Record<string, string | null>
+  disk: { percent_used: number; free: number; total: number } | null
+  sites: { named_extractors: number; by_engine: Record<string, number> } | null
+}
+export const fetchSystemStatus = () => _f<SystemStatus>('/api/status')
+
 // ── Disk usage ────────────────────────────────────────────────────────────────
 export interface DiskInfo {
   total: number; used: number; free: number; percent_used: number; downloads_bytes: number

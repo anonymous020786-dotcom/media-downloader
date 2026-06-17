@@ -2,6 +2,11 @@ import { Queue, Worker } from 'bullmq'
 import IORedis from 'ioredis'
 import axios from 'axios'
 import type { DownloadJob } from '../types.js'
+import { resolveProxy } from '../routes/proxy.js'
+
+// Errors that usually mean "this CDN/site blocked our server IP" — worth a
+// one-shot retry through the user's proxy/VPN pool before giving up.
+const BLOCK_RE = /\b(403|451|429)\b|forbidden|geo[\s-]?block|geo[\s-]?restrict|not available|unavailable in your|region|blocked|access denied|country/i
 
 const REDIS_URL   = process.env.REDIS_URL            ?? 'redis://localhost:6379'
 const PYTHON_URL  = process.env.PYTHON_SERVICE_URL    ?? 'http://localhost:8000'
@@ -40,33 +45,54 @@ export function startWorker() {
         'EX', 86400
       ).catch(() => {})
 
-      const result = await axios.post(`${PYTHON_URL}/download`, {
-        url:              d.url,
-        job_id:           d.jobId,
-        media_type:       d.mediaType,
-        format:           d.format,
-        quality:          d.quality  ?? 'best',
-        format_id:        d.formatId ?? null,
-        max_items:        d.maxItems  ?? null,
-        start_index:      d.startIndex ?? 1,
-        subtitles:        d.subtitles  ?? false,
-        embed_thumbnail:  d.embedThumbnail ?? false,
-        embed_metadata:   d.embedMetadata  ?? true,
-        cookies:          d.cookies  ?? null,
-        proxy:            d.proxy    ?? null,
-        capture:          d.capture  ?? false,
-        capture_seconds:  d.captureSeconds ?? null,
-        start_time:           d.startTime           ?? null,
-        end_time:             d.endTime             ?? null,
-        subtitle_langs:       d.subtitleLangs        ?? null,
-        sponsor_block:        d.sponsorBlock         ?? false,
-        split_chapters:       d.splitChapters        ?? false,
-        normalize_audio:      d.normalizeAudio       ?? false,
-        write_thumbnail:      d.writeThumbnail       ?? false,
-        output_template:      d.outputTemplate       ?? null,
-        speed_limit:          d.speedLimit           ?? null,
-        concurrent_fragments: d.concurrentFragments  ?? 16,
-      }, { timeout: 0 })
+      const callPython = (proxy: string | null) =>
+        axios.post(`${PYTHON_URL}/download`, {
+          url:              d.url,
+          job_id:           d.jobId,
+          media_type:       d.mediaType,
+          format:           d.format,
+          quality:          d.quality  ?? 'best',
+          format_id:        d.formatId ?? null,
+          max_items:        d.maxItems  ?? null,
+          start_index:      d.startIndex ?? 1,
+          subtitles:        d.subtitles  ?? false,
+          embed_thumbnail:  d.embedThumbnail ?? false,
+          embed_metadata:   d.embedMetadata  ?? true,
+          cookies:          d.cookies  ?? null,
+          proxy,
+          capture:          d.capture  ?? false,
+          capture_seconds:  d.captureSeconds ?? null,
+          start_time:           d.startTime           ?? null,
+          end_time:             d.endTime             ?? null,
+          subtitle_langs:       d.subtitleLangs        ?? null,
+          sponsor_block:        d.sponsorBlock         ?? false,
+          split_chapters:       d.splitChapters        ?? false,
+          normalize_audio:      d.normalizeAudio       ?? false,
+          write_thumbnail:      d.writeThumbnail       ?? false,
+          output_template:      d.outputTemplate       ?? null,
+          speed_limit:          d.speedLimit           ?? null,
+          concurrent_fragments: d.concurrentFragments  ?? 16,
+        }, { timeout: 0 })
+
+      let result
+      try {
+        result = await callPython(d.proxy ?? null)
+      } catch (err: any) {
+        // One-shot proxy retry: only when the failure looks like an IP block, the
+        // job wasn't already using a proxy, and the signed-in user has a proxy/VPN
+        // available. resolveProxy('auto', …) returns undefined if they have none,
+        // in which case we just rethrow the original error.
+        const msg = String(err?.response?.data?.detail ?? err?.message ?? '')
+        const eligible = !!d.userId && !d.proxy && BLOCK_RE.test(msg)
+        const proxyUrl = eligible ? await resolveProxy('auto', d.userId!).catch(() => undefined) : undefined
+        if (!proxyUrl) throw err
+        await redisConnection.set(
+          `job:${d.jobId}:progress`,
+          JSON.stringify({ status: 'starting', progress: 0, note: 'blocked — retrying via proxy' }),
+          'EX', 86400
+        ).catch(() => {})
+        result = await callPython(proxyUrl)   // if this fails too, the error propagates
+      }
 
       // ── On success: emit done event + FCM push ───────────────────────────────
       const files: string[] = result.data?.files ?? []

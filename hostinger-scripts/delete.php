@@ -4,10 +4,14 @@
  * --------------------------------------------------------------------------
  * Place at:  public_html/api/delete.php
  * Backend POSTs JSON { "filename": "...", "folder": "avatars" } + X-API-Key.
+ *
+ * The shared secret is read from the MEDIADL_API_KEY env var (set it on the
+ * host, e.g. via .htaccess `SetEnv MEDIADL_API_KEY ...`). Must match upload.php
+ * and the backend's HOSTINGER_API_KEY. Never hardcode the secret here.
  */
 
 // ── CONFIG (must match upload.php) ──────────────────────────────────────────────
-$API_KEY      = getenv('MEDIADL_API_KEY') ?: 'CHANGE_ME_TO_A_LONG_RANDOM_SECRET';
+$API_KEY      = getenv('MEDIADL_API_KEY') ?: '';
 $UPLOAD_DIR   = __DIR__ . '/../uploads';
 $ALLOWED_DIRS = ['avatars', 'images', 'uploads'];
 // ──────────────────────────────────────────────────────────────────────────────
@@ -22,7 +26,7 @@ function fail($msg, $code = 400) {
 
 $headers = function_exists('getallheaders') ? getallheaders() : [];
 $key = $headers['X-API-Key'] ?? $headers['x-api-key'] ?? ($_SERVER['HTTP_X_API_KEY'] ?? '');
-if (!hash_equals($API_KEY, (string) $key)) fail('Unauthorized', 401);
+if ($API_KEY === '' || !hash_equals($API_KEY, (string) $key)) fail('Unauthorized', 401);
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') fail('Method not allowed', 405);
 
 $body     = json_decode(file_get_contents('php://input'), true) ?: [];
