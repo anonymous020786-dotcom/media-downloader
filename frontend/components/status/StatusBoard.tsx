@@ -1,6 +1,6 @@
 'use client'
 import { useEffect, useState } from 'react'
-import { Activity, RefreshCw, CheckCircle2, XCircle, HardDrive, Boxes } from 'lucide-react'
+import { Activity, RefreshCw, CheckCircle2, XCircle, HardDrive, Boxes, AlertTriangle } from 'lucide-react'
 import { fetchSystemStatus, fmtBytes, type SystemStatus } from '@/lib/api'
 
 const SERVICE_LABELS: Record<string, string> = {
@@ -30,8 +30,22 @@ export default function StatusBoard() {
 
   const banner = s ? BANNER[s.status] : null
 
+  const incidentCls = s?.incident?.severity === 'critical'
+    ? 'bg-red-900/30 text-red-200 border-red-700/50'
+    : s?.incident?.severity === 'info'
+    ? 'bg-sky-900/30 text-sky-200 border-sky-700/50'
+    : 'bg-amber-900/30 text-amber-200 border-amber-700/50'
+
   return (
     <div className="space-y-6">
+      {/* Admin-set incident notice */}
+      {s?.incident?.active && (
+        <div className={`flex items-start gap-2.5 px-5 py-4 rounded-2xl border ${incidentCls}`}>
+          <AlertTriangle size={18} className="shrink-0 mt-0.5" />
+          <p className="text-sm font-medium whitespace-pre-line">{s.incident.message}</p>
+        </div>
+      )}
+
       {/* Overall banner */}
       <div className={`flex items-center justify-between gap-3 px-5 py-4 rounded-2xl border ${
         err ? 'bg-red-900/30 text-red-300 border-red-700/40' : banner?.cls ?? 'bg-[var(--bg-card)] text-[var(--text-2)] border-[var(--border)]'

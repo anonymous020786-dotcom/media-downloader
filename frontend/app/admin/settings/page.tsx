@@ -2,7 +2,7 @@
 import { useEffect, useState } from 'react'
 import {
   Save, RefreshCw, Plus, Cpu, ArrowUpCircle, Mail,
-  CheckCircle2, XCircle, Loader2, Send, Eye, EyeOff,
+  CheckCircle2, XCircle, Loader2, Send, Eye, EyeOff, Megaphone,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import {
@@ -247,6 +247,85 @@ const LABELS: Record<string, string> = {
   total_sites: 'Total Sites',
 }
 
+// ── Status incident banner panel ──────────────────────────────────────────────
+function IncidentPanel() {
+  const [active, setActive]     = useState(false)
+  const [message, setMessage]   = useState('')
+  const [severity, setSeverity] = useState('warning')
+  const [loading, setLoading]   = useState(true)
+  const [saving, setSaving]     = useState(false)
+
+  const load = async () => {
+    setLoading(true)
+    try {
+      const rows = await adminSettings()
+      const m: Record<string, string> = {}
+      rows.forEach((r) => { m[r.key_name] = r.value })
+      setActive(m.status_incident_active === '1')
+      setMessage(m.status_incident_message ?? '')
+      setSeverity(['info', 'warning', 'critical'].includes(m.status_incident_severity) ? m.status_incident_severity : 'warning')
+    } catch { /* ignore */ } finally { setLoading(false) }
+  }
+  useEffect(() => { load() }, [])
+
+  const persist = async (nextActive: boolean) => {
+    setSaving(true)
+    try {
+      await adminUpdateSettings({
+        status_incident_active:   nextActive ? '1' : '0',
+        status_incident_message:  message,
+        status_incident_severity: severity,
+      })
+      setActive(nextActive)
+      toast.success(nextActive ? 'Incident banner published' : 'Incident banner cleared',
+        { description: 'Visible on the public /status page within ~20s.' })
+    } catch (e: any) { toast.error(e.message) } finally { setSaving(false) }
+  }
+
+  return (
+    <div className="mb-8 rounded-2xl bg-[var(--bg-card)] border border-[var(--border)] overflow-hidden">
+      <div className="flex items-center justify-between px-5 py-3 border-b border-[var(--border)]">
+        <h2 className="flex items-center gap-2 text-sm font-bold text-[var(--text)]">
+          <Megaphone size={15} className="text-[var(--brand)]" /> Status Incident Banner
+        </h2>
+        {active && <span className="text-[11px] font-semibold px-2 py-0.5 rounded-md bg-amber-900/40 text-amber-300">LIVE</span>}
+      </div>
+      <div className="p-5 space-y-3">
+        {loading ? <p className="text-sm text-[var(--text-3)]">Loading…</p> : (
+          <>
+            <textarea
+              value={message} onChange={(e) => setMessage(e.target.value)} rows={2}
+              placeholder="e.g. We're investigating slow downloads on some sites. Updates to follow."
+              className="w-full bg-[var(--bg)] border border-[var(--border)] focus:border-[var(--brand)] rounded-lg px-3 py-2 text-sm text-[var(--text)] outline-none resize-none"
+            />
+            <div className="flex items-center gap-3">
+              <select value={severity} onChange={(e) => setSeverity(e.target.value)} aria-label="Incident severity"
+                className="bg-[var(--bg)] border border-[var(--border)] rounded-lg px-3 py-2 text-sm text-[var(--text)] outline-none">
+                <option value="info">Info (blue)</option>
+                <option value="warning">Warning (amber)</option>
+                <option value="critical">Critical (red)</option>
+              </select>
+              <div className="flex-1" />
+              {active && (
+                <button onClick={() => persist(false)} disabled={saving}
+                  className="px-3 py-2 rounded-lg text-sm font-semibold border border-[var(--border)] text-[var(--text-2)] hover:text-[var(--text)] disabled:opacity-40">
+                  Clear
+                </button>
+              )}
+              <button onClick={() => persist(true)} disabled={saving || !message.trim()}
+                className="flex items-center gap-2 px-4 py-2 bg-[var(--brand)] hover:bg-[var(--brand-dark)] disabled:opacity-40 text-white font-semibold text-sm rounded-lg">
+                {saving ? <Loader2 size={14} className="animate-spin" /> : <Megaphone size={14} />}
+                {active ? 'Update' : 'Publish'}
+              </button>
+            </div>
+            <p className="text-[11px] text-[var(--text-3)]">Shown to all visitors on the public <span className="font-mono">/status</span> page. Clear it once the incident is resolved.</p>
+          </>
+        )}
+      </div>
+    </div>
+  )
+}
+
 export default function AdminSettings() {
   const [rows,    setRows]    = useState<Row[]>([])
   const [dirty,   setDirty]   = useState<Record<string, string>>({})
@@ -299,6 +378,7 @@ export default function AdminSettings() {
       </div>
 
       <EnginesPanel />
+      <IncidentPanel />
       <EmailPanel />
 
       <div className="rounded-2xl bg-[var(--bg-card)] border border-[var(--border)] divide-y divide-[var(--border)]">

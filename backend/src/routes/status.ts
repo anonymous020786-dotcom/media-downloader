@@ -1,6 +1,21 @@
 import { Router } from 'express'
 import axios from 'axios'
 import { getDiskInfo } from './storage.js'
+import { query } from '../db.js'
+
+/** Read the admin-set incident banner (if any) from site_settings. */
+async function getIncident(): Promise<{ active: boolean; message: string; severity: string } | null> {
+  try {
+    const rows = await query<{ key_name: string; value: string }>(
+      "SELECT key_name, value FROM site_settings WHERE key_name IN ('status_incident_active','status_incident_message','status_incident_severity')"
+    )
+    const m: Record<string, string> = {}
+    rows.forEach((r) => { m[r.key_name] = r.value })
+    if (m.status_incident_active !== '1' || !m.status_incident_message) return null
+    const severity = ['info', 'warning', 'critical'].includes(m.status_incident_severity) ? m.status_incident_severity : 'warning'
+    return { active: true, message: m.status_incident_message.slice(0, 500), severity }
+  } catch { return null }
+}
 
 /**
  * Public system-status endpoint.
@@ -35,11 +50,14 @@ router.get('/', async (_req, res) => {
   let sites: any = null
   try { const { data } = await axios.get(`${PYTHON}/engines/sites`, { timeout: 8_000 }); sites = data } catch { /* optional */ }
 
+  const incident = await getIncident()
+
   const allOk = Object.values(checks).every((v) => v === 'ok')
   res.set('Cache-Control', 'public, max-age=15')
   res.json({
     status: allOk ? 'operational' : (checks.python === 'down' || checks.mysql === 'down') ? 'major_outage' : 'degraded',
     updated_at: new Date().toISOString(),
+    incident,
     checks,
     engines,
     disk: disk ? { percent_used: disk.percent_used, free: disk.free, total: disk.total } : null,

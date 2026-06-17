@@ -369,6 +369,7 @@ export const deleteProxy = (id: string) =>
 export interface SystemStatus {
   status: 'operational' | 'degraded' | 'major_outage'
   updated_at: string
+  incident: { active: boolean; message: string; severity: string } | null
   checks: Record<string, 'ok' | 'down'>
   engines: Record<string, string | null>
   disk: { percent_used: number; free: number; total: number } | null
