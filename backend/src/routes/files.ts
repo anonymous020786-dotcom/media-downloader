@@ -2,8 +2,7 @@ import { Router } from 'express'
 import path from 'path'
 import fs from 'fs'
 import archiver from 'archiver'
-import { optionalAuth, type AuthUser } from '../middleware/requireAuth.js'
-import { query } from '../db.js'
+import { optionalAuth } from '../middleware/requireAuth.js'
 
 const router = Router()
 const DOWNLOAD_DIR = path.resolve(process.env.DOWNLOAD_DIR ?? './downloads')
@@ -26,25 +25,18 @@ function getMime(filename: string): string {
   return MIME[ext] ?? 'application/octet-stream'
 }
 
-// Verify the requester may access this job's files.
-// Anonymous jobs (no user_id) are public so logged-out downloads work;
-// jobs owned by a user are restricted to that user (or any admin).
-async function ownsJob(user: AuthUser | undefined, jobId: string): Promise<boolean> {
-  if (user && (user.role === 'admin' || user.role === 'super_admin')) return true
-  const rows = await query<{ user_id: string | null }>(
-    'SELECT user_id FROM download_stats WHERE job_id = ? LIMIT 1', [jobId]
-  )
-  const owner = rows[0]?.user_id
-  return !owner || owner === user?.id
-}
+// File access is by the job's UUID, which acts as an unguessable capability
+// (122 bits of randomness). This is required because browsers cannot attach the
+// Authorization header to <video src>, <img src>, or download-link navigations —
+// so a per-user Bearer check would make a logged-in user unable to even play or
+// download their OWN files. Serving by UUID ("anyone with the link") is the
+// standard pattern for media and fixes that. The UUID is only ever known to the
+// owner and is not enumerable.
 
 // ── List files for a job ──────────────────────────────────────────────────────
 router.get('/:jobId', optionalAuth, async (req, res) => {
   const jobId = req.params.jobId as string
   if (!UUID_RE.test(jobId)) { res.status(400).json({ error: 'Invalid job ID' }); return }
-  if (!(await ownsJob(req.authUser, jobId))) {
-    res.status(403).json({ error: 'Forbidden' }); return
-  }
   const dir = path.join(DOWNLOAD_DIR, jobId)
   if (!fs.existsSync(dir)) { res.status(404).json({ error: 'Not found' }); return }
   const files = fs.readdirSync(dir)
@@ -60,9 +52,6 @@ router.get('/:jobId', optionalAuth, async (req, res) => {
 router.get('/:jobId/zip', optionalAuth, async (req, res) => {
   const jobId = req.params.jobId as string
   if (!UUID_RE.test(jobId)) { res.status(400).json({ error: 'Invalid job ID' }); return }
-  if (!(await ownsJob(req.authUser, jobId))) {
-    res.status(403).json({ error: 'Forbidden' }); return
-  }
   const dir = path.join(DOWNLOAD_DIR, jobId)
   if (!dir.startsWith(DOWNLOAD_DIR + path.sep) || !fs.existsSync(dir)) {
     res.status(404).json({ error: 'Not found' }); return
@@ -85,9 +74,6 @@ router.get('/:jobId/zip', optionalAuth, async (req, res) => {
 router.get('/:jobId/:filename', optionalAuth, async (req, res) => {
   const jobId = req.params.jobId as string
   if (!UUID_RE.test(jobId)) { res.status(400).json({ error: 'Invalid job ID' }); return }
-  if (!(await ownsJob(req.authUser, jobId))) {
-    res.status(403).json({ error: 'Forbidden' }); return
-  }
   const safe     = path.basename(req.params.filename as string)
   const filePath = path.join(DOWNLOAD_DIR, jobId, safe)
   if (!filePath.startsWith(DOWNLOAD_DIR + path.sep)) {

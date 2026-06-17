@@ -48,9 +48,12 @@ export default function StoragePanel() {
 
   return (
     <div className="rounded-2xl border border-[#21293a] overflow-hidden">
-      <button
+      <div
+        role="button"
+        tabIndex={0}
         onClick={() => setOpen(!open)}
-        className="w-full flex items-center justify-between px-4 py-3 bg-[#161b27] hover:bg-[#1a2235] transition-colors"
+        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setOpen(!open) } }}
+        className="w-full flex items-center justify-between px-4 py-3 bg-[#161b27] hover:bg-[#1a2235] transition-colors cursor-pointer"
       >
         <span className="flex items-center gap-2 text-slate-400 text-sm">
           <HardDrive size={14} />
@@ -69,6 +72,7 @@ export default function StoragePanel() {
         <span className="flex items-center gap-2">
           {open && data && data.total_jobs > 0 && (
             <button
+              type="button"
               onClick={(e) => { e.stopPropagation(); handleClearAll() }}
               disabled={clearing}
               className="flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] text-red-500 hover:bg-red-900/20 transition-colors font-semibold"
@@ -79,14 +83,15 @@ export default function StoragePanel() {
             </button>
           )}
           {open && (
-            <button onClick={(e) => { e.stopPropagation(); load() }}
+            <button type="button" onClick={(e) => { e.stopPropagation(); load() }}
+              title="Refresh" aria-label="Refresh storage list"
               className={`p-1 rounded hover:text-white text-slate-500 transition-colors ${loading ? 'animate-spin' : ''}`}>
               <RefreshCw size={12} />
             </button>
           )}
           {open ? <ChevronUp size={14} className="text-slate-500" /> : <ChevronDown size={14} className="text-slate-500" />}
         </span>
-      </button>
+      </div>
 
       {open && (
         <div className="bg-[#0d1117] border-t border-[#21293a]">
@@ -130,7 +135,7 @@ export default function StoragePanel() {
                         {job.file_count} file{job.file_count !== 1 ? 's' : ''} · {fmtBytes(job.total_size)}
                       </p>
                     </div>
-                    <button onClick={() => handleDelete(job.job_id)}
+                    <button type="button" onClick={() => handleDelete(job.job_id)}
                       className="p-1.5 rounded-lg text-slate-600 hover:text-red-400 hover:bg-red-900/20 transition-colors ml-2"
                       title="Delete this job's files">
                       <Trash2 size={12} />

@@ -1,5 +1,6 @@
 'use client'
 import type { AnalyzeResult } from '@/lib/types'
+import { fmtBytes } from '@/lib/api'
 
 interface Props {
   info:       AnalyzeResult
@@ -73,6 +74,7 @@ export default function FormatSelector({ info, format, quality, onFormat, onQual
   const isAudio   = AUDIO_FMTS.has(format)
   const fmts      = isVideo ? VIDEO_FMTS : IMAGE_FMTS
   const qualities = info.qualities ?? []
+  const detailed  = info.format_options ?? []
 
   const activePreset = isVideo
     ? VIDEO_PRESETS.find((p) => p.format === format && p.quality === quality) ?? null
@@ -119,10 +121,30 @@ export default function FormatSelector({ info, format, quality, onFormat, onQual
           </span>
           <div className="flex flex-wrap gap-1.5">
             <Chip label="Best" active={quality==='best'} bg="bg-violet-600" onClick={() => onQuality('best')} />
-            {qualities.map((q) => (
-              <Chip key={q} label={`${q}p`} active={quality===String(q)} bg="bg-violet-600"
-                onClick={() => onQuality(String(q))} />
-            ))}
+            {detailed.length > 0
+              ? detailed.map((o) => {
+                  const bits = [
+                    o.fps && o.fps > 30 ? `${o.fps}fps` : null,
+                    o.size ? fmtBytes(o.size) : null,
+                    o.vcodec ? o.vcodec : null,
+                  ].filter(Boolean).join(' · ')
+                  return (
+                    <button key={o.height} type="button" title={bits || undefined}
+                      onClick={() => onQuality(String(o.height))}
+                      className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all duration-100 border ${
+                        quality===String(o.height)
+                          ? 'bg-violet-600 text-white border-transparent shadow-md'
+                          : 'bg-transparent text-[#94a3b8] border-[#21293a] hover:border-[#2d3a4f] hover:text-[#f1f5f9]'
+                      }`}>
+                      <span className="uppercase tracking-wide">{o.height}p</span>
+                      {bits && <span className="ml-1.5 font-medium normal-case opacity-70">{bits}</span>}
+                    </button>
+                  )
+                })
+              : qualities.map((q) => (
+                  <Chip key={q} label={`${q}p`} active={quality===String(q)} bg="bg-violet-600"
+                    onClick={() => onQuality(String(q))} />
+                ))}
           </div>
         </div>
       )}

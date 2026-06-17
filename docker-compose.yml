@@ -60,9 +60,15 @@ services:
     environment:
       REDIS_URL: redis://redis:6379
       DOWNLOAD_DIR: /downloads
-      MAX_CONCURRENT_DOWNLOADS: "5"
+      # Tuned for a 2 vCPU box. Override in .env for bigger machines.
+      MAX_CONCURRENT_DOWNLOADS: "${MAX_CONCURRENT_DOWNLOADS:-3}"
+      DOWNLOAD_TTL_DAYS: "${DOWNLOAD_TTL_DAYS:-7}"
+      DEFAULT_BEST_HEIGHT: "${DEFAULT_BEST_HEIGHT:-1080}"
       MAX_PAGE_IMAGES: "2000"
-      VERIFY_SSL: "true"
+      # Redirects (URL shorteners) are always followed regardless of this.
+      # Keep TLS verification ON by default; set VERIFY_SSL=false in .env only
+      # if you must reach a specific site with a broken/self-signed cert.
+      VERIFY_SSL: "${VERIFY_SSL:-true}"
     depends_on:
       redis:
         condition: service_healthy
@@ -89,7 +95,7 @@ services:
       PYTHON_SERVICE_URL: http://python-service:8000
       DOWNLOAD_DIR: /downloads
       PORT: "4000"
-      WORKER_CONCURRENCY: "5"
+      WORKER_CONCURRENCY: "${WORKER_CONCURRENCY:-3}"
       NODE_ENV: production
       MYSQL_HOST: mysql
       MYSQL_PORT: "3306"
@@ -98,6 +104,7 @@ services:
       MYSQL_PASSWORD: ${MYSQL_PASSWORD:-mediadlpass}
       # Auth: verify Supabase JWTs server-side
       SUPABASE_JWT_SECRET: ${SUPABASE_JWT_SECRET}
+      SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL}
       SUPER_ADMIN_EMAIL: ${SUPER_ADMIN_EMAIL:-}
       ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:3000,http://localhost}
       TMDB_API_KEY: ${TMDB_API_KEY:-}
@@ -157,7 +164,10 @@ services:
       context: ./frontend
       dockerfile: Dockerfile
       args:
-        NEXT_PUBLIC_API_URL: http://localhost:4000
+        # Empty = same-origin (relative /api). nginx proxies /api, /socket.io and
+        # SSE to the backend, so this works on localhost, LAN IP and any domain
+        # with zero CORS/scheme issues. (The prod-domain override sets the https URL.)
+        NEXT_PUBLIC_API_URL: ""
         NEXT_PUBLIC_SITE_URL: http://localhost
         NEXT_PUBLIC_SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL}
         NEXT_PUBLIC_SUPABASE_ANON_KEY: ${NEXT_PUBLIC_SUPABASE_ANON_KEY}
@@ -174,10 +184,11 @@ services:
         NEXT_PUBLIC_FIREBASE_VAPID_KEY: ${NEXT_PUBLIC_FIREBASE_VAPID_KEY:-}
         NEXT_PUBLIC_BUILD_TIME: ${NEXT_PUBLIC_BUILD_TIME:-}
         NEXT_PUBLIC_COMMIT_HASH: ${NEXT_PUBLIC_COMMIT_HASH:-local}
-    ports:
-      - "3000:3000"
+    # No host port — the frontend is reached only via nginx (single origin on :80).
+    expose:
+      - "3000"
     environment:
-      NEXT_PUBLIC_API_URL: http://localhost:4000
+      NEXT_PUBLIC_API_URL: ""
       BACKEND_INTERNAL_URL: http://backend:4000
       NEXT_PUBLIC_SITE_URL: http://localhost
       NODE_ENV: production

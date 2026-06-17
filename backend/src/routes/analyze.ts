@@ -1,26 +1,43 @@
 import { Router } from 'express'
 import axios from 'axios'
+import { requireAuth } from '../middleware/requireAuth.js'
+import { makeStreamUrl } from './stream.js'
 
 const router  = Router()
 const PYTHON  = process.env.PYTHON_SERVICE_URL ?? 'http://localhost:8000'
 
-router.post('/', async (req, res) => {
+router.post('/', requireAuth, async (req, res) => {
   const { url } = req.body as { url?: string }
   if (!url || typeof url !== 'string') { res.status(400).json({ error: 'url is required' }); return }
   try {
-    const { data } = await axios.post(`${PYTHON}/analyze`, { url }, { timeout: 35_000 })
+    const { data } = await axios.post(`${PYTHON}/analyze`, { url }, { timeout: 60_000 })
     res.json(data)
   } catch (e: any) {
-    res.status(502).json({ error: e.response?.data?.detail ?? e.message })
+    const status = e.response?.status
+    const detail = e.response?.data?.detail ?? e.message
+    // The analyzer returns 4xx for unsupported/invalid URLs — forward that as a
+    // clear client error instead of a generic 502 "Bad Gateway".
+    if (status && status >= 400 && status < 500) {
+      res.status(status).json({ error: typeof detail === 'string' ? detail : 'This URL could not be processed' })
+      return
+    }
+    res.status(502).json({ error: `Could not analyze this URL — it may be unsupported, private, or temporarily unavailable.` })
   }
 })
 
 // Resolve actual playable stream URL for the video player
-router.post('/stream-url', async (req, res) => {
+router.post('/stream-url', requireAuth, async (req, res) => {
   const { url } = req.body as { url?: string }
   if (!url || typeof url !== 'string') { res.status(400).json({ error: 'url is required' }); return }
   try {
-    const { data } = await axios.post(`${PYTHON}/stream-url`, { url }, { timeout: 45_000 })
+    const { data } = await axios.post(`${PYTHON}/stream-url`, { url }, { timeout: 60_000 })
+    // For direct (non-HLS/DASH) streams, route playback through the referer-aware
+    // proxy so CDN-locked sources (adult / OTT / referer-protected) play in the
+    // browser instead of 403-ing. HLS/DASH manifests stay direct for hls.js.
+    const proto = (data.protocol ?? '').toLowerCase()
+    if (data.stream_url && proto !== 'hls' && proto !== 'dash' && !/\.(m3u8|mpd)(\?|$)/i.test(data.stream_url)) {
+      data.proxy_url = makeStreamUrl(data.stream_url, url)
+    }
     res.json(data)
   } catch (e: any) {
     res.status(e.response?.status ?? 502).json({ error: e.response?.data?.detail ?? e.message })
@@ -28,7 +45,7 @@ router.post('/stream-url', async (req, res) => {
 })
 
 // Preview images from a page (for MediaPreviewGrid)
-router.post('/preview-page', async (req, res) => {
+router.post('/preview-page', requireAuth, async (req, res) => {
   const { url } = req.body as { url?: string }
   if (!url) { res.status(400).json({ error: 'url is required' }); return }
   try {
@@ -40,7 +57,7 @@ router.post('/preview-page', async (req, res) => {
 })
 
 // List playlist items (for MediaPreviewGrid)
-router.post('/list-playlist', async (req, res) => {
+router.post('/list-playlist', requireAuth, async (req, res) => {
   const { url } = req.body as { url?: string }
   if (!url) { res.status(400).json({ error: 'url is required' }); return }
   try {

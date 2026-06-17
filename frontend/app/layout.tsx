@@ -7,6 +7,7 @@ import { AuthProvider } from '@/components/auth/AuthContext'
 import WhatsAppButton from '@/components/widgets/WhatsAppButton'
 import TawkChat from '@/components/widgets/TawkChat'
 import AuthSync from '@/components/auth/AuthSync'
+import BackgroundDownloads from '@/components/BackgroundDownloads'
 import LanguageProvider from '@/components/i18n/LanguageProvider'
 import { CountryProvider } from '@/components/widgets/CountrySwitcher'
 import PWAInstall from '@/components/widgets/PWAInstall'
@@ -153,6 +154,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <CountryProvider>
             <AuthSync />
             {children}
+            <BackgroundDownloads />
             <WhatsAppButton phone={process.env.NEXT_PUBLIC_WHATSAPP_NUMBER ?? '+1234567890'} />
             <TawkChat
               propertyId={process.env.NEXT_PUBLIC_TAWK_PROPERTY_ID  ?? ''}

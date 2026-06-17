@@ -1,7 +1,7 @@
-const CACHE = 'mediadl-v1'
+const CACHE = 'mediadl-v2'
+// Only precache truly public, static shells. Never precache auth-gated pages
+// (e.g. /download, /account) — they must always re-validate with the server.
 const STATIC = [
-  '/',
-  '/download',
   '/offline',
 ]
 
@@ -24,23 +24,26 @@ self.addEventListener('activate', (e) => {
 })
 
 // Fetch strategy:
-//   API / SSE  → network-only (never cache)
-//   _next/static → cache-first (immutable build assets)
-//   everything else → network-first, fall back to cache, then /offline
+//   API / SSE / auth     → network-only (never cache — avoids stale authed pages)
+//   _next/static         → cache-first (immutable build assets)
+//   page navigations     → network-only, fall back to /offline when truly offline
+//   other static GETs    → network, fall back to cache
 self.addEventListener('fetch', (e) => {
-  const { url, method } = e.request
-  if (method !== 'GET') return
+  const { request } = e
+  if (request.method !== 'GET') return
+  const url = request.url
 
-  // Never intercept API, SSE, or external URLs
-  if (url.includes('/api/') || url.includes('/progress') || !url.startsWith(self.location.origin)) return
+  // Never intercept API, SSE, auth callbacks, or external URLs.
+  if (url.includes('/api/') || url.includes('/progress') ||
+      url.includes('/auth/') || !url.startsWith(self.location.origin)) return
 
-  // Immutable Next.js build chunks — cache-first
+  // Immutable Next.js build chunks — cache-first.
   if (url.includes('/_next/static/')) {
     e.respondWith(
-      caches.match(e.request).then((hit) =>
-        hit ?? fetch(e.request).then((res) => {
+      caches.match(request).then((hit) =>
+        hit || fetch(request).then((res) => {
           const clone = res.clone()
-          caches.open(CACHE).then((c) => c.put(e.request, clone))
+          caches.open(CACHE).then((c) => c.put(request, clone))
           return res
         })
       )
@@ -48,19 +51,25 @@ self.addEventListener('fetch', (e) => {
     return
   }
 
-  // Network-first for pages
-  e.respondWith(
-    fetch(e.request)
-      .then((res) => {
-        if (res.ok) {
-          const clone = res.clone()
-          caches.open(CACHE).then((c) => c.put(e.request, clone))
-        }
-        return res
-      })
-      .catch(() =>
-        caches.match(e.request).then((hit) => hit ?? caches.match('/offline') ?? new Response('Offline', { status: 503 }))
+  // Page navigations — always hit the network so server-side auth/redirects run.
+  // Never serve a cached HTML page (would show stale signed-in content to a
+  // signed-out user). Only fall back to /offline when the network is unreachable.
+  if (request.mode === 'navigate') {
+    e.respondWith(
+      fetch(request).catch(async () =>
+        (await caches.match('/offline')) ||
+        new Response('You are offline.', { status: 503, headers: { 'Content-Type': 'text/plain' } })
       )
+    )
+    return
+  }
+
+  // Other same-origin static GETs (images, fonts, etc.) — network, fall back to cache.
+  e.respondWith(
+    fetch(request).catch(async () =>
+      (await caches.match(request)) ||
+      new Response('', { status: 504 })
+    )
   )
 })
 

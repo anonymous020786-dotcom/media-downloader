@@ -1,15 +1,17 @@
 import { Router } from 'express'
 import { query } from '../db.js'
-import { requireAuth } from '../middleware/requireAuth.js'
+import { requireAuth, optionalAuth } from '../middleware/requireAuth.js'
 
 const router = Router()
 
-router.get('/', requireAuth, async (req, res) => {
+router.get('/', optionalAuth, async (req, res) => {
   try {
-    const page   = Math.max(1, Number(req.query.page  ?? 1))
-    const limit  = Math.min(100, Math.max(1, Number(req.query.limit ?? 20)))
+    const page   = Math.max(1, Math.floor(Number(req.query.page  ?? 1)) || 1)
+    const limit  = Math.min(100, Math.max(1, Math.floor(Number(req.query.limit ?? 20)) || 20))
     const offset = (page - 1) * limit
-    const userId = req.authUser!.id
+    // Anonymous visitors have no personal history — return an empty page rather than 401.
+    if (!req.authUser) { res.json({ items: [], page, limit, total: 0, pages: 0 }); return }
+    const userId = req.authUser.id
 
     const rows = await query<{
       id: number; job_id: string | null; user_id: string | null
@@ -21,8 +23,8 @@ router.get('/', requireAuth, async (req, res) => {
               status, title, files, created_at
        FROM download_stats WHERE user_id = ?
        ORDER BY created_at DESC
-       LIMIT ? OFFSET ?`,
-      [userId, limit, offset]
+       LIMIT ${limit} OFFSET ${offset}`,
+      [userId]
     )
 
     const countRows = await query<{ total: number }>(

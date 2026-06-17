@@ -23,6 +23,9 @@ import usersRouter   from './routes/users.js'
 import uploadRouter  from './routes/upload.js'
 import otpRouter     from './routes/otp.js'
 import mfaRouter     from './routes/mfa.js'
+import proxyRouter   from './routes/proxy.js'
+import streamRouter  from './routes/stream.js'
+import cookiesRouter from './routes/cookies.js'
 
 const app  = express()
 const PORT = Number(process.env.PORT ?? 4000)
@@ -54,7 +57,7 @@ app.use(cors({
     cb(new Error(`CORS: ${origin} not allowed`))
   },
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'X-Request-Id', 'Authorization'],
+  allowedHeaders: ['Content-Type', 'X-Request-Id', 'Authorization', 'X-User-Id'],
   credentials: true,
   maxAge: 86400,
 }))
@@ -112,6 +115,9 @@ app.use('/api/users',        usersRouter)
 app.use('/api/upload',       uploadRouter)
 app.use('/api/otp',          otpRouter)
 app.use('/api/mfa',          mfaRouter)
+app.use('/api/proxy',        proxyRouter)
+app.use('/api/stream',       streamRouter)
+app.use('/api/cookies',      cookiesRouter)
 
 // Serve uploaded media (images/files embedded in blog posts)
 import { UPLOAD_DIR } from './routes/content.js'

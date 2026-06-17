@@ -29,7 +29,14 @@ export default function NewsBrowser() {
   const [err, setErr] = useState('')
   const [reading, setReading] = useState<NewsItem | null>(null)
 
-  useEffect(() => { fetchNewsCategories().then((r) => setCats(r.categories)).catch(() => {}) }, [])
+  useEffect(() => {
+    fetchNewsCategories().then((r) => {
+      // The feed can return the same category slug more than once — dedupe so
+      // React keys stay unique.
+      const seen = new Set<string>()
+      setCats(r.categories.filter((c) => !seen.has(c.slug) && seen.add(c.slug)))
+    }).catch(() => {})
+  }, [])
 
   const load = useCallback(async (p: number, reset: boolean) => {
     reset ? setLoading(true) : setMore(true)
@@ -77,7 +84,7 @@ export default function NewsBrowser() {
         <select value={mode.category && !FEATURED.includes(mode.category) ? mode.category : ''} onChange={(e) => e.target.value && pickCategory(e.target.value)}
           className="px-3 py-1.5 rounded-full text-xs font-semibold border border-[var(--border)] bg-[var(--bg-card)] text-[var(--text-2)] outline-none max-w-[200px]">
           <option value="">More categories ({cats.length})…</option>
-          {cats.map((c) => <option key={c.slug} value={c.slug}>{c.category}</option>)}
+          {cats.map((c, i) => <option key={`${c.slug}-${i}`} value={c.slug}>{c.category}</option>)}
         </select>
       </div>
 

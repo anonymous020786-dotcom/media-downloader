@@ -91,6 +91,30 @@ async def _cleanup_old_downloads():
         await asyncio.sleep(12 * 3600)  # run every 12 hours
 
 
+def _patch_xhamster_mirrors():
+    """xhamster's main domains are geo-blocked from many servers, so it serves the
+    same content from rotating mirror domains (xhaccess.com, xhopen.com, xhwide*,
+    xhtab*, …). yt-dlp's extractor doesn't list these mirrors, so they fall back to
+    the generic extractor and only yield 480p. We extend the extractor's URL regex
+    to cover the mirrors so the reachable domain gets full HD extraction."""
+    try:
+        from yt_dlp.extractor.xhamster import XHamsterIE
+        mirrors = (r"xhaccess\.com|xhopen\.com|xhwide\d*\.com|xhtab\d*\.com|"
+                   r"xhbranch\d*\.com|xhvictory\.com|xhtotal\.com|xhofficial\.com|"
+                   r"xhlocal\.com|xhopen\d*\.com|xhamster\.gold")
+        if "xhaccess" not in XHamsterIE._VALID_URL:
+            XHamsterIE._VALID_URL = XHamsterIE._VALID_URL.replace(
+                r"xhvid\.com)", rf"xhvid\.com|{mirrors})", 1)
+            # Drop any cached compiled regex so the new pattern takes effect.
+            for attr in ("_VALID_URL_RE", "_VALID_URL_RES"):
+                if hasattr(XHamsterIE, attr):
+                    try: delattr(XHamsterIE, attr)
+                    except Exception: pass
+            print("[startup] xhamster mirror domains enabled for HD extraction")
+    except Exception as e:
+        print(f"[startup] xhamster mirror patch skipped: {e}")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global _sem, _aredis, _sredis
@@ -98,6 +122,7 @@ async def lifespan(app: FastAPI):
     _aredis = await aioredis.from_url(REDIS_URL, decode_responses=True)
     _sredis = _sync_redis_lib.Redis.from_url(REDIS_URL, decode_responses=True)
     DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
+    _patch_xhamster_mirrors()
     # Start background cleanup task
     cleanup_task = asyncio.create_task(_cleanup_old_downloads())
     yield
@@ -117,9 +142,15 @@ class AnalyzeReq(BaseModel):
     @classmethod
     def _http(cls, v):
         v = v.strip()
-        if not v.startswith(("http://","https://","magnet:")):
-            raise ValueError("URL must start with http://, https:// or magnet:")
-        return v
+        if v.startswith(("http://", "https://", "magnet:")):
+            return v
+        if v.startswith("//"):
+            return "https:" + v
+        # Accept bare domains like browsers do: 'pat.com/123' → 'https://pat.com/123'
+        host = v.split("/")[0]
+        if v and " " not in v and "." in host:
+            return "https://" + v
+        raise ValueError("Enter a valid URL or domain (e.g. example.com or https://example.com)")
 
 class DownloadReq(BaseModel):
     url:             str
@@ -355,6 +386,88 @@ def _rank_video(urls: list[str]) -> list[str]:
 async def health(): return {"status":"ok","version":"3.0.0","max_concurrent":MAX_CONCURRENT,
                             "download_ttl_days": DOWNLOAD_TTL_DAYS}
 
+@app.post("/proxy/test")
+async def proxy_test(payload: dict):
+    """Validate a proxy and report its exit IP / country / latency.
+
+    Body: { "proxy": "http://user:pass@host:port" | "socks5://host:port" }
+    Tries a couple of geo-IP endpoints through the proxy so the user can
+    confirm the proxy actually works and which country it exits from.
+    """
+    import time as _t
+    proxy = (payload or {}).get("proxy", "").strip()
+    if not proxy:
+        return {"ok": False, "error": "proxy is required"}
+    # Only allow real proxy schemes.
+    if not re.match(r"^(https?|socks4|socks5h?)://", proxy, re.I):
+        return {"ok": False, "error": "proxy must start with http://, https://, socks5:// etc."}
+
+    probes = [
+        ("https://ipinfo.io/json", lambda d: (d.get("ip"), d.get("country"), d.get("city"))),
+        ("https://api.myip.com",   lambda d: (d.get("ip"), d.get("cc"),      None)),
+        ("http://ip-api.com/json", lambda d: (d.get("query"), d.get("countryCode"), d.get("city"))),
+    ]
+    last_err = "unreachable"
+    for url, parse in probes:
+        start = _t.monotonic()
+        try:
+            async with httpx.AsyncClient(proxy=proxy, verify=VERIFY_SSL,
+                                         timeout=httpx.Timeout(15, connect=10),
+                                         headers={"User-Agent": _ua()}) as c:
+                r = await c.get(url)
+                r.raise_for_status()
+                ip, country, city = parse(r.json())
+                return {
+                    "ok": True,
+                    "ip": ip,
+                    "country": country,
+                    "city": city,
+                    "latency_ms": round((_t.monotonic() - start) * 1000),
+                    "via": url,
+                }
+        except Exception as e:               # noqa: BLE001  try the next probe
+            last_err = str(e)[:200]
+            continue
+    return {"ok": False, "error": last_err}
+
+
+@app.post("/cancel-all")
+async def cancel_all():
+    """Kill all in-flight download subprocesses (aria2/ffmpeg/yt-dlp/gallery-dl/you-get).
+    Used by the 'Stop all downloads' action."""
+    import subprocess
+    killed = 0
+    for name in ("aria2c", "ffmpeg", "yt-dlp", "gallery-dl", "you-get"):
+        try:
+            r = subprocess.run(["pkill", "-9", "-f", name],
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            if r.returncode == 0:
+                killed += 1
+        except Exception:
+            pass
+    return {"cancelled": True, "killed_process_groups": killed}
+
+
+@app.post("/cancel/{job_id}")
+async def cancel_job(job_id: str):
+    """Cancel a single download by killing the subprocess working in its job dir."""
+    if not re.match(r'^[0-9a-f\-]{36}$', job_id):
+        raise HTTPException(400, "Invalid job ID")
+    import subprocess
+    # aria2/ffmpeg write into /downloads/<job_id>/ — match processes by that path.
+    try:
+        subprocess.run(["pkill", "-9", "-f", f"/downloads/{job_id}"],
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except Exception:
+        pass
+    try:
+        await _aredis.set(f"job:{job_id}:progress",
+                          json.dumps({"status": "failed", "progress": 0, "error": "Cancelled by user"}), ex=86400)
+    except Exception:
+        pass
+    return {"cancelled": True, "job_id": job_id}
+
+
 @app.post("/storage/cleanup")
 async def storage_cleanup(older_than_days: int = DOWNLOAD_TTL_DAYS):
     """Manually trigger cleanup of job directories older than N days."""
@@ -373,6 +486,29 @@ async def storage_cleanup(older_than_days: int = DOWNLOAD_TTL_DAYS):
                 pass
     return {"removed": removed, "freed_bytes": freed,
             "freed_mb": round(freed / 1_048_576, 1)}
+
+@app.get("/storage/disk")
+async def storage_disk():
+    """Disk usage for the downloads volume + size of the downloads dir itself.
+       Used by the backend to refuse new jobs when the disk is nearly full."""
+    try:
+        du = shutil.disk_usage(DOWNLOAD_DIR if DOWNLOAD_DIR.exists() else "/")
+        total, used, free = du.total, du.used, du.free
+    except Exception:
+        total = used = free = 0
+    dl_bytes = 0
+    try:
+        if DOWNLOAD_DIR.exists():
+            for f in DOWNLOAD_DIR.rglob("*"):
+                if f.is_file():
+                    try: dl_bytes += f.stat().st_size
+                    except Exception: pass
+    except Exception:
+        pass
+    pct = round(used / total * 100, 1) if total else 0.0
+    return {"total": total, "used": used, "free": free,
+            "percent_used": pct, "downloads_bytes": dl_bytes}
+
 
 @app.get("/health/deep")
 async def health_deep():
@@ -599,7 +735,7 @@ async def stream_url_endpoint(req: AnalyzeReq):
     player can play it directly.  Short cache (60 s) to handle page refreshes
     without hammering yt-dlp; real CDN tokens typically last minutes.
     """
-    url = req.url
+    url = _normalize_url(req.url)
     if not url:
         raise HTTPException(status_code=400, detail="url is required")
 
@@ -3930,7 +4066,84 @@ async def _dl_pat_com(req: DownloadReq, job_dir: Path):
     await _prog(req.job_id, {"status": "completed", "progress": 100, "files": files})
 
 
+def _normalize_url(url: str) -> str:
+    """Accept bare domains the way browsers do: 'pat.com/123' → 'https://pat.com/123'.
+    Leaves real URLs and magnet links untouched."""
+    u = (url or "").strip()
+    if not u:
+        return u
+    if u.startswith(("http://", "https://", "magnet:")):
+        return u
+    # protocol-relative
+    if u.startswith("//"):
+        return "https:" + u
+    # looks like a domain (has a dot before any slash, no spaces) → assume https
+    host = u.split("/")[0]
+    if " " not in u and "." in host:
+        return "https://" + u
+    return u
+
+
+def _quality_options(info: dict) -> list:
+    """Build a per-resolution picker list from a yt-dlp info dict so the UI can
+       show size + codec for each quality instead of a bare height number.
+
+       One entry per distinct height. For each height we pick the best mp4/avc
+       representative (falling back to the largest), estimate the merged file
+       size (video filesize + best audio filesize, or tbr×duration when yt-dlp
+       didn't report a size), and surface codec/fps/note. Purely additive — the
+       existing `qualities` height list is still returned alongside this."""
+    formats = info.get("formats") or []
+    duration = info.get("duration") or 0
+    # best audio filesize (added to video-only streams that get merged)
+    audio_sizes = [
+        (f.get("filesize") or f.get("filesize_approx") or 0)
+        for f in formats
+        if f.get("acodec", "none") not in ("none", None)
+        and f.get("vcodec", "none") in ("none", None)
+    ]
+    best_audio = max(audio_sizes) if audio_sizes else 0
+
+    by_height: dict = {}
+    for f in formats:
+        h = f.get("height")
+        if not h or f.get("vcodec", "none") in ("none", None):
+            continue
+        size = f.get("filesize") or f.get("filesize_approx") or 0
+        if not size and f.get("tbr") and duration:
+            size = int(f["tbr"] * 1000 / 8 * duration)   # tbr is kbps
+        has_audio = f.get("acodec", "none") not in ("none", None)
+        if not has_audio and size:
+            size += best_audio
+        vcodec = (f.get("vcodec") or "").split(".")[0]
+        cur = by_height.get(h)
+        is_mp4 = f.get("ext") == "mp4"
+        # Prefer mp4/avc1, then the candidate with the larger known size.
+        better = (
+            cur is None
+            or (is_mp4 and not cur["_mp4"])
+            or (is_mp4 == cur["_mp4"] and size > (cur["size"] or 0))
+        )
+        if better:
+            by_height[h] = {
+                "height": h,
+                "ext": f.get("ext") or "mp4",
+                "vcodec": vcodec or None,
+                "fps": f.get("fps") or None,
+                "size": size or None,
+                "note": f.get("format_note") or None,
+                "_mp4": is_mp4,
+            }
+    out = []
+    for h in sorted(by_height.keys(), reverse=True)[:12]:
+        o = by_height[h]
+        o.pop("_mp4", None)
+        out.append(o)
+    return out
+
+
 async def _do_analyze(url: str) -> dict:
+    url = _normalize_url(url)
     # 0a. Custom site extractors (no yt-dlp support)
     if _PAT_CDN_RE.match(url):       return await _analyze_pat_cdn(url)
     if _PAT_COM_RE.match(url):       return await _analyze_pat_com(url)
@@ -4025,6 +4238,7 @@ async def _do_analyze(url: str) -> dict:
                 "uploader": info.get("uploader",""),
                 "extractor": info.get("extractor",""),
                 "qualities": heights[:10],
+                "format_options": _quality_options(info),
                 "video_formats": ["mp4","webm","mkv","avi","mov","mp3","m4a","opus"],
                 "is_live": bool(info.get("is_live")),
                 "is_playlist": bool(info.get("_type") in ("playlist","multi_video")),
@@ -4079,6 +4293,7 @@ class SearchReq(BaseModel):
     filetype: Optional[str] = None     # e.g. pdf, zip, mp3 (for kind=file)
     limit:    int = 30                 # results per page
     page:     int = 1                  # 1-based page index (for infinite pagination)
+    safe:     bool = False             # SafeSearch: False = unfiltered (adult ok), True = filtered
 
 
 SEARCH_CACHE_TTL   = int(os.getenv("SEARCH_CACHE_TTL",    "1800"))  # 30 min
@@ -4166,12 +4381,15 @@ async def _fetch_torrent_results(query: str, page: int) -> list[dict]:
 
 
 # ── Bing text fallback (used when DDG returns 0 results) ─────────────────────
-async def _bing_fallback(query: str, kind: str, ft: str, limit: int) -> list[dict]:
+async def _bing_fallback(query: str, kind: str, ft: str, limit: int, safe: bool = False) -> list[dict]:
     q = f"{query} filetype:{ft}" if kind == "file" and ft else query
-    url = f"https://www.bing.com/search?q={q.replace(' ', '+')}&count={limit}"
+    # adlt=off disables Bing SafeSearch (unfiltered); adlt=strict re-enables it.
+    adlt = "strict" if safe else "off"
+    url = f"https://www.bing.com/search?q={q.replace(' ', '+')}&count={limit}&adlt={adlt}"
     try:
         async with httpx.AsyncClient(
-            headers={"User-Agent": _ua(), "Accept-Language": "en-US,en;q=0.9"},
+            headers={"User-Agent": _ua(), "Accept-Language": "en-US,en;q=0.9",
+                     "Cookie": f"SRCHHPGUSR=ADLT={'STRICT' if safe else 'OFF'}"},
             timeout=18, follow_redirects=True
         ) as c:
             r = await c.get(url)
@@ -4230,7 +4448,7 @@ async def search(req: SearchReq):
         return payload
 
     # ── DDG kinds: pre-fetch 200 results once, cache, serve pages from cache ──
-    all_ck = _cache_key("search_all", f"{req.kind}|{ft}|{q}")
+    all_ck = _cache_key("search_all", f"{req.kind}|{ft}|{'safe' if req.safe else 'all'}|{q}")
     all_cached = await _cache_get(all_ck)
 
     if all_cached:
@@ -4240,15 +4458,17 @@ async def search(req: SearchReq):
             from ddgs import DDGS
             results: list[dict] = []
             with DDGS() as ddgs:
+                # SafeSearch: "off" = unfiltered (adult ok), "moderate" = filtered.
+                ss = "moderate" if req.safe else "off"
                 if req.kind == "image":
-                    for r in ddgs.images(q, max_results=SEARCH_BATCH_SIZE):
+                    for r in ddgs.images(q, max_results=SEARCH_BATCH_SIZE, safesearch=ss):
                         url_v = r.get("image")
                         if url_v:
                             results.append({"title": r.get("title", ""), "url": url_v,
                                             "thumbnail": r.get("thumbnail"), "source": r.get("url"),
                                             "kind": "image"})
                 elif req.kind == "video":
-                    for r in ddgs.videos(q, max_results=SEARCH_BATCH_SIZE):
+                    for r in ddgs.videos(q, max_results=SEARCH_BATCH_SIZE, safesearch=ss):
                         url_v = r.get("content") or r.get("url")
                         if url_v:
                             results.append({"title": r.get("title", ""), "url": url_v,
@@ -4256,7 +4476,7 @@ async def search(req: SearchReq):
                                             "source": r.get("url"), "duration": r.get("duration"),
                                             "kind": "video"})
                 elif req.kind == "news":
-                    for r in ddgs.news(q, max_results=SEARCH_BATCH_SIZE):
+                    for r in ddgs.news(q, max_results=SEARCH_BATCH_SIZE, safesearch=ss):
                         url_v = r.get("url")
                         if url_v:
                             results.append({"title": r.get("title", ""), "url": url_v,
@@ -4267,7 +4487,7 @@ async def search(req: SearchReq):
                                             "kind": "news"})
                 else:
                     query_str = f"{q} filetype:{ft}" if req.kind == "file" and ft and "filetype:" not in q else q
-                    for r in ddgs.text(query_str, max_results=SEARCH_BATCH_SIZE):
+                    for r in ddgs.text(query_str, max_results=SEARCH_BATCH_SIZE, safesearch=ss):
                         url_v = r.get("href")
                         if url_v:
                             results.append({"title": r.get("title", ""), "url": url_v,
@@ -4291,7 +4511,7 @@ async def search(req: SearchReq):
         if not all_results and req.kind in ("web", "file"):
             try:
                 all_results = await asyncio.wait_for(
-                    _bing_fallback(q, req.kind, ft, SEARCH_BATCH_SIZE), timeout=25)
+                    _bing_fallback(q, req.kind, ft, SEARCH_BATCH_SIZE, req.safe), timeout=25)
             except Exception:
                 pass
 
@@ -4332,6 +4552,29 @@ SOCIAL_PLATFORMS = [
     {"id":"soundcloud","name":"SoundCloud","url":"https://soundcloud.com/{u}","kind":"video","login":False},
     {"id":"dailymotion","name":"Dailymotion","url":"https://www.dailymotion.com/{u}","kind":"video","login":False},
     {"id":"github","name":"GitHub","url":"https://github.com/{u}","kind":"image","login":False},
+    # ── Extended platform coverage ────────────────────────────────────────────
+    {"id":"facebook","name":"Facebook","url":"https://www.facebook.com/{u}","kind":"mixed","login":True},
+    {"id":"threads","name":"Threads","url":"https://www.threads.net/@{u}","kind":"mixed","login":True},
+    {"id":"snapchat","name":"Snapchat","url":"https://www.snapchat.com/add/{u}","kind":"mixed","login":False},
+    {"id":"bluesky","name":"Bluesky","url":"https://bsky.app/profile/{u}","kind":"mixed","login":False},
+    {"id":"kick","name":"Kick","url":"https://kick.com/{u}","kind":"video","login":False},
+    {"id":"rumble","name":"Rumble","url":"https://rumble.com/user/{u}","kind":"video","login":False},
+    {"id":"odysee","name":"Odysee","url":"https://odysee.com/@{u}","kind":"video","login":False},
+    {"id":"bitchute","name":"BitChute","url":"https://www.bitchute.com/channel/{u}/","kind":"video","login":False},
+    {"id":"flickr","name":"Flickr","url":"https://www.flickr.com/photos/{u}","kind":"image","login":False},
+    {"id":"500px","name":"500px","url":"https://500px.com/p/{u}","kind":"image","login":False},
+    {"id":"behance","name":"Behance","url":"https://www.behance.net/{u}","kind":"image","login":False},
+    {"id":"artstation","name":"ArtStation","url":"https://www.artstation.com/{u}","kind":"image","login":False},
+    {"id":"imgur","name":"Imgur","url":"https://imgur.com/user/{u}","kind":"image","login":False},
+    {"id":"vk","name":"VK","url":"https://vk.com/{u}","kind":"mixed","login":False},
+    {"id":"bandcamp","name":"Bandcamp","url":"https://{u}.bandcamp.com/","kind":"video","login":False},
+    {"id":"mixcloud","name":"Mixcloud","url":"https://www.mixcloud.com/{u}/","kind":"video","login":False},
+    {"id":"newgrounds","name":"Newgrounds","url":"https://{u}.newgrounds.com/","kind":"mixed","login":False},
+    {"id":"patreon","name":"Patreon","url":"https://www.patreon.com/{u}","kind":"mixed","login":True},
+    {"id":"linktree","name":"Linktree","url":"https://linktr.ee/{u}","kind":"image","login":False},
+    {"id":"telegram","name":"Telegram","url":"https://t.me/{u}","kind":"mixed","login":False},
+    {"id":"weibo","name":"Weibo","url":"https://weibo.com/{u}","kind":"mixed","login":True},
+    {"id":"bilibili","name":"Bilibili","url":"https://space.bilibili.com/{u}","kind":"video","login":False},
 ]
 _HANDLE_RE = re.compile(r"^@?[A-Za-z0-9._-]{2,40}$")
 
@@ -4397,7 +4640,7 @@ async def social_search(req: SocialSearchReq):
             out = []
             sites = " OR ".join(f"site:{d}" for d in domains.values())
             with DDGS() as ddgs:
-                for r in ddgs.text(f'"{q}" ({sites})', max_results=40):
+                for r in ddgs.text(f'"{q}" ({sites})', max_results=40, safesearch="off"):
                     href = r.get("href","")
                     pid = next((p["id"] for p in plats if domains[p["id"]] in href), None)
                     if not pid: continue
@@ -4572,10 +4815,48 @@ async def list_playlist_items(req: AnalyzeReq):
         raise HTTPException(400, str(e)[:300])
 
 
+def _has_files(job_dir: Path) -> bool:
+    return job_dir.exists() and any(f.is_file() for f in job_dir.iterdir())
+
+
+async def _universal_fallback(req: DownloadReq, job_dir: Path, cookie_file: Optional[str]):
+    """Last-resort engine chain that works for ANY URL / media type.
+
+    Tries, in order, until something lands on disk:
+      1. the full video chain (yt-dlp → ffmpeg → headless render → gallery-dl
+         → you-get → streamlink) — covers thousands of named sites + generic;
+      2. gallery-dl on its own (image/media galleries & profiles);
+      3. a plain direct-file fetch (any raw file URL).
+    This is what makes a *broken* or *unknown* site degrade gracefully instead
+    of failing the whole job.
+    """
+    for attempt in (
+        lambda: _dl_video(req, job_dir, cookie_file),
+        lambda: _dl_gallery_dl(req.url, req.job_id, job_dir, cookie_file, req.proxy, max_items=req.max_items),
+        lambda: _dl_direct(req.url, req.job_id, job_dir, req.format, proxy=req.proxy),
+    ):
+        try:
+            await attempt()
+        except Exception:
+            pass
+        if _has_files(job_dir):
+            files = [f.name for f in job_dir.iterdir() if f.is_file()]
+            await _prog(req.job_id, {"status": "completed", "progress": 100, "files": files})
+            return
+
+
 @app.post("/download")
 async def download(req: DownloadReq):
+    req.url = _normalize_url(req.url)            # accept bare domains (pat.com → https://pat.com)
     job_dir = DOWNLOAD_DIR / req.job_id
     job_dir.mkdir(parents=True, exist_ok=True)
+    # Idempotency: if this job already finished, don't re-download. The job queue
+    # may re-deliver a job (e.g. worker restart / stalled-job retry); returning the
+    # existing result prevents the "download restarts after completing" bug.
+    if await _aredis.get(f"dl:done:{req.job_id}") and _has_files(job_dir):
+        files = [f.name for f in job_dir.iterdir() if f.is_file()]
+        await _prog(req.job_id, {"status": "completed", "progress": 100, "files": files})
+        return {"success": True, "files": files, "idempotent": True}
     async with _sem:
         await _prog(req.job_id, {"status":"starting","progress":0})
         cookie_file: Optional[str] = None
@@ -4648,6 +4929,12 @@ async def download(req: DownloadReq):
             else:
                 await _dl_page(req, job_dir, cookie_file)
 
+            # Universal safety net: whatever the declared media_type, if the
+            # primary path produced nothing, try every generic engine before
+            # giving up. This is what makes essentially any URL downloadable.
+            if not _has_files(job_dir) and not (req.capture and req.media_type == "video"):
+                await _universal_fallback(req, job_dir, cookie_file)
+
             # Guard: if nothing actually landed on disk, this is a failure, not a success
             saved = [f for f in job_dir.iterdir() if f.is_file()] if job_dir.exists() else []
             if not saved:
@@ -4655,7 +4942,10 @@ async def download(req: DownloadReq):
                     "error":"No file could be downloaded — the source may block direct "
                             "downloads, require login (add cookies), or be DRM-protected."})
                 raise HTTPException(500, "No files downloaded")
-            return {"success":True}
+            # Mark complete so a re-delivered job won't re-download (idempotency).
+            try: await _aredis.set(f"dl:done:{req.job_id}", "1", ex=DOWNLOAD_TTL_DAYS*86400)
+            except Exception: pass
+            return {"success":True, "files":[f.name for f in saved]}
         except HTTPException:
             raise
         except Exception as e:
@@ -5291,18 +5581,34 @@ def _ytdlp_dl(
     format_id: Optional[str] = None,
 ):
     fmt = (fmt or "mp4").lower()
-    cap = None if quality in ("best","0","") else quality.replace("p","").strip()
+    # "best" defaults to a sane cap (1080p) so downloads aren't huge 4K/8K files by
+    # default — much faster. Users can pick a specific height, or "max"/"source"
+    # for the absolute best. Configurable via DEFAULT_BEST_HEIGHT.
+    _best_cap = os.getenv("DEFAULT_BEST_HEIGHT", "1080").strip()
+    q = (quality or "").lower().strip()
+    if q in ("max", "source", "original", "highest"):
+        cap = None
+    elif q in ("best", "0", ""):
+        cap = _best_cap if _best_cap and _best_cap != "0" else None
+    else:
+        cap = q.replace("p", "").strip()
 
-    # Build format string — pin to format_id if provided (adds bestaudio for video-only streams)
+    # Build format string. Crucially we PREFER H.264 (avc1) video + AAC (m4a) audio:
+    # YouTube's "mp4" can actually contain AV1/VP9, which many players, browsers and
+    # devices cannot decode — the file looks "corrupted" even though the bytes are
+    # fine. avc1+aac in an mp4 container plays everywhere. We fall back to any mp4,
+    # then anything, so a download never fails just because avc1 isn't offered.
     if format_id:
         fstr = f"{format_id}+bestaudio[ext=m4a]/{format_id}+bestaudio/{format_id}"
     elif fmt in ("mp3","m4a","opus","ogg","flac","wav","aac","vorbis"):
         fstr = "bestaudio/best"
     elif cap:
-        fstr = (f"bestvideo[height<={cap}][ext=mp4]+bestaudio[ext=m4a]"
-                f"/bestvideo[height<={cap}]+bestaudio/best[height<={cap}]")
+        fstr = (f"bestvideo[height<={cap}][vcodec^=avc1][ext=mp4]+bestaudio[acodec^=mp4a][ext=m4a]"
+                f"/bestvideo[height<={cap}][ext=mp4]+bestaudio[ext=m4a]"
+                f"/bestvideo[height<={cap}]+bestaudio/best[height<={cap}]/best")
     elif fmt == "mp4":
-        fstr = "bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best"
+        fstr = ("bestvideo[vcodec^=avc1][ext=mp4]+bestaudio[acodec^=mp4a][ext=m4a]"
+                "/bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best")
     else:
         fstr = "bestvideo+bestaudio/best"
 
@@ -5323,15 +5629,23 @@ def _ytdlp_dl(
                 "status":"downloading","progress":pct,
                 "speed":d.get("speed"),"eta":d.get("eta"),
                 "downloaded":db,"total":tb,
-                "completed_files":downloaded[0],
-                "total_files":total_items[0] or None,
+                # For a single video, report 0/1 (not per-stream counts) so the UI
+                # doesn't show misleading numbers like "6 / null".
+                "completed_files": downloaded[0] if is_playlist else 0,
+                "total_files": (total_items[0] or None) if is_playlist else 1,
                 "filename": Path(d.get("filename","")).name,
             })
         elif d["status"] == "finished":
-            downloaded[0] += 1
-            pct = int(downloaded[0]/max(total_items[0],1)*95) if is_playlist else 95
-            _prog_s(job_id,{"status":"processing","progress":pct,
-                            "completed_files":downloaded[0],"total_files":total_items[0] or None})
+            if is_playlist:
+                downloaded[0] += 1
+                pct = int(downloaded[0]/max(total_items[0],1)*95)
+                _prog_s(job_id,{"status":"processing","progress":pct,
+                                "completed_files":downloaded[0],"total_files":total_items[0] or None})
+            else:
+                # Single video: one of its streams finished (video/audio/thumb).
+                # Don't inflate the count — just show "processing" at 95%.
+                _prog_s(job_id,{"status":"processing","progress":95,
+                                "completed_files":1,"total_files":1})
 
     # Build postprocessors
     pps: list = []

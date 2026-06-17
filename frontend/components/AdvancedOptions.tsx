@@ -5,6 +5,8 @@ import {
   Clock, Info, Zap, Music, FileText, Wifi, Gauge,
 } from 'lucide-react'
 import type { AdvancedOptions as Opts } from '@/lib/types'
+import ProxySelector from './ProxySelector'
+import CookiesManager from './CookiesManager'
 
 interface Props {
   opts:    Opts
@@ -296,16 +298,17 @@ export default function AdvancedOptions({ opts, onChange, showPlaylistOptions = 
               rows={3}
               className="w-full bg-[#161b27] border border-[#21293a] focus:border-indigo-500/60 rounded-xl px-3 py-2 text-[11px] font-mono text-slate-400 placeholder-slate-700 outline-none resize-none"
             />
+            <div className="mt-2">
+              <CookiesManager />
+            </div>
           </div>
 
-          <Row label="Proxy" hint="Route through a proxy to bypass geo-blocks (http://host:port or socks5://host:port)">
-            <input
-              value={opts.proxy}
-              onChange={(e) => set('proxy', e.target.value)}
-              placeholder="http://host:port"
-              className="w-40 bg-[#161b27] border border-[#21293a] focus:border-indigo-500/60 rounded-lg px-2 py-1 text-xs text-slate-300 placeholder-slate-600 font-mono outline-none"
-            />
+          <Row label="Proxy / VPN" hint="Unblock geo-restricted or blocked sites. Pick a saved proxy, auto-rotate, or enter a custom HTTP/SOCKS5 URL.">
+            <div />
           </Row>
+          <div className="pb-2">
+            <ProxySelector value={opts.proxy} onChange={(v) => set('proxy', v)} />
+          </div>
 
           {/* ── Scheduling ────────────────────────────────────────── */}
           <SectionHeader icon={<Clock size={10} />} label="Scheduling" />
@@ -373,7 +376,7 @@ export default function AdvancedOptions({ opts, onChange, showPlaylistOptions = 
 
           <div className="flex items-start gap-2 pt-3 text-[10px] text-slate-600">
             <Info size={10} className="mt-0.5 shrink-0" />
-            <span>All processing runs server-side via yt-dlp + FFmpeg. Cookies and proxy are used only for the current session and never stored.</span>
+            <span>All processing runs server-side via yt-dlp + FFmpeg. Cookies pasted in the box above are used only for that download and never stored; cookies you explicitly “save” for a site are kept on your account so they re-apply automatically. Saved proxies are kept on your account so you can reuse and auto-rotate them.</span>
           </div>
         </div>
       )}

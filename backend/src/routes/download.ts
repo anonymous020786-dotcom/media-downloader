@@ -3,10 +3,17 @@ import { v4 as uuidv4 } from 'uuid'
 import axios from 'axios'
 import { downloadQueue, redisConnection } from '../workers/downloadWorker.js'
 import { query } from '../db.js'
+import { requireAuth } from '../middleware/requireAuth.js'
+import { resolveProxy } from './proxy.js'
+import { resolveCookies } from './cookies.js'
+import { ensureDiskSpace } from './storage.js'
 import type { DownloadJob, MediaType } from '../types.js'
 
 const router = Router()
 const PYTHON = process.env.PYTHON_SERVICE_URL ?? 'http://localhost:8000'
+
+// All download tools require a signed-in user.
+router.use(requireAuth)
 
 async function recordStat(job: DownloadJob, userId?: string) {
   try {
@@ -44,9 +51,21 @@ router.post('/', async (req, res) => {
     res.status(400).json({ error: 'url and mediaType are required' }); return
   }
 
+  const diskErr = await ensureDiskSpace()
+  if (diskErr) { res.status(507).json({ error: diskErr }); return }
+
   const jobId = uuidv4()
+  const userId = req.authUser!.id
+  // Resolve a proxy reference (raw URL, preset id, saved id, or "auto" rotation)
+  // into a concrete proxy URL the downloaders can use.
+  const resolvedProxy = await resolveProxy(body.proxy, userId)
+  // Auto-attach saved cookies for this URL's domain when the request didn't
+  // supply any of its own (never overrides an explicit per-request paste).
+  const cookies = body.cookies && body.cookies.trim()
+    ? body.cookies
+    : await resolveCookies(url, userId)
   const job: DownloadJob = {
-    url, jobId, mediaType,
+    url, jobId, mediaType, userId,
     format:         body.format         ?? 'mp4',
     quality:        body.quality         ?? 'best',
     formatId:       body.formatId,
@@ -59,8 +78,8 @@ router.post('/', async (req, res) => {
     subtitles:      body.subtitles       ?? false,
     embedThumbnail: body.embedThumbnail  ?? false,
     embedMetadata:  body.embedMetadata   ?? true,
-    cookies:        body.cookies,
-    proxy:          body.proxy,
+    cookies,
+    proxy:          resolvedProxy,
     capture:        body.capture         ?? false,
     captureSeconds: body.captureSeconds,
     startTime:          body.startTime,
@@ -80,13 +99,13 @@ router.post('/', async (req, res) => {
   const pattern = body.repeatEvery ? CRON[body.repeatEvery] : undefined
   if (pattern) {
     await downloadQueue.add('download', job, { repeat: { pattern } })
-    void recordStat(job, req.header('X-User-Id') || undefined)
+    void recordStat(job, userId)
     res.json({ jobId, recurring: body.repeatEvery })
     return
   }
 
   await enqueue(job, body.delaySeconds)
-  void recordStat(job, req.header('X-User-Id') || undefined)
+  void recordStat(job, userId)
   res.json({ jobId, scheduled: !!(body.delaySeconds && body.delaySeconds > 0) })
 })
 
@@ -122,6 +141,9 @@ router.post('/batch', async (req, res) => {
   if (items.length > 200) {
     res.status(400).json({ error: 'Maximum 200 items per batch' }); return
   }
+
+  const diskErr = await ensureDiskSpace()
+  if (diskErr) { res.status(507).json({ error: diskErr }); return }
 
   const jobs: Array<{ jobId: string; url: string; title?: string }> = []
   for (const item of items) {
@@ -208,6 +230,9 @@ router.post('/merge', async (req, res) => {
 router.post('/auto', async (req, res) => {
   const { url, delaySeconds } = req.body as { url?: string; delaySeconds?: number }
   if (!url) { res.status(400).json({ error: 'url is required' }); return }
+  const diskErr = await ensureDiskSpace()
+  if (diskErr) { res.status(507).json({ error: diskErr }); return }
+  const userId = req.authUser!.id
   try {
     let mediaType: MediaType = 'video'
     let title: string | undefined
@@ -224,9 +249,10 @@ router.post('/auto', async (req, res) => {
 
     const jobId = uuidv4()
     const job: DownloadJob = {
-      url, jobId, mediaType, format,
+      url, jobId, mediaType, format, userId,
       quality: 'best', title, thumbnail, addedAt: Date.now(),
       startIndex: 1, embedMetadata: true,
+      cookies: await resolveCookies(url, userId),
     }
     await enqueue(job, delaySeconds)
     res.json({ jobId, mediaType })

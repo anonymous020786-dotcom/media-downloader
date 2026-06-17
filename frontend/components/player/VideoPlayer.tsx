@@ -1,15 +1,30 @@
 'use client'
 import { useRef, useEffect, useState, useCallback } from 'react'
 import { toast } from 'sonner'
+import { createClient } from '@/lib/supabase/client'
 import {
   Play, Pause, Volume2, VolumeX, Maximize, Minimize,
   SkipBack, SkipForward, Download, Loader2,
   PictureInPicture, Check, AlertCircle, ExternalLink,
   Film, Music, FileVideo, Camera, Repeat, Settings,
-  LayoutPanelLeft, ChevronDown,
+  LayoutPanelLeft, ChevronDown, Search,
 } from 'lucide-react'
 
 const API_BASE = (process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000').replace(/\/$/, '')
+
+const _supabase = createClient()
+// The analyze/stream/search/download endpoints now require auth — attach the
+// Supabase session token (and user id) to every request.
+async function authHeaders(): Promise<Record<string, string>> {
+  const h: Record<string, string> = { 'Content-Type': 'application/json' }
+  try {
+    const { data } = await _supabase.auth.getSession()
+    const t = data.session?.access_token
+    if (t) h['Authorization'] = `Bearer ${t}`
+    if (data.session?.user?.id) h['X-User-Id'] = data.session.user.id
+  } catch { /* anonymous */ }
+  return h
+}
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 interface Format {
@@ -50,6 +65,14 @@ function bestStreamUrl(r: AnalyzeResult): string | null {
     .sort((a,b) => (b.height??0)-(a.height??0))
   return mp4[0]?.url ?? r.formats.find(f => f.url)?.url ?? null
 }
+/** True when the text is a URL (or bare domain), false when it's a search query. */
+function looksLikeUrl(t: string): boolean {
+  const s = t.trim()
+  if (!s || /\s/.test(s)) return false
+  if (/^https?:\/\//i.test(s) || /^magnet:/i.test(s)) return true
+  // bare domain like example.com/path
+  return /^[a-z0-9-]+(\.[a-z0-9-]+)+(\/|$|:)/i.test(s)
+}
 function isHls(u: string)        { return /\.m3u8/i.test(u) }
 function isDash(u: string)       { return /\.mpd/i.test(u) }
 function isDirectVideo(u: string){ return /\.(mp4|webm|ogv|ogg|mov|mkv|avi|flv|3gp|m4v)(\?|$)/i.test(u) }
@@ -71,6 +94,10 @@ export default function VideoPlayer({ initialUrl = '' }: Props) {
   const [analyzing,     setAnalyzing]     = useState(false)
   const [analyzeError,  setAnalyzeError]  = useState('')
   const [result,        setResult]        = useState<AnalyzeResult | null>(null)
+
+  // In-player search (type a query instead of a URL)
+  const [searching,   setSearching]   = useState(false)
+  const [searchHits,  setSearchHits]  = useState<Array<{ title: string; url: string; thumbnail?: string; source?: string; duration?: string }>>([])
 
   // Player state
   const [playing,      setPlaying]      = useState(false)
@@ -145,13 +172,16 @@ export default function VideoPlayer({ initialUrl = '' }: Props) {
   const resolveStreamUrl = useCallback(async (url: string): Promise<boolean> => {
     try {
       const res = await fetch(`${API_BASE}/api/analyze/stream-url`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        method: 'POST', headers: await authHeaders(),
         body: JSON.stringify({ url }),
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error ?? 'Failed to resolve stream URL')
       if (data.stream_url) {
-        loadVideoSrc(data.stream_url)
+        // Prefer the referer-aware proxy URL when the backend provides one — it
+        // lets CDN-locked / referer-protected sources play instead of 403-ing.
+        const playUrl = data.proxy_url ? `${API_BASE}${data.proxy_url}` : data.stream_url
+        loadVideoSrc(playUrl)
         setResult(prev => prev ? { ...prev, formats: data.formats ?? prev.formats } : prev)
         return true
       }
@@ -165,7 +195,7 @@ export default function VideoPlayer({ initialUrl = '' }: Props) {
     setAnalyzing(true); setAnalyzeError(''); setResult(null); setLoadedUrl('')
     try {
       const res = await fetch(`${API_BASE}/api/analyze`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        method: 'POST', headers: await authHeaders(),
         body: JSON.stringify({ url }),
       })
       const data: AnalyzeResult = await res.json()
@@ -181,16 +211,38 @@ export default function VideoPlayer({ initialUrl = '' }: Props) {
     finally { setAnalyzing(false) }
   }, [loadVideoSrc, resolveStreamUrl])
 
-  const handleLoad = useCallback(async (url: string) => {
-    const t = url.trim()
+  // Type a query (not a URL) → search the web for videos and play the top hit.
+  const doSearch = useCallback(async (query: string) => {
+    const q = query.trim()
+    if (!q) return
+    setSearching(true); setAnalyzeError(''); setSearchHits([])
+    try {
+      const res = await fetch(`${API_BASE}/api/analyze/search`, {
+        method: 'POST', headers: await authHeaders(),
+        body: JSON.stringify({ query: q, kind: 'video', limit: 24, page: 1 }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error ?? 'Search failed')
+      const hits = (data.results ?? []).filter((r: any) => r.url)
+      setSearchHits(hits)
+      if (hits.length === 0) setAnalyzeError('No results — try different keywords or paste a direct URL.')
+      else { const top = hits[0]; setLoadedUrl(top.source || top.url); analyzeUrl(top.source || top.url) }
+    } catch (e: any) { setAnalyzeError(e.message) }
+    finally { setSearching(false) }
+  }, [analyzeUrl])
+
+  const handleLoad = useCallback(async (input: string) => {
+    const t = input.trim()
     if (!t) return
+    // Not a URL → treat as a search query.
+    if (!looksLikeUrl(t)) { doSearch(t); return }
     setLoadedUrl(t)
     if (isDirectVideo(t) || isHls(t) || isDash(t)) {
       loadVideoSrc(t); analyzeUrl(t)
     } else {
       analyzeUrl(t)
     }
-  }, [analyzeUrl, loadVideoSrc])
+  }, [analyzeUrl, loadVideoSrc, doSearch])
 
   useEffect(() => { if (initialUrl) handleLoad(initialUrl) }, []) // eslint-disable-line
 
@@ -320,7 +372,7 @@ export default function VideoPlayer({ initialUrl = '' }: Props) {
     setQueueing(format.format_id)
     try {
       const res = await fetch(`${API_BASE}/api/download`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        method: 'POST', headers: await authHeaders(),
         body: JSON.stringify({
           url,
           mediaType: format.vcodec === 'none' ? 'audio' : 'video',
@@ -370,24 +422,56 @@ export default function VideoPlayer({ initialUrl = '' }: Props) {
   return (
     <div className="flex flex-col gap-0">
 
-      {/* ── URL input ──────────────────────────────────────────────────────── */}
+      {/* ── URL / search input ─────────────────────────────────────────────── */}
       <div className="flex gap-2 mb-4">
         <div className="relative flex-1">
-          <Film size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--text-3)] pointer-events-none" />
+          {looksLikeUrl(inputUrl) || !inputUrl.trim()
+            ? <Film size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--text-3)] pointer-events-none" />
+            : <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--brand)] pointer-events-none" />}
           <input
-            type="url" value={inputUrl}
+            type="text" value={inputUrl}
             onChange={e => setInputUrl(e.target.value)}
             onKeyDown={e => e.key === 'Enter' && handleLoad(inputUrl)}
-            placeholder="Paste any video URL — YouTube, TikTok, MP4, HLS, DASH, 14,000+ sites…"
+            placeholder="Paste a URL or search — YouTube, TikTok, MP4, HLS, DASH, 14,000+ sites…"
             className="input pl-9 pr-4 h-11 text-sm"
           />
         </div>
         <button type="button" onClick={() => handleLoad(inputUrl)}
-          disabled={analyzing || !inputUrl.trim()}
+          disabled={analyzing || searching || !inputUrl.trim()}
           className="btn-primary h-11 px-5 shrink-0 min-w-[90px] disabled:opacity-50">
-          {analyzing ? <><Loader2 size={14} className="spin mr-1.5" />Analyzing…</> : <><Play size={14} className="mr-1.5" fill="currentColor" />Play</>}
+          {analyzing || searching
+            ? <><Loader2 size={14} className="spin mr-1.5" />{searching ? 'Searching…' : 'Analyzing…'}</>
+            : looksLikeUrl(inputUrl) || !inputUrl.trim()
+              ? <><Play size={14} className="mr-1.5" fill="currentColor" />Play</>
+              : <><Search size={14} className="mr-1.5" />Search</>}
         </button>
       </div>
+
+      {/* ── Search results strip ───────────────────────────────────────────── */}
+      {searchHits.length > 0 && (
+        <div className="mb-4">
+          <p className="text-[11px] text-[var(--text-3)] mb-2">{searchHits.length} results — click to play</p>
+          <div className="flex gap-2 overflow-x-auto pb-2">
+            {searchHits.map((h, i) => (
+              <button type="button" key={i}
+                onClick={() => { const u = h.source || h.url; setLoadedUrl(u); analyzeUrl(u) }}
+                title={h.title || h.url}
+                className={`shrink-0 w-40 text-left rounded-xl overflow-hidden border transition-colors ${
+                  loadedUrl === (h.source || h.url)
+                    ? 'border-[var(--brand)]' : 'border-[var(--border)] hover:border-[var(--border-hover)]'}`}>
+                <div className="relative aspect-video bg-[var(--bg-card)]">
+                  {h.thumbnail
+                    // eslint-disable-next-line @next/next/no-img-element
+                    ? <img src={h.thumbnail} alt="" className="w-full h-full object-cover" loading="lazy" />
+                    : <div className="w-full h-full flex items-center justify-center"><Film size={20} className="text-[var(--text-3)]" /></div>}
+                  {h.duration && <span className="absolute bottom-1 right-1 px-1 py-0.5 rounded bg-black/80 text-white text-[9px] font-mono">{h.duration}</span>}
+                </div>
+                <p className="px-2 py-1.5 text-[11px] text-[var(--text-2)] line-clamp-2 leading-tight">{h.title || h.url}</p>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* ── Error ──────────────────────────────────────────────────────────── */}
       {analyzeError && (

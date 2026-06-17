@@ -8,9 +8,12 @@ import { setApiUserId, setApiTokenGetter } from '@/lib/api'
 export default function AuthSync() {
   const { user, isLoaded, getToken } = useAuth()
   useEffect(() => {
-    if (!isLoaded) return
-    setApiUserId(user?.id ?? null)
-    setApiTokenGetter(user ? getToken : null)
+    // Always wire the token getter — it reads the live Supabase session and
+    // returns null only when genuinely signed out. Wiring it unconditionally
+    // (not just after `isLoaded`) avoids a race where early API calls fire
+    // before auth finishes loading and get a spurious 401 "Authentication required".
+    setApiTokenGetter(getToken)
+    if (isLoaded) setApiUserId(user?.id ?? null)
   }, [isLoaded, user, getToken])
   return null
 }

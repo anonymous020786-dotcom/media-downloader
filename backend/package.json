@@ -10,6 +10,7 @@
   "dependencies": {
     "@supabase/supabase-js": "^2.49.0",
     "jsonwebtoken": "^9.0.2",
+    "jose": "^5.9.6",
     "axios": "^1.9.0",
     "bullmq": "^5.56.0",
     "compression": "^1.8.0",

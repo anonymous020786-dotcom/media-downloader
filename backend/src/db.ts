@@ -132,6 +132,38 @@ export async function runMigrations(): Promise<void> {
   // username must be unique (added as a unique index after the column exists)
   await addIndex('users', 'idx_username', 'UNIQUE INDEX idx_username (username)')
 
+  // ── Saved proxies / VPN endpoints (per user) ──────────────────────────────────
+  await pool.execute(`CREATE TABLE IF NOT EXISTS user_proxies (
+    id         VARCHAR(36)  PRIMARY KEY,
+    user_id    VARCHAR(36)  NOT NULL,
+    label      VARCHAR(120) NOT NULL,
+    url        VARCHAR(500) NOT NULL,
+    country    VARCHAR(8)   DEFAULT NULL,
+    last_ok    TINYINT(1)   DEFAULT NULL,
+    last_ip    VARCHAR(64)  DEFAULT NULL,
+    last_tested DATETIME    DEFAULT NULL,
+    is_default TINYINT(1)   DEFAULT 0,
+    created_at DATETIME     DEFAULT CURRENT_TIMESTAMP
+  )`)
+  await addIndex('user_proxies', 'idx_up_user', 'INDEX idx_up_user (user_id(32))')
+
+  // ── Saved site cookies (per user, per domain) ─────────────────────────────────
+  // Lets a user paste a Netscape cookies.txt (or browser "Cookie:" header) once
+  // per site; the download pipeline auto-applies the matching domain's cookies so
+  // login-walled / members-only content keeps working without re-pasting.
+  await pool.execute(`CREATE TABLE IF NOT EXISTS user_cookies (
+    id         VARCHAR(36)  PRIMARY KEY,
+    user_id    VARCHAR(36)  NOT NULL,
+    domain     VARCHAR(190) NOT NULL,
+    label      VARCHAR(120) DEFAULT NULL,
+    cookies    MEDIUMTEXT   NOT NULL,
+    enabled    TINYINT(1)   DEFAULT 1,
+    updated_at DATETIME     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    created_at DATETIME     DEFAULT CURRENT_TIMESTAMP
+  )`)
+  await addIndex('user_cookies', 'idx_uc_user', 'INDEX idx_uc_user (user_id(32))')
+  await addIndex('user_cookies', 'idx_uc_user_domain', 'UNIQUE INDEX idx_uc_user_domain (user_id(32), domain)')
+
   // ── Super-admin seed ─────────────────────────────────────────────────────────
   // SUPER_ADMIN_EMAIL is set once in .env — this is the ONLY way to get super_admin.
   // No API endpoint can grant this role.

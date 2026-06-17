@@ -33,11 +33,23 @@ export async function uploadToHostingerApi(
   form.append('file', new Blob([buffer], { type: contentType }), filename)
   if (folder) form.append('folder', folder)
 
-  const { data } = await axios.post(UPLOAD_URL, form, {
-    headers: { 'X-API-Key': API_KEY },
-    maxBodyLength: Infinity,
-    timeout: 30_000,
-  })
+  let data: any
+  try {
+    ({ data } = await axios.post(UPLOAD_URL, form, {
+      headers: { 'X-API-Key': API_KEY },
+      maxBodyLength: Infinity,
+      timeout: 30_000,
+    }))
+  } catch (e: any) {
+    // Distinguish a network/reachability failure from an HTTP error response.
+    if (e.response) {
+      throw new Error(e.response.data?.error ?? `Hostinger upload rejected (HTTP ${e.response.status})`)
+    }
+    throw new Error(
+      `Could not reach the Hostinger upload endpoint (${e.code ?? 'network error'}). ` +
+      `The server hosting this app must be able to reach ${UPLOAD_URL}.`
+    )
+  }
 
   if (!data?.url) throw new Error(data?.error ?? 'Upload failed: no URL returned by Hostinger script')
   return data.url as string

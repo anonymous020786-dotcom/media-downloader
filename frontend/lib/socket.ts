@@ -14,12 +14,14 @@ export function getSocket(): Socket | null {
   if (_connecting) return _socket
 
   _connecting = true
+  // Empty NEXT_PUBLIC_API_URL → same-origin (production behind nginx). socket.io
+  // with an empty/undefined URL connects to the page origin, which nginx proxies.
   const BASE = (process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000').replace(/\/$/, '')
 
   // Dynamic import so the browser bundle includes socket.io-client,
   // but the SSR bundle never loads it.
   import('socket.io-client').then(({ io }) => {
-    _socket = io(BASE, {
+    _socket = io(BASE || undefined, {
       path:               '/socket.io/',
       transports:         ['websocket', 'polling'],
       reconnection:       true,

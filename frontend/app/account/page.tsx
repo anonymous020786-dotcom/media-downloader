@@ -267,7 +267,7 @@ export default function AccountPage() {
     fetchIdentities()
   }
 
-  async function handleLink(provider: 'google' | 'github' | 'azure') {
+  async function handleLink(provider: 'google') {
     setLinkLoading(provider)
     const { error } = await supabase.auth.linkIdentity({ provider })
     if (error) toast.error(error.message)
@@ -602,13 +602,11 @@ export default function AccountPage() {
             )}
             <div className="mt-4 flex gap-2 flex-wrap">
               <p className="text-xs text-[var(--text-3)] w-full mb-1">Link another account:</p>
-              {(['google', 'github', 'azure'] as const).map(provider => (
-                <button key={provider} type="button" onClick={() => handleLink(provider)} disabled={!!linkLoading}
-                  className="flex items-center gap-1.5 px-3 py-1.5 border border-[var(--border)] rounded-lg text-xs font-semibold text-[var(--text-2)] hover:bg-[var(--bg-hover)] transition-colors disabled:opacity-50 capitalize">
-                  {linkLoading === provider ? <Loader2 size={11} className="animate-spin" /> : <Link2 size={11} />}
-                  {provider === 'azure' ? 'Microsoft' : provider}
-                </button>
-              ))}
+              <button type="button" onClick={() => handleLink('google')} disabled={!!linkLoading}
+                className="flex items-center gap-1.5 px-3 py-1.5 border border-[var(--border)] rounded-lg text-xs font-semibold text-[var(--text-2)] hover:bg-[var(--bg-hover)] transition-colors disabled:opacity-50 capitalize">
+                {linkLoading === 'google' ? <Loader2 size={11} className="animate-spin" /> : <Link2 size={11} />}
+                google
+              </button>
             </div>
           </Section>
 

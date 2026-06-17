@@ -1,6 +1,15 @@
 export type MediaType = 'video' | 'image' | 'page' | 'playlist' | 'profile' | 'file' | 'torrent'
 export type DownloadMode = 'single' | 'playlist' | 'profile' | 'batch' | 'search' | 'feed'
 
+export interface FormatOption {
+  height:  number
+  ext:     string
+  vcodec?: string | null
+  fps?:    number | null
+  size?:   number | null
+  note?:   string | null
+}
+
 export interface AnalyzeResult {
   type:           MediaType
   title?:         string
@@ -9,6 +18,7 @@ export interface AnalyzeResult {
   uploader?:      string
   extractor?:     string
   qualities?:     number[]
+  format_options?: FormatOption[]
   video_formats?: string[]
   image_formats?: string[]
   url?:           string

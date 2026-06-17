@@ -52,10 +52,10 @@ export interface SearchResult {
   date?: string
 }
 export interface SearchResponse { query: string; kind: string; page: number; per_page: number; count: number; total?: number; has_more: boolean; results: SearchResult[]; _cached?: boolean }
-export const searchWeb = (query: string, kind: 'web'|'file'|'image'|'video'|'torrent'|'news' = 'web', filetype?: string, page = 1, limit = 30) =>
+export const searchWeb = (query: string, kind: 'web'|'file'|'image'|'video'|'torrent'|'news' = 'web', filetype?: string, page = 1, limit = 30, safe = false) =>
   _f<SearchResponse>('/api/analyze/search', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ query, kind, filetype, limit, page }),
+    body: JSON.stringify({ query, kind, filetype, limit, page, safe }),
   })
 
 export const queueDownload = (payload: {
@@ -113,6 +113,14 @@ export const socialSearch = (query: string, platforms?: string[]) =>
     body: JSON.stringify({ query, platforms }),
   })
 export const socialPlatforms = () => _f<{ platforms: SocialPlatform[] }>('/api/analyze/social/platforms')
+
+export interface ActiveJob {
+  jobId: string; bullId: string; url: string; title: string | null
+  mediaType: string; addedAt: number; state: string
+  progress: { status: string; progress: number; speed?: number | null; eta?: number | null; filename?: string; total_files?: number | null; completed_files?: number }
+}
+export const fetchActiveJobs = () => _f<ActiveJob[]>('/api/jobs/active')
+export const stopAllJobs     = () => _f<{ success: boolean; stopped: number }>('/api/jobs/stop-all', { method: 'POST' })
 
 export const fetchJobs  = () => _f<Job[]>('/api/jobs')
 export const fetchStats = () => _f<{waiting:number;active:number;completed:number;failed:number;total:number}>('/api/jobs/stats')
@@ -333,6 +341,55 @@ export const unregisterPushToken = (deviceId?: string) => {
   return _f('/api/notifications/unregister', { method: 'DELETE', headers })
 }
 export const notificationStatus  = () => _f<{ fcm_enabled: boolean }>('/api/notifications/status')
+
+// ── Proxy / VPN manager ───────────────────────────────────────────────────────
+export interface SavedProxy {
+  id: string; label: string; country: string | null
+  last_ok: 0 | 1 | null; last_ip: string | null; last_tested: string | null; is_default: 0 | 1
+}
+export interface PresetProxy { id: string; label: string; url: string; preset: true }
+export interface ProxyListResponse { presets: PresetProxy[]; saved: SavedProxy[] }
+export interface ProxyTestResult { ok: boolean; ip?: string; country?: string; city?: string; latency_ms?: number; error?: string }
+
+export const fetchProxies = () => _f<ProxyListResponse>('/api/proxy')
+export const testProxy = (proxy: string) =>
+  _f<ProxyTestResult>('/api/proxy/test', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ proxy }),
+  })
+export const saveProxy = (label: string, url: string) =>
+  _f<{ id: string; label: string; url: string }>('/api/proxy', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ label, url }),
+  })
+export const setDefaultProxy = (id: string) =>
+  _f<{ success: boolean }>(`/api/proxy/${id}/default`, { method: 'PATCH' })
+export const deleteProxy = (id: string) =>
+  _f<{ success: boolean }>(`/api/proxy/${id}`, { method: 'DELETE' })
+
+// ── Disk usage ────────────────────────────────────────────────────────────────
+export interface DiskInfo {
+  total: number; used: number; free: number; percent_used: number; downloads_bytes: number
+}
+export const fetchDisk = () => _f<DiskInfo>('/api/storage/disk')
+
+// ── Per-site cookie store ─────────────────────────────────────────────────────
+export interface SavedCookie {
+  id: string; domain: string; label: string | null; enabled: boolean
+  count: number; preview: string; updated_at: string
+}
+
+export const fetchCookies = () => _f<SavedCookie[]>('/api/cookies')
+export const saveCookies = (domain: string, cookies: string, label?: string) =>
+  _f<SavedCookie>('/api/cookies', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ domain, cookies, label }),
+  })
+export const toggleCookies = (id: string, enabled: boolean) =>
+  _f<{ success: boolean; enabled: boolean }>(`/api/cookies/${id}`, {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ enabled }),
+  })
+export const deleteCookies = (id: string) =>
+  _f<{ success: boolean }>(`/api/cookies/${id}`, { method: 'DELETE' })
 
 // ── Formatters ────────────────────────────────────────────────────────────────
 export const fmtBytes = (b?: number | null) => {

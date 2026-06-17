@@ -1,8 +1,8 @@
 'use client'
 import { useEffect, useState } from 'react'
-import { Activity, RefreshCw, Download, CheckCircle2, XCircle, Boxes } from 'lucide-react'
+import { Activity, RefreshCw, Download, CheckCircle2, XCircle, Boxes, HardDrive } from 'lucide-react'
 import { toast } from 'sonner'
-import { fetchHealthDeep, adminEngines, adminUpdateEngines, fetchSupportedSites, type DeepHealth, type SupportedSites } from '@/lib/api'
+import { fetchHealthDeep, adminEngines, adminUpdateEngines, fetchSupportedSites, fetchDisk, fmtBytes, type DeepHealth, type SupportedSites, type DiskInfo } from '@/lib/api'
 
 function Pill({ ok, label }: { ok: boolean; label: string }) {
   return (
@@ -15,6 +15,7 @@ function Pill({ ok, label }: { ok: boolean; label: string }) {
 export default function SystemHealth() {
   const [h, setH] = useState<DeepHealth | null>(null)
   const [sites, setSites] = useState<SupportedSites | null>(null)
+  const [disk, setDisk] = useState<DiskInfo | null>(null)
   const [engineVers, setEngineVers] = useState<Record<string, string | null>>({})
   const [loading, setLoading] = useState(true)
   const [updating, setUpdating] = useState(false)
@@ -22,12 +23,13 @@ export default function SystemHealth() {
   const load = async () => {
     setLoading(true)
     try {
-      const [hd, s, e] = await Promise.all([
+      const [hd, s, e, d] = await Promise.all([
         fetchHealthDeep().catch(() => null),
         fetchSupportedSites().catch(() => null),
         adminEngines().catch(() => null),
+        fetchDisk().catch(() => null),
       ])
-      setH(hd); setSites(s); setEngineVers(e?.engines ?? {})
+      setH(hd); setSites(s); setEngineVers(e?.engines ?? {}); setDisk(d)
     } finally { setLoading(false) }
   }
   useEffect(() => { load(); const t = setInterval(load, 15000); return () => clearInterval(t) }, [])
@@ -65,6 +67,25 @@ export default function SystemHealth() {
           <Pill key={k} ok={checks[k] === 'ok'} label={`${k}: ${checks[k]}`} />
         )).filter(Boolean)}
       </div>
+
+      {/* Disk usage */}
+      {disk && disk.total > 0 && (
+        <div className="mb-4">
+          <div className="flex items-center justify-between text-[11px] mb-1">
+            <span className="flex items-center gap-1.5 font-bold uppercase tracking-wide text-[var(--text-3)]">
+              <HardDrive size={12} /> Disk
+            </span>
+            <span className="text-[var(--text-2)]">
+              {fmtBytes(disk.used)} / {fmtBytes(disk.total)} used · {fmtBytes(disk.free)} free
+              <span className="text-[var(--text-3)]"> · downloads {fmtBytes(disk.downloads_bytes)}</span>
+            </span>
+          </div>
+          <div className="h-2 rounded-full bg-[var(--border)] overflow-hidden">
+            <div className={`h-full rounded-full ${disk.percent_used >= 90 ? 'bg-red-500' : disk.percent_used >= 75 ? 'bg-amber-500' : 'bg-emerald-500'}`}
+              style={{ width: `${Math.min(100, disk.percent_used)}%` }} />
+          </div>
+        </div>
+      )}
 
       {/* Engines + versions */}
       <div className="grid sm:grid-cols-2 gap-4">

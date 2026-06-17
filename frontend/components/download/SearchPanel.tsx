@@ -1,8 +1,8 @@
 'use client'
-import { useState } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import {
   Search, Download, Loader2, Globe, FileText, ImageIcon, Film,
-  ExternalLink, Magnet, Newspaper, Copy, Check, Rss,
+  ExternalLink, Magnet, Newspaper, Copy, Check, Rss, Play, Shield, ShieldOff,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { searchWeb, queueDownload, type SearchResult } from '@/lib/api'
@@ -84,6 +84,7 @@ export default function SearchPanel({ onQueued }: Props) {
   const [page,     setPage]     = useState(1)
   const [hasMore,  setHasMore]  = useState(false)
   const [total,    setTotal]    = useState<number | null>(null)
+  const [safe,     setSafe]     = useState(false)   // SafeSearch off by default (unfiltered)
 
   async function fetchPage(nextPage: number, reset: boolean) {
     const q = query.trim()
@@ -92,7 +93,7 @@ export default function SearchPanel({ onQueued }: Props) {
     setError('')
     if (reset) { setResults([]); setTotal(null) }
     try {
-      const r = await searchWeb(q, kind, kind === 'file' ? filetype : undefined, nextPage, 30)
+      const r = await searchWeb(q, kind, kind === 'file' ? filetype : undefined, nextPage, 30, safe)
       setResults((prev) => {
         const merged = reset ? r.results : [...prev, ...r.results]
         const seen = new Set<string>()
@@ -108,6 +109,13 @@ export default function SearchPanel({ onQueued }: Props) {
 
   const run      = () => fetchPage(1, true)
   const loadMore = () => fetchPage(page + 1, false)
+
+  // Re-run the current search when SafeSearch is toggled (skip initial mount).
+  const safeMounted = useRef(false)
+  useEffect(() => {
+    if (!safeMounted.current) { safeMounted.current = true; return }
+    if (query.trim()) fetchPage(1, true)
+  }, [safe]) // eslint-disable-line react-hooks/exhaustive-deps
 
   async function download(r: SearchResult) {
     try {
@@ -173,6 +181,19 @@ export default function SearchPanel({ onQueued }: Props) {
           {loading ? <Loader2 size={14} className="animate-spin" /> : <Search size={14} />} Search
         </button>
       </div>
+
+      {/* SafeSearch toggle */}
+      {kind !== 'torrent' && (
+        <button type="button"
+          onClick={() => setSafe((s) => !s)}
+          title="Toggle SafeSearch filtering"
+          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[11px] font-semibold border transition-colors w-fit ${
+            safe ? 'border-emerald-500/40 text-emerald-400 bg-emerald-500/10'
+                 : 'border-amber-500/40 text-amber-400 bg-amber-500/10'}`}>
+          {safe ? <Shield size={12} /> : <ShieldOff size={12} />}
+          SafeSearch: {safe ? 'On (filtered)' : 'Off (unfiltered — adult shown)'}
+        </button>
+      )}
 
       {kind === 'torrent' ? (
         <p className="text-[10px] text-[var(--text-3)] flex items-center gap-1.5">
@@ -290,6 +311,10 @@ export default function SearchPanel({ onQueued }: Props) {
                 <p className="text-[11px] text-[var(--text-3)] truncate">{r.snippet || r.url}</p>
                 {r.duration && <span className="text-[10px] text-[var(--text-3)]">{r.duration}</span>}
               </div>
+              <a href={`/player?url=${encodeURIComponent(r.source || r.url)}`} target="_blank" rel="noopener noreferrer"
+                className="shrink-0 flex items-center gap-1.5 px-3 py-2 rounded-lg bg-violet-600 hover:bg-violet-500 text-white text-xs font-bold transition-colors" title="Play in the in-app player">
+                <Play size={13} /> Play
+              </a>
               <a href={r.source || r.url} target="_blank" rel="noopener noreferrer"
                 className="shrink-0 p-2 rounded-lg text-[var(--text-3)] hover:text-[var(--text)]" title="Open source">
                 <ExternalLink size={14} />

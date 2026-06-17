@@ -106,6 +106,13 @@ export function startWorker() {
     {
       connection: new IORedis(REDIS_URL, { maxRetriesPerRequest: null, enableReadyCheck: false }) as any,
       concurrency: CONCURRENCY,
+      // Downloads can run for many minutes (large files). The default 30 s lock
+      // makes BullMQ think a long download "stalled" and re-run it from scratch —
+      // that's the "download restarts at 100%" bug. Give jobs a long lock so a
+      // genuinely-running download is never treated as stalled.
+      lockDuration: 30 * 60_000,   // 30 minutes
+      stalledInterval: 60_000,
+      maxStalledCount: 1,
     }
   )
 

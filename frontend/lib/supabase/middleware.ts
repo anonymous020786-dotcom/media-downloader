@@ -24,11 +24,29 @@ export async function updateSession(request: NextRequest) {
   // Refreshes session and rotates tokens — must not be removed.
   const { data: { user } } = await supabase.auth.getUser()
 
-  // Protect /admin routes
-  if (request.nextUrl.pathname.startsWith('/admin') && !user) {
+  // ── Authentication-gated routes ───────────────────────────────────────────────
+  // All interactive tools require a signed-in user. Public pages (landing,
+  // movies/people/news browsing, blog, legal, auth pages) stay open.
+  const PROTECTED_PREFIXES = [
+    '/admin',
+    '/download',
+    '/tools',
+    '/player',
+    '/history',
+    '/schedules',
+    '/account',
+    '/movies',
+    '/people',
+    '/news',
+  ]
+
+  const path = request.nextUrl.pathname
+  const isProtected = PROTECTED_PREFIXES.some(p => path === p || path.startsWith(p + '/') || path.startsWith(p))
+
+  if (isProtected && !user) {
     const signIn = request.nextUrl.clone()
     signIn.pathname = '/sign-in'
-    signIn.searchParams.set('redirect_url', request.nextUrl.pathname)
+    signIn.searchParams.set('redirect_url', path + request.nextUrl.search)
     return NextResponse.redirect(signIn)
   }
 

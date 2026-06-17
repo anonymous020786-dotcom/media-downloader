@@ -1,9 +1,14 @@
 import { Router } from 'express'
+import axios from 'axios'
 import { downloadQueue, redisConnection } from '../workers/downloadWorker.js'
 import type { JobProgress, JobView } from '../types.js'
 import { requireAuth, optionalAuth } from '../middleware/requireAuth.js'
 
 const router = Router()
+const PYTHON = process.env.PYTHON_SERVICE_URL ?? 'http://localhost:8000'
+
+// In-progress states only — what is actually downloading / queued right now.
+const ACTIVE_STATES = ['active', 'waiting', 'delayed', 'prioritized'] as const
 
 // ── SSE progress stream — public (just progress data, no files) ───────────────
 router.get('/:id/progress', (req, res) => {
@@ -35,9 +40,12 @@ router.get('/:id/progress', (req, res) => {
 })
 
 // ── List jobs (scoped to authenticated user; admins see all) ──────────────────
-router.get('/', requireAuth, async (req, res) => {
+router.get('/', optionalAuth, async (req, res) => {
   try {
-    const user = req.authUser!
+    const user = req.authUser
+    // Anonymous visitors (e.g. on the public download page) get an empty queue
+    // instead of a 401 — they simply have no jobs of their own to show.
+    if (!user) { res.json([]); return }
     const isAdmin = user.role === 'admin' || user.role === 'super_admin'
     const jobs = await downloadQueue.getJobs(['waiting','active','completed','failed','delayed','prioritized'])
 
@@ -52,6 +60,62 @@ router.get('/', requireAuth, async (req, res) => {
     )
     views.sort((a, b) => b.addedAt - a.addedAt)
     res.json(views)
+  } catch (err: any) { res.status(500).json({ error: err.message }) }
+})
+
+// ── Active downloads — what's running in the background right now ──────────────
+router.get('/active', optionalAuth, async (req, res) => {
+  try {
+    const user = req.authUser
+    if (!user) { res.json([]); return }
+    const isAdmin = user.role === 'admin' || user.role === 'super_admin'
+    const jobs = await downloadQueue.getJobs([...ACTIVE_STATES])
+    const scoped = isAdmin ? jobs : jobs.filter(j => j.data.userId === user.id)
+
+    const views = await Promise.all(scoped.map(async (job) => {
+      const raw = await redisConnection.get(`job:${job.data.jobId}:progress`)
+      const progress: JobProgress = raw ? JSON.parse(raw) : { status: 'queued', progress: 0 }
+      const state = await job.getState().catch(() => 'unknown')
+      return {
+        jobId: job.data.jobId, bullId: job.id ?? '', url: job.data.url,
+        title: job.data.title ?? null, mediaType: job.data.mediaType,
+        addedAt: job.data.addedAt, state, progress,
+      }
+    }))
+    // Only keep ones that aren't already completed/failed in their progress record.
+    const live = views.filter(v => v.progress.status !== 'completed' && v.progress.status !== 'failed')
+    live.sort((a, b) => b.addedAt - a.addedAt)
+    res.json(live)
+  } catch (err: any) { res.status(500).json({ error: err.message }) }
+})
+
+// ── Stop ALL of the caller's background downloads ──────────────────────────────
+router.post('/stop-all', requireAuth, async (req, res) => {
+  try {
+    const user = req.authUser!
+    const isAdmin = user.role === 'admin' || user.role === 'super_admin'
+    const jobs = await downloadQueue.getJobs([...ACTIVE_STATES])
+    const mine = isAdmin ? jobs : jobs.filter(j => j.data.userId === user.id)
+
+    // Kill running subprocesses in the python service.
+    if (isAdmin) {
+      await axios.post(`${PYTHON}/cancel-all`, {}, { timeout: 10_000 }).catch(() => {})
+    } else {
+      await Promise.all(mine.map(j =>
+        axios.post(`${PYTHON}/cancel/${j.data.jobId}`, {}, { timeout: 8_000 }).catch(() => {})))
+    }
+
+    // Remove them from the queue + clear progress.
+    let stopped = 0
+    await Promise.all(mine.map(async (job) => {
+      try {
+        await redisConnection.set(`job:${job.data.jobId}:progress`,
+          JSON.stringify({ status: 'failed', progress: 0, error: 'Stopped by user' }), 'EX', 3600)
+        await job.remove()
+        stopped++
+      } catch { /* job may have finished concurrently */ }
+    }))
+    res.json({ success: true, stopped })
   } catch (err: any) { res.status(500).json({ error: err.message }) }
 })
 
