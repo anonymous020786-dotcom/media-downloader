@@ -9,7 +9,7 @@
  */
 
 // ── CONFIG ────────────────────────────────────────────────────────────────────
-$API_KEY      = getenv('MEDIADL_API_KEY') ?: '2328568639b5fe19f184a96057e80fe93a047871f77f98e439e090d4d317eeca';
+$API_KEY      = getenv('MEDIADL_API_KEY') ?: '';
 $PUBLIC_BASE  = 'https://zestcommerce.in';         // your site root (no trailing slash)
 $UPLOAD_DIR   = __DIR__ . '/../uploads';           // public_html/uploads
 $MAX_BYTES    = 5 * 1024 * 1024;                   // 5 MB
