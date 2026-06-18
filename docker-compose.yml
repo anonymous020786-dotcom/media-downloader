@@ -110,7 +110,8 @@ services:
       TMDB_API_KEY: ${TMDB_API_KEY:-}
       TMDB_ACCESS_TOKEN: ${TMDB_ACCESS_TOKEN:-}
       # Socket.io is always on (same port as HTTP)
-      # Kafka — optional; remove or leave empty to disable
+      # Kafka — optional; the lean dev profile disables it via
+      # docker-compose.lean.yml (override sets KAFKA_BROKER: "").
       KAFKA_BROKER: kafka:9092
       # Firebase Admin — optional push notifications
       FIREBASE_SERVICE_ACCOUNT_JSON: ${FIREBASE_SERVICE_ACCOUNT_JSON:-}

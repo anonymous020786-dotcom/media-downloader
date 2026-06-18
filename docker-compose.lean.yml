@@ -1,0 +1,9 @@
+# Lean dev override — disables the optional Kafka in the backend so the Kafka
+# container can stay stopped (saves ~1 GB on small hosts). Apply alongside the
+# base file:
+#   docker compose -f docker-compose.yml -f docker-compose.lean.yml up -d --no-deps backend
+# The scripts/dev-lean.ps1 helper does this automatically.
+services:
+  backend:
+    environment:
+      KAFKA_BROKER: ""
