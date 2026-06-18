@@ -1,0 +1,26 @@
+# ── WSL2 / Docker Desktop resource limits — SAMPLE ────────────────────────────
+# This file documents the host-level WSL config used to keep Docker Desktop
+# stable on a small (8 GB) Windows host. It is NOT read from the repo.
+#
+# To use it, copy this to your Windows user home dir as `.wslconfig`:
+#     copy scripts\wslconfig.sample %USERPROFILE%\.wslconfig
+# then apply it:
+#     wsl --shutdown        # (closes Docker's WSL VM + all containers)
+#     # restart Docker Desktop
+#
+# Why: without a memory cap and swap, the Docker WSL VM can exhaust RAM under
+# the full container stack + a host dev server and hard-crash with
+# "failed to connect to the docker API ... dockerDesktopLinuxEngine not found".
+# The swap is the key fix — spikes page to disk instead of OOM-killing the VM.
+# Tune `memory` to ~60% of your RAM; raise it on hosts with more than 8 GB.
+
+[wsl2]
+memory=5GB
+swap=10GB
+processors=4
+# Keep localhost port-forwarding stable across the VM lifetime.
+localhostForwarding=true
+
+[experimental]
+autoMemoryReclaim=gradual
+sparseVhd=true
