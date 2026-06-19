@@ -1,0 +1,64 @@
+name: Build and push images to GHCR
+
+# Builds the three app images and publishes them to GitHub Container Registry
+# so the Hostinger VPS can pull pre-built images (it deploys from compose only,
+# not from build contexts). Frontend public env vars are baked at build time;
+# the anon key is a public Supabase key so it is safe in the image.
+
+on:
+  push:
+    branches: [ master ]
+    paths:
+      - 'backend/**'
+      - 'frontend/**'
+      - 'python-service/**'
+      - '.github/workflows/build-images.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  REGISTRY: ghcr.io
+  OWNER: zestcommerce841428-png
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: backend
+            context: ./backend
+          - name: frontend
+            context: ./frontend
+          - name: python
+            context: ./python-service
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push ${{ matrix.name }}
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          push: true
+          tags: ghcr.io/${{ env.OWNER }}/mediadl-${{ matrix.name }}:latest
+          cache-from: type=gha,scope=${{ matrix.name }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.name }}
+          build-args: |
+            NEXT_PUBLIC_API_URL=
+            NEXT_PUBLIC_SITE_URL=https://dl.videodownloaders.cloud
+            NEXT_PUBLIC_SUPABASE_URL=https://mwlsfkuxxvlgbijclaas.supabase.co
+            NEXT_PUBLIC_SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im13bHNma3V4eHZsZ2JpamNsYWFzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE0MjE4NzMsImV4cCI6MjA5Njk5Nzg3M30.d2_YrR2X9Z307tBrCAO039m6o-anID2FV_ScsBCwoKg
+            NEXT_PUBLIC_SITE_NAME=MediaDL
