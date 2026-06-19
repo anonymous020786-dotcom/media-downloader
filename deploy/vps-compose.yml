@@ -1,61 +1,24 @@
-# ── MediaDL — production compose for the Hostinger VPS ────────────────────────
-# Deployed via the Hostinger MCP (createNewProject). Uses pre-built GHCR images
-# (the VPS deploys from compose only, not build contexts). TLS + routing is
-# handled by the SHARED nginx-proxy + acme-companion already running in the
-# `zync` project — this app just joins that proxy network and sets VIRTUAL_HOST.
-# All secrets come from the project environment (${VAR}); none live in this file.
-
 configs:
   mediadl_nginx:
     content: |
       worker_processes auto;
-      events { worker_connections 4096; }
+      events { worker_connections 2048; }
       http {
-        include       /etc/nginx/mime.types;
-        default_type  application/octet-stream;
-        sendfile on; tcp_nopush on; keepalive_timeout 65;
-        server_tokens off; client_max_body_size 200m;
-        gzip on; gzip_vary on; gzip_min_length 1024; gzip_proxied any; gzip_comp_level 6;
-        gzip_types text/plain text/css application/json application/javascript application/xml text/xml image/svg+xml application/rss+xml;
-        proxy_cache_path /var/cache/nginx levels=1:2 keys_zone=apicache:20m max_size=500m inactive=15m use_temp_path=off;
+        include /etc/nginx/mime.types;
+        sendfile on; server_tokens off; client_max_body_size 200m;
+        gzip on; gzip_proxied any; gzip_min_length 1024;
+        gzip_types text/css application/json application/javascript image/svg+xml;
         resolver 127.0.0.11 valid=10s ipv6=off;
-        limit_req_zone $binary_remote_addr zone=api_anon:10m rate=30r/m;
-        map $http_upgrade $connection_upgrade { default upgrade; '' close; }
+        map $$http_upgrade $$conn { default upgrade; '' close; }
         server {
           listen 80;
-          set $frontend_up frontend:3000;
-          set $backend_up  backend:4000;
-          add_header X-Frame-Options SAMEORIGIN always;
-          add_header X-Content-Type-Options nosniff always;
-          add_header Referrer-Policy "strict-origin-when-cross-origin" always;
-          add_header Permissions-Policy "camera=(), microphone=(), geolocation=()" always;
-          location /socket.io/ {
-            proxy_pass http://$backend_up; proxy_http_version 1.1;
-            proxy_set_header Host $host; proxy_set_header X-Real-IP $remote_addr;
-            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-            proxy_set_header X-Forwarded-Proto $scheme;
-            proxy_set_header Upgrade $http_upgrade; proxy_set_header Connection $connection_upgrade;
-            proxy_buffering off; proxy_read_timeout 3600s; proxy_send_timeout 3600s;
-          }
-          location /api/ {
-            limit_req zone=api_anon burst=20 nodelay;
-            proxy_pass http://$backend_up; proxy_http_version 1.1;
-            proxy_set_header Host $host; proxy_set_header X-Real-IP $remote_addr;
-            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-            proxy_set_header X-Forwarded-Proto $scheme;
-            proxy_set_header Upgrade $http_upgrade; proxy_set_header Connection $connection_upgrade;
-            proxy_buffering off; proxy_read_timeout 3600s;
-          }
-          location / {
-            proxy_pass http://$frontend_up; proxy_http_version 1.1;
-            proxy_set_header Host $host; proxy_set_header X-Real-IP $remote_addr;
-            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-            proxy_set_header X-Forwarded-Proto $scheme;
-            proxy_set_header Upgrade $http_upgrade; proxy_set_header Connection $connection_upgrade;
-          }
+          set $$fe frontend:3000;
+          set $$be backend:4000;
+          location /socket.io/ { proxy_pass http://$$be; proxy_http_version 1.1; proxy_set_header Host $$host; proxy_set_header X-Forwarded-For $$proxy_add_x_forwarded_for; proxy_set_header X-Forwarded-Proto $$scheme; proxy_set_header Upgrade $$http_upgrade; proxy_set_header Connection $$conn; proxy_buffering off; proxy_read_timeout 3600s; proxy_send_timeout 3600s; }
+          location /api/ { proxy_pass http://$$be; proxy_http_version 1.1; proxy_set_header Host $$host; proxy_set_header X-Forwarded-For $$proxy_add_x_forwarded_for; proxy_set_header X-Forwarded-Proto $$scheme; proxy_set_header Upgrade $$http_upgrade; proxy_set_header Connection $$conn; proxy_buffering off; proxy_read_timeout 3600s; }
+          location / { proxy_pass http://$$fe; proxy_http_version 1.1; proxy_set_header Host $$host; proxy_set_header X-Forwarded-For $$proxy_add_x_forwarded_for; proxy_set_header X-Forwarded-Proto $$scheme; proxy_set_header Upgrade $$http_upgrade; proxy_set_header Connection $$conn; }
         }
       }
-
 services:
   mysql:
     image: mysql:8.0
@@ -65,37 +28,27 @@ services:
       MYSQL_DATABASE: mediadl
       MYSQL_USER: mediadl
       MYSQL_PASSWORD: ${MYSQL_PASSWORD}
-    command: >
-      --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
-      --default-authentication-plugin=mysql_native_password
-    volumes:
-      - mysql_data:/var/lib/mysql
+    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci --default-authentication-plugin=mysql_native_password
+    volumes: [mysql_data:/var/lib/mysql]
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "mediadl", "-p${MYSQL_PASSWORD}"]
+      test: ["CMD","mysqladmin","ping","-h","localhost","-u","mediadl","-p${MYSQL_PASSWORD}"]
       interval: 10s
       timeout: 5s
       retries: 12
     restart: unless-stopped
     networks: [internal]
-    logging: { driver: json-file, options: { max-size: "5m", max-file: "3" } }
-
   redis:
     image: redis:7-alpine
     mem_limit: 512m
-    command: >
-      redis-server --maxmemory 384mb --maxmemory-policy noeviction
-      --save 60 1000 --loglevel warning --tcp-keepalive 60 --appendonly yes
-    volumes:
-      - redis_data:/data
+    command: redis-server --maxmemory 384mb --maxmemory-policy noeviction --appendonly yes --loglevel warning
+    volumes: [redis_data:/data]
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD","redis-cli","ping"]
       interval: 5s
       timeout: 3s
       retries: 10
     restart: unless-stopped
     networks: [internal]
-    logging: { driver: json-file, options: { max-size: "5m", max-file: "2" } }
-
   kafka:
     image: apache/kafka:3.7.1
     mem_limit: 1g
@@ -110,21 +63,11 @@ services:
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
-      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
       CLUSTER_ID: MkU3OEVBNTcwNTJENDM2Qk
-    volumes:
-      - kafka_data:/var/lib/kafka/data
-    healthcheck:
-      test: ["CMD", "/opt/kafka/bin/kafka-topics.sh", "--bootstrap-server", "localhost:9092", "--list"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
-      start_period: 30s
+    volumes: [kafka_data:/var/lib/kafka/data]
     restart: unless-stopped
     networks: [internal]
-    logging: { driver: json-file, options: { max-size: "10m", max-file: "3" } }
-
   python-service:
     image: ghcr.io/zestcommerce841428-png/mediadl-python:latest
     pull_policy: always
@@ -132,24 +75,20 @@ services:
     environment:
       REDIS_URL: redis://redis:6379
       DOWNLOAD_DIR: /downloads
-      MAX_CONCURRENT_DOWNLOADS: "${MAX_CONCURRENT_DOWNLOADS:-4}"
-      DOWNLOAD_TTL_DAYS: "${DOWNLOAD_TTL_DAYS:-3}"
-      DEFAULT_BEST_HEIGHT: "${DEFAULT_BEST_HEIGHT:-1080}"
-      MAX_PAGE_IMAGES: "2000"
+      MAX_CONCURRENT_DOWNLOADS: "4"
+      DOWNLOAD_TTL_DAYS: "3"
+      DEFAULT_BEST_HEIGHT: "1080"
       VERIFY_SSL: "true"
-    volumes:
-      - downloads:/downloads
+    volumes: [downloads:/downloads]
     depends_on:
-      redis: { condition: service_healthy }
+      redis: {condition: service_healthy}
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      test: ["CMD","curl","-f","http://localhost:8000/health"]
       interval: 15s
       timeout: 5s
       retries: 5
     restart: unless-stopped
     networks: [internal]
-    logging: { driver: json-file, options: { max-size: "10m", max-file: "3" } }
-
   backend:
     image: ghcr.io/zestcommerce841428-png/mediadl-backend:latest
     pull_policy: always
@@ -159,7 +98,7 @@ services:
       PYTHON_SERVICE_URL: http://python-service:8000
       DOWNLOAD_DIR: /downloads
       PORT: "4000"
-      WORKER_CONCURRENCY: "${WORKER_CONCURRENCY:-4}"
+      WORKER_CONCURRENCY: "4"
       NODE_ENV: production
       MYSQL_HOST: mysql
       MYSQL_PORT: "3306"
@@ -168,39 +107,35 @@ services:
       MYSQL_PASSWORD: ${MYSQL_PASSWORD}
       SUPABASE_JWT_SECRET: ${SUPABASE_JWT_SECRET}
       SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL}
-      SUPER_ADMIN_EMAIL: ${SUPER_ADMIN_EMAIL:-}
+      SUPER_ADMIN_EMAIL: ${SUPER_ADMIN_EMAIL}
       ALLOWED_ORIGINS: https://dl.videodownloaders.cloud
-      TMDB_API_KEY: ${TMDB_API_KEY:-}
-      TMDB_ACCESS_TOKEN: ${TMDB_ACCESS_TOKEN:-}
+      TMDB_API_KEY: ${TMDB_API_KEY}
+      TMDB_ACCESS_TOKEN: ${TMDB_ACCESS_TOKEN}
       KAFKA_BROKER: kafka:9092
-      SMTP_PROVIDER: ${SMTP_PROVIDER:-hostinger}
-      SMTP_USER: ${SMTP_USER:-}
-      SMTP_PASS: ${SMTP_PASS:-}
-      SMTP_HOST: ${SMTP_HOST:-}
-      SMTP_PORT: ${SMTP_PORT:-465}
-      SMTP_SECURE: ${SMTP_SECURE:-true}
-      SMTP_FROM: ${SMTP_FROM:-}
-      SMTP_ADMIN_TO: ${SMTP_ADMIN_TO:-}
-      STORAGE_PROVIDER: ${STORAGE_PROVIDER:-hostinger}
-      HOSTINGER_UPLOAD_URL: ${HOSTINGER_UPLOAD_URL:-}
-      HOSTINGER_DELETE_URL: ${HOSTINGER_DELETE_URL:-}
-      HOSTINGER_API_KEY: ${HOSTINGER_API_KEY:-}
-    volumes:
-      - downloads:/downloads
+      SMTP_PROVIDER: ${SMTP_PROVIDER}
+      SMTP_USER: ${SMTP_USER}
+      SMTP_PASS: ${SMTP_PASS}
+      SMTP_HOST: ${SMTP_HOST}
+      SMTP_PORT: ${SMTP_PORT}
+      SMTP_SECURE: ${SMTP_SECURE}
+      SMTP_FROM: ${SMTP_FROM}
+      SMTP_ADMIN_TO: ${SMTP_ADMIN_TO}
+      STORAGE_PROVIDER: ${STORAGE_PROVIDER}
+      HOSTINGER_UPLOAD_URL: ${HOSTINGER_UPLOAD_URL}
+      HOSTINGER_DELETE_URL: ${HOSTINGER_DELETE_URL}
+      HOSTINGER_API_KEY: ${HOSTINGER_API_KEY}
+    volumes: [downloads:/downloads]
     depends_on:
-      redis: { condition: service_healthy }
-      python-service: { condition: service_healthy }
-      mysql: { condition: service_healthy }
-      kafka: { condition: service_healthy }
+      redis: {condition: service_healthy}
+      python-service: {condition: service_healthy}
+      mysql: {condition: service_healthy}
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:4000/health"]
+      test: ["CMD","wget","-qO-","http://localhost:4000/health"]
       interval: 15s
       timeout: 5s
       retries: 5
     restart: unless-stopped
     networks: [internal]
-    logging: { driver: json-file, options: { max-size: "10m", max-file: "3" } }
-
   frontend:
     image: ghcr.io/zestcommerce841428-png/mediadl-frontend:latest
     pull_policy: always
@@ -212,13 +147,11 @@ services:
       NODE_ENV: production
       NEXT_PUBLIC_SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL}
       NEXT_PUBLIC_SUPABASE_ANON_KEY: ${NEXT_PUBLIC_SUPABASE_ANON_KEY}
-      SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY:-}
+      SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY}
     depends_on:
-      backend: { condition: service_healthy }
+      backend: {condition: service_healthy}
     restart: unless-stopped
     networks: [internal]
-    logging: { driver: json-file, options: { max-size: "10m", max-file: "3" } }
-
   nginx:
     image: nginx:1.27-alpine
     mem_limit: 128m
@@ -230,20 +163,15 @@ services:
     configs:
       - source: mediadl_nginx
         target: /etc/nginx/nginx.conf
-    depends_on:
-      - frontend
-      - backend
+    depends_on: [frontend, backend]
     restart: unless-stopped
     networks: [internal, proxy]
-    logging: { driver: json-file, options: { max-size: "5m", max-file: "2" } }
-
 networks:
   internal:
     driver: bridge
   proxy:
     external: true
     name: zync_default
-
 volumes:
   mysql_data:
   redis_data:
