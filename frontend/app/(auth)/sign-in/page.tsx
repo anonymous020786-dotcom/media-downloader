@@ -86,12 +86,11 @@ export default function SignInPage() {
     setError('Signed out. Verification is required to continue.')
   }
 
-  async function handleOAuth(provider: 'google') {
+  function handleOAuth(provider: 'google') {
     setOauthLoad(provider); setError('')
-    await supabase.auth.signInWithOAuth({
-      provider,
-      options: { redirectTo: `${window.location.origin}/auth/callback?redirect_url=${encodeURIComponent(redirectTo)}` },
-    })
+    // Initiate OAuth server-side so the PKCE verifier is stored in an
+    // HttpOnly cookie (not browser JS), enabling secure server-side exchange.
+    window.location.href = `/auth/login?provider=${provider}&redirect_url=${encodeURIComponent(redirectTo)}`
   }
 
   async function handleMagicLink() {
@@ -99,7 +98,7 @@ export default function SignInPage() {
     setLoading(true); setError('')
     const { error: err } = await supabase.auth.signInWithOtp({
       email,
-      options: { emailRedirectTo: `${window.location.origin}/auth/callback?redirect_url=${encodeURIComponent(redirectTo)}` },
+      options: { emailRedirectTo: `${process.env.NEXT_PUBLIC_SITE_URL}/auth/callback?redirect_url=${encodeURIComponent(redirectTo)}` },
     })
     setLoading(false)
     if (err) { setError(err.message); return }
