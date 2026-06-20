@@ -20,7 +20,9 @@ export async function GET(request: Request) {
     if (!error) {
       return NextResponse.redirect(`${origin}${next}`)
     }
+    console.error('[auth/callback] exchangeCodeForSession error:', JSON.stringify(error))
+    return NextResponse.redirect(`${origin}/sign-in?error=${encodeURIComponent(error.message)}`)
   }
 
-  return NextResponse.redirect(`${origin}/sign-in?error=auth_failed`)
+  return NextResponse.redirect(`${origin}/sign-in?error=no_code`)
 }
