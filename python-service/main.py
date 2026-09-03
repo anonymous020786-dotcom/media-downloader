@@ -2515,7 +2515,9 @@ _JAV_STREAM_RE = re.compile(
     r'hanime\.tv|hanimes\.org|hentaimama\.io|hentaimama\.tv|hentaihaven\.xxx|'
     r'muchohentai\.com|hentaiplay\.net|hentaidude\.com|highporn\.net|'
     r'iqqtv\.cloud|iqq\.today|iqqtv\.com|whichav\.video|av01\.(?:tv|me)|'
-    r'thisav\.com|avgle\.com|av6k\.com|x6av\.com|watchjavonline\.com'
+    r'thisav\.com|avgle\.com|av6k\.com|x6av\.com|watchjavonline\.com|'
+    r'xxxvideo\.link|xvideos\.link|xnxxvideo\.link|123av\.com|123avx\.com|'
+    r'javtsunami\.com|javpoll\.com|1024jav\.com'
     r')(?:/|$)', re.I)
 
 
