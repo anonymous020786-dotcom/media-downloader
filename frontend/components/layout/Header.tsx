@@ -28,6 +28,7 @@ const DOWNLOADERS = [
   { label: 'Kick',        href: '/kick-downloader',       icon: <Zap            size={14} className="text-green-400" />, desc: 'VODs & clips' },
   { label: 'Rumble',      href: '/rumble-downloader',     icon: <Film           size={14} className="text-lime-400"  />, desc: 'Up to 4K' },
   { label: 'Threads',     href: '/threads-downloader',    icon: <MessageCircle  size={14} className="text-neutral-300"/>, desc: 'Videos & photos' },
+  { label: 'Terabox',     href: '/terabox-downloader',    icon: <List           size={14} className="text-sky-400"   />, desc: 'Files, no speed cap' },
 ]
 
 const NAV_ITEMS = [

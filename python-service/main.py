@@ -925,15 +925,21 @@ _PIXELDRAIN_RE = re.compile(
 
 # Streamtape  https://streamtape.com/v/{id}
 _STREAMTAPE_RE = re.compile(
-    r'^https?://(?:www\.)?streamtape\.(?:com|to|cc|net|xyz|site)/(?:v|e)/([A-Za-z0-9_-]+)', re.I)
+    r'^https?://(?:www\.)?(?:streamtape|streamadblocker|streamtapeadblock|watchadsontape|'
+    r'strtape|strcloud|stape|shavetape|tapewithadblock|adblockeronstape|adblockstreamtape|'
+    r'streamta|streamtapeadblockuser)'
+    r'\.(?:com|to|cc|net|xyz|site|link|online|fun|us|world|pw|cloud|art|club|buzz|pro|me|sx|io)'
+    r'/(?:v|e)/([A-Za-z0-9_-]+)', re.I)
 
-# Bunkr  https://bunkr.sk/v/{slug}  or  /i/{slug}  or  /a/{slug}  (album)
+# Bunkr  https://bunkr.sk/v/{slug}  or  /i/{slug}  or  /a/{slug}  (album) — many TLDs
 _BUNKR_RE = re.compile(
-    r'^https?://bunkr\.(?:sk|si|ph|cr|fi|su|is|to|la|ru|black)/([aiv])/([A-Za-z0-9_.-]+)', re.I)
+    r'^https?://(?:app\.)?bunkrr{0,2}\.'
+    r'(?:sk|si|ph|cr|fi|su|is|to|la|ru|ac|ci|pk|nu|ws|org|net|black|red|media|site|world|pics|cat|axe)'
+    r'/([aivfd])/([A-Za-z0-9_.-]+)', re.I)
 
 # Erome  https://www.erome.com/a/{id}
 _EROME_RE = re.compile(
-    r'^https?://(?:www\.)?erome\.com/a/([A-Za-z0-9_-]+)', re.I)
+    r'^https?://(?:www\.)?erome\.(?:com|to)/(?:a|i|s)/([A-Za-z0-9_-]+)', re.I)
 
 # Doodstream  https://dood.wf/d/{id}  (many mirror domains)
 _DOODSTREAM_RE = re.compile(
@@ -1164,6 +1170,15 @@ _NITROFLARE_RE = re.compile(
 _UPLOADEE_RE = re.compile(
     r'^https?://(?:www\.)?upload\.ee/files/([A-Za-z0-9_-]+)', re.I)
 
+# Terabox & all its mirror brands  https://terabox.com/s/1xxxx  /  ?surl=xxxx
+_TERABOX_RE = re.compile(
+    r'^https?://(?:[a-z0-9-]+\.)?(?:'
+    r'terabox|1024terabox|teraboxapp|teraboxlink|terabox1024|4funbox|mirrobox|'
+    r'nephobox|momerybox|tibibox|1024tera|terabox-dl|freeterabox|terafileshare|'
+    r'teraboxshare|terasharelink|gibibox|goaibox|terabox|teraboxdrive|placeoftube'
+    r')\.(?:com|app|fun|club|net|org|link|pro|xyz|to|me|cc|in|co)/',
+    re.I)
+
 
 def _is_custom_site(url: str) -> bool:
     return bool(
@@ -1185,7 +1200,8 @@ def _is_custom_site(url: str) -> bool:
         _ONEFICHIER_RE.match(url) or
         _COOMER_RE.match(url) or _KEMONO_RE.match(url) or
         _TURBOBIT_RE.match(url) or _RAPIDGATOR_RE.match(url) or
-        _NITROFLARE_RE.match(url) or _UPLOADEE_RE.match(url)
+        _NITROFLARE_RE.match(url) or _UPLOADEE_RE.match(url) or
+        _TERABOX_RE.match(url)
     )
 
 
@@ -2073,6 +2089,181 @@ async def _dl_gofile(req: DownloadReq, job_dir: Path):
                                 "progress": pct + min(int(done / total_b * 10), 10)})
     files_out = [f.name for f in job_dir.iterdir() if f.is_file()]
     await _prog(req.job_id, {"status": "completed", "progress": 100, "files": files_out})
+
+
+# ── Terabox (+ 1024terabox / 4funbox / nephobox / … all the mirror brands) ────
+# No login needed for public shares: resolve the file list + direct CDN links
+# through a public resolver, falling back to a headless-browser capture.
+
+def _terabox_surl(url: str) -> Optional[str]:
+    """Pull the shorturl id out of any Terabox share URL form."""
+    m = re.search(r'[?&]surl=([A-Za-z0-9_-]+)', url)
+    if m:
+        return m.group(1)
+    m = re.search(r'/s/1?([A-Za-z0-9_-]+)', url)
+    if m:
+        return m.group(1)
+    m = re.search(r'/sharing/link\?surl=([A-Za-z0-9_-]+)', url)
+    if m:
+        return m.group(1)
+    return None
+
+# Public Terabox resolvers (they die/rotate often — we try each in turn).
+_TERABOX_RESOLVERS = [
+    "https://terabox.hnn.workers.dev",
+    "https://terabox.udayscriptsx.workers.dev",
+    "https://teraboxdownloader.online",
+]
+
+async def _terabox_resolve(surl: str, pwd: str = "") -> list[dict]:
+    """Return [{name, size, url}] via a public resolver, or [] if all fail."""
+    for base in _TERABOX_RESOLVERS:
+        try:
+            async with httpx.AsyncClient(follow_redirects=True,
+                                         timeout=httpx.Timeout(25, connect=10),
+                                         verify=VERIFY_SSL) as c:
+                info = await c.get(f"{base}/api/get-info",
+                                   params={"shorturl": surl, "pwd": pwd},
+                                   headers={"User-Agent": _ua(),
+                                            "Referer": "https://www.terabox.com/"})
+                if info.status_code != 200:
+                    continue
+                j = info.json()
+                lst = j.get("list") or j.get("data", {}).get("list") or []
+                if not lst:
+                    continue
+                shareid = j.get("shareid") or j.get("share_id")
+                uk = j.get("uk")
+                sign = j.get("sign")
+                ts = j.get("timestamp")
+                out: list[dict] = []
+                for it in lst:
+                    if str(it.get("is_dir") or it.get("isdir") or "0") == "1":
+                        continue
+                    fs_id = it.get("fs_id") or it.get("fsid")
+                    name = it.get("filename") or it.get("name") or f"terabox_{fs_id}"
+                    size = int(it.get("size") or 0)
+                    dlink = it.get("dlink") or it.get("downloadLink") or it.get("url")
+                    if not dlink and fs_id and shareid and uk and sign:
+                        try:
+                            dl = await c.post(f"{base}/api/get-download",
+                                              json={"shareid": shareid, "uk": uk,
+                                                    "sign": sign, "timestamp": ts,
+                                                    "fs_id": fs_id},
+                                              headers={"User-Agent": _ua()})
+                            dlink = dl.json().get("downloadLink") or dl.json().get("dlink")
+                        except Exception:
+                            dlink = None
+                    if dlink:
+                        out.append({"name": _safe(name), "size": size, "url": dlink})
+                if out:
+                    return out
+        except Exception:
+            continue
+    return []
+
+async def _analyze_terabox(url: str) -> dict:
+    surl = _terabox_surl(url)
+    if not surl:
+        raise ValueError("Could not read the Terabox share id from this URL")
+    files = await _terabox_resolve(surl)
+    if files:
+        total = sum(f["size"] for f in files)
+        return {
+            "type": "file" if len(files) == 1 and not files[0]["name"].lower().endswith(
+                (".mp4", ".mkv", ".webm", ".mov", ".avi", ".ts")) else "video",
+            "title": files[0]["name"] if len(files) == 1 else f"Terabox folder ({len(files)} files)",
+            "url": url, "extractor": "terabox",
+            "size": total or None,
+            "item_count": len(files),
+            "qualities": [], "video_formats": ["original"] + VIDEO_FORMATS,
+            "_terabox_surl": surl,
+        }
+    # Resolver failed — still let the user try (download uses a headless fallback).
+    return {
+        "type": "video", "title": "Terabox share", "url": url,
+        "extractor": "terabox", "qualities": [],
+        "video_formats": ["original"] + VIDEO_FORMATS,
+        "_terabox_surl": surl,
+        "_terabox_note": "Public resolver unavailable — download will try a headless "
+                         "browser capture. For private shares add your Terabox cookies "
+                         "(ndus=… ) in the Cookies field.",
+    }
+
+async def _dl_terabox(req: DownloadReq, job_dir: Path):
+    surl = _terabox_surl(req.url)
+    if not surl:
+        raise HTTPException(400, "Invalid Terabox URL")
+
+    pwd = ""
+    if req.cookies:
+        m = re.search(r'(?:terabox_pwd|pwd)=([^\s;]+)', req.cookies)
+        if m:
+            pwd = m.group(1)
+
+    await _prog(req.job_id, {"status": "starting", "progress": 5,
+                              "info": "Resolving Terabox share…"})
+    files = await _terabox_resolve(surl, pwd)
+
+    dl_headers = {"User-Agent": _ua(), "Referer": "https://www.terabox.com/"}
+
+    # Fallback: headless browser — load the wap file list and capture the CDN
+    # download URL from network traffic (works for public shares w/o an account).
+    if not files:
+        await _prog(req.job_id, {"status": "starting", "progress": 15,
+                                  "info": "Launching headless browser…"})
+        try:
+            wap = f"https://www.terabox.app/sharing/link?surl={surl}"
+            _, vids = await asyncio.wait_for(
+                _render_media(wap, proxy=req.proxy, scroll=True,
+                              timeout_ms=40000, want_video=True), timeout=55)
+            hits = [v for v in vids if "d." in v and ("terabox" in v or "1024tera" in v
+                    or "dm-data" in v or "teraboxcdn" in v)]
+            files = [{"name": _safe(h.split("/")[-1].split("?")[0] or "terabox.mp4"),
+                      "size": 0, "url": h} for h in (hits or list(vids)[:1])]
+        except Exception:
+            pass
+
+    if not files:
+        raise HTTPException(
+            502,
+            "Could not resolve this Terabox share.\n\n"
+            "• Public resolvers may be down — try again shortly.\n"
+            "• For private / password shares, add  ndus=<value>  (from your "
+            "browser cookies) in the Cookies field, and  pwd=<password>  if set.")
+
+    for i, f in enumerate(files):
+        pct = int(20 + (i / len(files)) * 75)
+        await _prog(req.job_id, {"status": "downloading", "progress": pct,
+                                  "info": f"Downloading {f['name']}…"})
+        out = _uniq(job_dir, f["name"])
+        try:
+            async with httpx.AsyncClient(follow_redirects=True, http2=True,
+                                         verify=VERIFY_SSL, proxy=req.proxy or None,
+                                         timeout=httpx.Timeout(None, connect=20),
+                                         headers=dl_headers) as c:
+                async with c.stream("GET", f["url"]) as r:
+                    r.raise_for_status()
+                    total_b = int(r.headers.get("content-length", 0)) or f.get("size") or 0
+                    done = 0
+                    async with aiofiles.open(out, "wb") as fo:
+                        async for chunk in r.aiter_bytes(1 << 20):
+                            await fo.write(chunk)
+                            done += len(chunk)
+                            if total_b:
+                                _prog_s(req.job_id, {"status": "downloading",
+                                    "progress": pct + min(int(done / total_b * 5), 5),
+                                    "downloaded": done, "total": total_b})
+        except Exception as e:
+            if out.exists():
+                out.unlink()
+            if len(files) == 1:
+                raise HTTPException(502, f"Terabox download failed: {str(e)[:200]}")
+
+    saved = [f.name for f in job_dir.iterdir() if f.is_file()]
+    if not saved:
+        raise HTTPException(502, "Terabox: nothing could be downloaded")
+    await _prog(req.job_id, {"status": "completed", "progress": 100, "files": saved})
 
 
 # ── FileMoon ──────────────────────────────────────────────────────────────────
@@ -4277,6 +4468,7 @@ async def _do_analyze(url: str) -> dict:
     if _RAPIDGATOR_RE.match(url):    return await _analyze_rapidgator(url)
     if _NITROFLARE_RE.match(url):    return await _analyze_nitroflare(url)
     if _UPLOADEE_RE.match(url):      return await _analyze_uploadee(url)
+    if _TERABOX_RE.match(url):       return await _analyze_terabox(url)
     # 0. Torrent / magnet
     if url.startswith("magnet:") or url.split("?")[0].lower().endswith(".torrent"):
         name = "torrent"
@@ -4911,11 +5103,15 @@ async def _universal_fallback(req: DownloadReq, job_dir: Path, cookie_file: Opti
     This is what makes a *broken* or *unknown* site degrade gracefully instead
     of failing the whole job.
     """
-    for attempt in (
+    chain = []
+    if _TERABOX_RE.match(req.url):
+        chain.append(lambda: _dl_terabox(req, job_dir))
+    chain += [
         lambda: _dl_video(req, job_dir, cookie_file),
         lambda: _dl_gallery_dl(req.url, req.job_id, job_dir, cookie_file, req.proxy, max_items=req.max_items),
         lambda: _dl_direct(req.url, req.job_id, job_dir, req.format, proxy=req.proxy),
-    ):
+    ]
+    for attempt in chain:
         try:
             await attempt()
         except Exception:
@@ -4995,6 +5191,7 @@ async def download(req: DownloadReq):
             elif _RAPIDGATOR_RE.match(req.url):    await _dl_rapidgator(req, job_dir)
             elif _NITROFLARE_RE.match(req.url):    await _dl_nitroflare(req, job_dir)
             elif _UPLOADEE_RE.match(req.url):      await _dl_uploadee(req, job_dir)
+            elif _TERABOX_RE.match(req.url):       await _dl_terabox(req, job_dir)
             elif req.capture and req.media_type == "video":
                 await _dl_capture(req, job_dir)
             elif req.media_type in ("playlist","profile"):
