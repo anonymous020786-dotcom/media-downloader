@@ -8,10 +8,11 @@ import {
 
 /**
  * Per-site cookie store manager.
- * Lets a signed-in user save a Netscape cookies.txt (or browser "Cookie:" header)
- * once per domain. The download pipeline auto-applies the matching domain's cookies
- * on every job — so login-walled / members-only / age-gated sites keep working
- * without re-pasting. `initialDomain` pre-fills the form from the current URL.
+ * Save a Netscape cookies.txt (or browser "Cookie:" header) once per domain.
+ * The download pipeline auto-applies the matching domain's cookies on every job —
+ * so login-walled / members-only / age-gated sites keep working without
+ * re-pasting. Cookies are held in server memory for the session only.
+ * `initialDomain` pre-fills the form from the current URL.
  */
 export default function CookiesManager({ initialDomain = '' }: { initialDomain?: string }) {
   const [list, setList]     = useState<SavedCookie[]>([])

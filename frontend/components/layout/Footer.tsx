@@ -173,8 +173,8 @@ export default function Footer() {
           <div className="mt-3 pt-3 border-t border-[var(--border)] flex flex-wrap gap-1.5">
             {[
               'Next.js 16', 'TypeScript', 'Tailwind CSS', 'Express.js',
-              'FastAPI', 'Python', 'yt-dlp', 'gallery-dl', 'FFmpeg',
-              'MySQL 8', 'Redis 7', 'BullMQ', 'Kafka', 'Docker', 'Nginx', 'Supabase',
+              'FastAPI', 'Python', 'yt-dlp', 'gallery-dl', 'streamlink',
+              'FFmpeg', 'aria2', 'Playwright', 'Socket.IO',
             ].map(t => (
               <span key={t}
                 className="px-2 py-0.5 text-[9px] font-semibold rounded-full bg-[var(--bg)] border border-[var(--border)] text-[var(--text-3)] hover:border-[var(--border-hover)] hover:text-[var(--text-2)] transition-colors">

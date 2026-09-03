@@ -1,18 +1,15 @@
 import type { Metadata } from 'next'
 import Link from 'next/link'
 import {
-  Home, Download, Info, Settings, Tag, BookOpen, HelpCircle,
-  Mail, DollarSign, Newspaper, Users, Clock, Calendar, Globe,
-  Wand2, Camera, Film, Shield, FileText, Lock, AlertCircle,
-  Briefcase, UserCheck, Server, BarChart2, MessageSquare,
-  ChevronRight, Hash, Zap, Star, Play, Music, ImageIcon,
+  Home, Download, Globe, Wand2, Shield, FileText,
+  ChevronRight, Zap, Play, Music, ImageIcon,
 } from 'lucide-react'
 import { getAllPlatformSlugs } from '@/lib/platforms'
 import { LEGAL_SLUGS } from '@/lib/legal'
 
 export const metadata: Metadata = {
   title: 'Sitemap — All Pages on MediaDL',
-  description: 'Browse every page on MediaDL: download tools, platform guides, legal docs, blog articles, and more.',
+  description: 'Browse every page on MediaDL: download tools, platform guides, and legal docs.',
   alternates: { canonical: '/sitemap-page' },
 }
 
@@ -53,13 +50,6 @@ const SECTIONS: SitemapSection[] = [
     ],
   },
   {
-    id: 'account', title: 'Library', icon: <UserCheck size={16} />,
-    color: 'text-emerald-400', bgColor: 'bg-emerald-500/10 border-emerald-500/20',
-    links: [
-      { label: 'My Schedules', href: '/schedules'},
-    ],
-  },
-  {
     id: 'legal', title: 'Legal & Compliance', icon: <Shield size={16} />,
     color: 'text-slate-400', bgColor: 'bg-slate-500/10 border-slate-500/20',
     links: LEGAL_SLUGS.map((s) => ({
@@ -75,8 +65,6 @@ const BADGE_COLORS: Record<string, string> = {
   Popular: 'bg-indigo-500/20 text-indigo-300 border-indigo-500/30',
   Core:    'bg-violet-500/20 text-violet-300 border-violet-500/30',
   Free:    'bg-emerald-500/20 text-emerald-300 border-emerald-500/30',
-  Auth:    'bg-amber-500/20 text-amber-300 border-amber-500/30',
-  Admin:   'bg-red-500/20 text-red-300 border-red-500/30',
 }
 
 // Platform icon heuristic

@@ -81,7 +81,7 @@ export default function AboutPage() {
           Node.js + BullMQ queue, a FastAPI processing service, and a Next.js frontend — all containerized for reliability.
         </p>
         <div className="flex flex-wrap justify-center gap-2">
-          {['Next.js 16','React 19','Express 5','FastAPI','yt-dlp','FFmpeg','BullMQ','Redis','MySQL','Docker'].map((t) => (
+          {['Next.js 16','React 19','Express 5','FastAPI','yt-dlp','gallery-dl','streamlink','FFmpeg','aria2','Playwright'].map((t) => (
             <span key={t} className="px-3 py-1.5 rounded-lg bg-[var(--bg-card)] border border-[var(--border)] text-sm font-semibold text-[var(--text-2)]">{t}</span>
           ))}
         </div>

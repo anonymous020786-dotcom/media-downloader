@@ -1,6 +1,6 @@
 const CACHE = 'mediadl-v2'
-// Only precache truly public, static shells. Never precache auth-gated pages
-// (e.g. /download, /account) — they must always re-validate with the server.
+// Only precache the offline fallback. Every real page re-validates with the
+// server so job state and results are never served stale.
 const STATIC = [
   '/offline',
 ]

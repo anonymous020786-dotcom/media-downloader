@@ -45,7 +45,6 @@ export const searchWeb = (query: string, kind: 'web'|'file'|'image'|'video'|'tor
 export const queueDownload = (payload: {
   url: string; mediaType: string; format: string; quality?: string
   title?: string; thumbnail?: string; delaySeconds?: number; repeatEvery?: string
-  recaptchaToken?: string
 } & Partial<AdvancedOptions & { maxItems: number | null; startIndex: number }>) =>
   _f<{ jobId: string; scheduled?: boolean; recurring?: string }>('/api/download', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },

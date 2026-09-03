@@ -19,9 +19,9 @@
     { "src": "/og-image.jpg", "sizes": "1200x630", "type": "image/jpeg", "label": "MediaDL home screen" }
   ],
   "shortcuts": [
-    { "name": "Download", "url": "/download", "description": "Download a video or image" },
-    { "name": "History",  "url": "/history",  "description": "View your download history" },
-    { "name": "News",     "url": "/news",     "description": "Browse news" },
-    { "name": "Movies",   "url": "/movies",   "description": "Browse movies & TV" }
+    { "name": "Download",   "url": "/download",       "description": "Download a video or image" },
+    { "name": "Convert",    "url": "/tools/convert",  "description": "Convert media between formats" },
+    { "name": "Screen Rec", "url": "/screen-capture", "description": "Record your screen" },
+    { "name": "Sites",      "url": "/supported-sites","description": "Browse supported sites" }
   ]
 }
