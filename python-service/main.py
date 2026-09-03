@@ -38,6 +38,13 @@ MAX_PAGE_IMAGES  = int(os.getenv("MAX_PAGE_IMAGES",  "2000"))
 VERIFY_SSL       = os.getenv("VERIFY_SSL", "true").lower() not in ("false", "0", "no")
 DOWNLOAD_TTL_DAYS = int(os.getenv("DOWNLOAD_TTL_DAYS", "7"))   # auto-delete after N days (0 = off)
 
+# ── Output format catalogue (offered in the UI; ffmpeg does the conversion) ──
+VIDEO_FORMATS  = ["mp4", "mkv", "webm", "mov", "avi", "flv", "ts", "3gp", "gif"]
+AUDIO_FORMATS  = ["mp3", "m4a", "aac", "opus", "ogg", "flac", "wav", "alac"]
+IMAGE_FORMATS  = ["original", "jpg", "png", "webp", "avif", "gif", "bmp", "tiff", "ico"]
+MEDIA_FORMATS  = VIDEO_FORMATS + AUDIO_FORMATS          # everything a video source can become
+STREAM_FORMATS = ["mp4", "mkv", "ts", "webm", "flv"]    # live / HLS / DASH targets
+
 
 # ── In-memory KV (local build — replaces Redis) ──────────────────────────────
 # Single-process job progress + small caches. Resets when the service restarts.
@@ -905,7 +912,7 @@ async def _analyze_pat_cdn(url: str) -> dict:
         "title": f"pat.com video {cdn_file_id}",
         "thumbnail": None, "duration": None, "uploader": "",
         "extractor": "pat.com-cdn",
-        "qualities": [], "video_formats": ["mp4"],
+        "qualities": [], "video_formats": MEDIA_FORMATS,
         "_pat_cdn_url": url,
         "_pat_m3u8_url": m3u8_url,
         "_pat_expired": expired,
@@ -930,16 +937,21 @@ _EROME_RE = re.compile(
 
 # Doodstream  https://dood.wf/d/{id}  (many mirror domains)
 _DOODSTREAM_RE = re.compile(
-    r'^https?://(?:www\.)?(?:dood|ds2play)\.'
-    r'(?:wf|cx|sh|pm|yt|so|to|la|li|ru|re|stream|cloud|watch|tube|live|rest|pro|xxx|red|boo|fun|id|link|run|one|pw|biz|monster|watch|video|site|click|surf)/(?:d|e|f|v|[A-Za-z0-9]+)/([A-Za-z0-9_-]+)', re.I)
+    r'^https?://(?:www\.)?(?:'
+    r'dood|ds2play|ds2video|doodstream|dooood|do0od|d0o0d|d0000d|d000d|d-s|'
+    r'vide0|doodcdn|dood-re|doodapi|dood-tube'
+    r')\.'
+    r'(?:wf|cx|sh|pm|yt|so|to|la|li|ru|re|com|net|org|io|stream|cloud|watch|tube|live|rest|pro|xxx|red|boo|fun|id|link|run|one|pw|biz|ws|sb|ch|monster|video|site|click|surf|work|party|yes)'
+    r'/(?:d|e|f|v|[A-Za-z0-9]+)/([A-Za-z0-9_-]+)', re.I)
 
 # Cyberdrop  https://cyberdrop.me/a/{id}
 _CYBERDROP_RE = re.compile(
     r'^https?://(?:www\.)?cyberdrop\.(?:me|cc|to|nl|org)/(?:a|f)/([A-Za-z0-9_-]+)', re.I)
 
-# Mixdrop  https://mixdrop.sb/f/{id}
+# Mixdrop  https://mixdrop.sb/f/{id}  (many mirror domains)
 _MIXDROP_RE = re.compile(
-    r'^https?://(?:www\.)?mixdrop\.(?:sb|co|bz|to|club|vc|ag|ch|gl|ps|sx|ac|pk|ws)/(?:f|e)/([A-Za-z0-9_-]+)', re.I)
+    r'^https?://(?:www\.)?(?:mixdrop|mixdrp|mixdrop21|mixdropjmk|mdy48tn97|md3b0j6hj)\.'
+    r'(?:sb|co|bz|to|club|vc|ag|ch|gl|ps|sx|ac|pk|ws|si|is|my|net|org|in|nu|lat|ps|film|si|to|is)/(?:f|e)/([A-Za-z0-9_-]+)', re.I)
 
 # GoFile  https://gofile.io/d/{id}
 _GOFILE_RE = re.compile(
@@ -949,25 +961,40 @@ _GOFILE_RE = re.compile(
 _FILEMOON_RE = re.compile(
     r'^https?://(?:www\.)?(?:'
     r'filemoon\.sx|filemoon\.in|filemoon\.to|filemoon\.cc|filemoon\.pw|filemoon\.wf|'
-    r'filemoon\.monster|filemoon\.fun|filemoon\.cf|filemoon\.ru|moonvid\.to|'
-    r'kerapoxy\.cc|cr\.watchsb\.com|vid2funs\.com|sfastwish\.com|'
-    r'playersb\.com|sbnmp\.bar|hdwatched\.life|embedrise\.com'
+    r'filemoon\.link|filemoon\.eu|filemoon\.art|filemoon\.nl|filemoon\.me|filemoon\.top|'
+    r'filemoon\.monster|filemoon\.fun|filemoon\.cf|filemoon\.ru|filemoon\.mx|'
+    r'moonvid\.to|moviesm4u\.com|filemoons\.online|'
+    r'kerapoxy\.cc|cr\.watchsb\.com|vid2funs\.com|sfastwish\.com|1azz\.com|'
+    r'playersb\.com|sbnmp\.bar|hdwatched\.life|embedrise\.com|geo\.filemoon\.sx'
     r')/(?:e|d|v)/([A-Za-z0-9_-]+)', re.I)
 
-# StreamWish  https://streamwish.com/e/{id}  (many mirrors)
+# StreamWish  https://streamwish.com/e/{id}  (many mirrors — incl. filelions,
+# lulustream, vidhide-lite and other clones running the same player)
 _STREAMWISH_RE = re.compile(
     r'^https?://(?:www\.)?(?:'
-    r'streamwish\.com|streamwish\.to|streamwish\.site|streamwish\.space|'
-    r'strwish\.com|swdyu\.com|awish\.one|dwish\.tv|wishfast\.top|'
-    r'filelions\.com|filelions\.live|filelions\.top|ajmidyaan\.com|'
-    r'khadhnaa\.xyz|cilootv\.store|streamruby\.com|streamsilk\.com|'
-    r'smoothpre\.com|strtape\.cloud|wishembed\.top|bestremit\.com|'
-    r'asnimations\.com|animefever\.cc|watchanimesub\.net'
+    r'streamwish\.com|streamwish\.to|streamwish\.site|streamwish\.space|streamwish\.fun|'
+    r'strwish\.com|strwish\.xyz|swdyu\.com|swhoi\.com|awish\.one|awish\.pro|'
+    r'dwish\.tv|dwish\.pro|mwish\.pro|jwish\.pro|wishfast\.top|wishonly\.site|'
+    r'embedwish\.com|playerwish\.com|hlswish\.com|hlsflast\.com|kswplayer\.info|'
+    r'flaswish\.com|obeywish\.com|sfastwish\.com|4xemyc\.com|iplayerhls\.com|'
+    r'ajmidyadfihey\.cfd|hglink\.to|nikaplayerr\.com|vidmoviesb\.xyz|'
+    r'filelions\.com|filelions\.live|filelions\.to|filelions\.top|filelions\.online|'
+    r'filelions\.site|alionsfik\.com|ajmidyaan\.com|f1e\.stream|'
+    r'lulustream\.com|lulustream\.online|luluvdo\.com|luluvid\.com|'
+    r'khadhnaa\.xyz|cilootv\.store|streamruby\.com|rubyvid\.com|rubystream\.co|'
+    r'streamsilk\.com|smoothpre\.com|strtape\.cloud|wishembed\.top|wishembed\.pro|'
+    r'bestremit\.com|asnimations\.com|animefever\.cc|watchanimesub\.net'
     r')/(?:e|d|f|v)/([A-Za-z0-9_-]+)', re.I)
 
-# Voe.sx  https://voe.sx/e/{id}  or  /v/{id}
+# Voe.sx  https://voe.sx/e/{id}  or  /v/{id}  (rotates through many redirect domains)
 _VOE_RE = re.compile(
-    r'^https?://(?:www\.)?(?:voe\.sx|voe\.bar|voe\.rest|voe\.rocks|voe\.sx)/(?:e|v)/([A-Za-z0-9_-]+)', re.I)
+    r'^https?://(?:www\.)?(?:'
+    r'voe\.sx|voe\.bar|voe\.rest|voe\.rocks|voe\.network|voeun-block\.com|'
+    r'maxfinishseveral\.com|donaldlineelse\.com|jonathansociallike\.com|'
+    r'housecardsummerbutton\.com|reielraffikkeuh\.net|20demidog\.com|'
+    r'audaciousdefaulthouse\.com|launchreliantcleaverriver\.com|'
+    r'wolfstream\.tv|kutmuih\.online|un-block-voe\.net'
+    r')/(?:e|v)/([A-Za-z0-9_-]+)', re.I)
 
 # Mp4upload  https://www.mp4upload.com/embed-{id}.html
 _MP4UPLOAD_RE = re.compile(
@@ -1284,7 +1311,7 @@ async def _analyze_streamtape(url: str) -> dict:
     return {
         "type": "video", "title": f"Streamtape video {vid}",
         "thumbnail": None, "duration": None, "uploader": "",
-        "extractor": "streamtape", "qualities": [], "video_formats": ["mp4"],
+        "extractor": "streamtape", "qualities": [], "video_formats": MEDIA_FORMATS,
         "_st_id": vid,
     }
 
@@ -1587,7 +1614,7 @@ async def _analyze_doodstream(url: str) -> dict:
     return {
         "type": "video", "title": f"Doodstream video {vid}",
         "thumbnail": None, "duration": None, "uploader": "",
-        "extractor": "doodstream", "qualities": [], "video_formats": ["mp4"],
+        "extractor": "doodstream", "qualities": [], "video_formats": MEDIA_FORMATS,
         "_dood_id": vid,
     }
 
@@ -1744,7 +1771,7 @@ async def _analyze_mixdrop(url: str) -> dict:
     return {
         "type": "video", "title": f"Mixdrop video {fid}",
         "thumbnail": None, "duration": None, "uploader": "",
-        "extractor": "mixdrop", "qualities": [], "video_formats": ["mp4"],
+        "extractor": "mixdrop", "qualities": [], "video_formats": MEDIA_FORMATS,
         "_mixdrop_id": fid,
     }
 
@@ -4293,7 +4320,7 @@ async def _do_analyze(url: str) -> dict:
                 "extractor": info.get("extractor",""),
                 "qualities": heights[:10],
                 "format_options": _quality_options(info),
-                "video_formats": ["mp4","webm","mkv","avi","mov","mp3","m4a","opus"],
+                "video_formats": MEDIA_FORMATS,
                 "is_live": bool(info.get("is_live")),
                 "is_playlist": bool(info.get("_type") in ("playlist","multi_video")),
                 "playlist_count": info.get("playlist_count"),
@@ -4307,12 +4334,12 @@ async def _do_analyze(url: str) -> dict:
             if "image/" in ct:
                 return {"type":"image","url":url,"content_type":ct,
                         "size": int(r.headers.get("content-length",0)) or None,
-                        "image_formats":["original","jpg","png","webp","avif","bmp"]}
+                        "image_formats":IMAGE_FORMATS}
             if any(s in ct for s in ("video/","audio/","application/x-mpegurl",
                                       "application/vnd.apple.mpegurl","application/dash+xml")):
                 return {"type":"video","title":_url_title(url),"thumbnail":None,
                         "duration":None,"uploader":"","extractor":"direct",
-                        "qualities":[],"video_formats":["mp4","mkv","ts"],"is_stream":True}
+                        "qualities":[],"video_formats":STREAM_FORMATS,"is_stream":True}
             # Any other direct file (pdf, zip, apk, docs, exe, csv, …) → universal file download
             cd = (r.headers.get("content-disposition","") or "").lower()
             looks_like_file = (
@@ -4332,13 +4359,13 @@ async def _do_analyze(url: str) -> dict:
         if vids:
             return {"type":"video","title":_url_title(url),"thumbnail":(imgs[0] if imgs else None),
                     "duration":None,"uploader":"","extractor":"rendered",
-                    "qualities":[],"video_formats":["mp4","mkv","ts","webm"],"is_stream":True,
+                    "qualities":[],"video_formats":STREAM_FORMATS,"is_stream":True,
                     "rendered_images": len(imgs)}
         # No video, but maybe images — fall through to page (preview will render fully)
     except Exception:
         pass
     # 5. HTML page fallback (image scraping; preview-page renders if needed)
-    return {"type":"page","url":url,"image_formats":["original","jpg","png","webp","avif"]}
+    return {"type":"page","url":url,"image_formats":IMAGE_FORMATS}
 
 
 class SearchReq(BaseModel):
@@ -5120,6 +5147,7 @@ async def _dl_direct(url: str, jid: str, job_dir: Path, fmt: str,
     # Fast path: aria2c (16 connections + resume). Skip for HLS/DASH manifests.
     if not url.split("?")[0].lower().endswith((".m3u8", ".mpd")):
         if await _aria2_dl(url, out, jid, referer, proxy):
+            await _post_convert(out, fmt, jid)
             files = [f.name for f in job_dir.iterdir() if f.is_file()]
             await _prog(jid, {"status":"completed","progress":100,"files":files})
             return True
@@ -5151,6 +5179,7 @@ async def _dl_direct(url: str, jid: str, job_dir: Path, fmt: str,
         if not out.exists() or out.stat().st_size < 1024:
             if out.exists(): out.unlink()
             return False
+        await _post_convert(out, fmt, jid)
         files = [f.name for f in job_dir.iterdir() if f.is_file()]
         await _prog(jid, {"status":"completed","progress":100,"files":files})
         return True
@@ -5703,8 +5732,9 @@ def _ytdlp_dl(
 
     # Build postprocessors
     pps: list = []
-    if fmt in ("mp3","m4a","opus","ogg","flac","wav","aac","vorbis"):
-        pps.append({"key":"FFmpegExtractAudio","preferredcodec":fmt,
+    if fmt in ("mp3","m4a","opus","ogg","flac","wav","aac","alac","vorbis"):
+        pps.append({"key":"FFmpegExtractAudio",
+                    "preferredcodec": "vorbis" if fmt == "ogg" else fmt,
                     "preferredquality":"320" if fmt=="mp3" else "0"})
     elif fmt not in ("mp4","webm","mkv","ts","avi","mov","flv","3gp","original"):
         pps.append({"key":"FFmpegVideoConvertor","preferedformat":fmt})
@@ -6310,11 +6340,17 @@ async def convert_file(req: ConvertReq):
                 f"fps={fps},scale={scale}:-1:flags=lanczos[x];[x][1:v]paletteuse",
                 "-loop", "0"]
     elif req.extract_audio:
-        vcodec = "none"
-        acodec = req.audio_codec or ("libmp3lame" if fmt == "mp3" else "aac")
+        _ACODEC = {
+            "mp3": "libmp3lame", "m4a": "aac", "aac": "aac", "opus": "libopus",
+            "ogg": "libvorbis", "flac": "flac", "wav": "pcm_s16le", "alac": "alac",
+        }
+        acodec = req.audio_codec or _ACODEC.get(fmt, "aac")
         cmd += ["-vn", "-acodec", acodec]
-        if req.audio_bitrate:
+        # Lossless targets ignore bitrate; lossy ones default to a sane bitrate.
+        if req.audio_bitrate and fmt not in ("flac", "wav", "alac"):
             cmd += ["-b:a", req.audio_bitrate]
+        elif fmt in ("mp3", "m4a", "aac", "opus", "ogg"):
+            cmd += ["-b:a", "320k" if fmt == "mp3" else "256k"]
     else:
         if req.video_codec:
             cmd += ["-c:v", req.video_codec]
@@ -6459,7 +6495,7 @@ def _detect_stream(url: str) -> Optional[dict]:
     if is_hls or is_dash or is_ts:
         return {"type":"video","title":_url_title(url),"thumbnail":None,"duration":None,
                 "uploader":"","extractor":"hls" if is_hls else "dash" if is_dash else "direct",
-                "qualities":[],"video_formats":["mp4","mkv","ts"],"is_stream":True}
+                "qualities":[],"video_formats":STREAM_FORMATS,"is_stream":True}
     return None
 
 def _scrape_imgs(soup: BeautifulSoup, base: str) -> list[str]:
@@ -6499,16 +6535,21 @@ def _split_srcset(s: str) -> list[str]:
     return parts
 
 def _pil_convert(data:bytes, out_dir:Path, stem:str, target:str)->str:
-    pil_map={"jpg":"JPEG","jpeg":"JPEG","png":"PNG","webp":"WEBP","avif":"AVIF","bmp":"BMP","tiff":"TIFF"}
+    pil_map={"jpg":"JPEG","jpeg":"JPEG","png":"PNG","webp":"WEBP","avif":"AVIF",
+             "bmp":"BMP","tiff":"TIFF","gif":"GIF","ico":"ICO"}
     pil_fmt=pil_map.get(target,"JPEG")
     img=Image.open(io.BytesIO(data))
-    if pil_fmt in ("JPEG","BMP") and img.mode in ("RGBA","LA","P"):
+    if pil_fmt=="ICO":
+        img=img.convert("RGBA"); img.thumbnail((256,256))
+    elif pil_fmt=="GIF":
+        img=img.convert("P",palette=Image.ADAPTIVE)
+    elif pil_fmt in ("JPEG","BMP") and img.mode in ("RGBA","LA","P"):
         bg=Image.new("RGB",img.size,(255,255,255))
         if img.mode=="P": img=img.convert("RGBA")
         mask=img.split()[-1] if img.mode in ("RGBA","LA") else None
         bg.paste(img,mask=mask); img=bg
     elif img.mode=="P" and pil_fmt=="PNG": img=img.convert("RGBA")
-    elif img.mode not in ("RGB","RGBA","L","LA") and pil_fmt!="PNG": img=img.convert("RGB")
+    elif img.mode not in ("RGB","RGBA","L","LA") and pil_fmt not in ("PNG","GIF","ICO"): img=img.convert("RGB")
     ext="jpg" if target=="jpeg" else target
     path=_uniq(out_dir,f"{stem}.{ext}")
     kw={}
@@ -6522,6 +6563,58 @@ def _ct_ext(ct:str)->str:
     return {"image/jpeg":"jpg","image/jpg":"jpg","image/png":"png","image/gif":"gif",
             "image/webp":"webp","image/bmp":"bmp","image/tiff":"tiff",
             "image/svg+xml":"svg","image/avif":"avif"}.get(ct,"jpg")
+
+_A_CODEC = {"mp3":"libmp3lame","m4a":"aac","aac":"aac","opus":"libopus",
+            "ogg":"libvorbis","flac":"flac","wav":"pcm_s16le","alac":"alac"}
+
+async def _post_convert(src: Path, fmt: str, jid: str) -> None:
+    """After a direct download, re-encode the file to the requested container/
+    codec (mp4→mp3, mp4→gif, mkv→webm, …). No-op when fmt matches or is
+    passthrough. Replaces the source file with the converted one."""
+    fmt = (fmt or "").lower().lstrip(".")
+    if not fmt or fmt in ("original", "best"):
+        return
+    cur = src.suffix.lower().lstrip(".")
+    if cur == fmt or (fmt == "jpg" and cur == "jpeg"):
+        return
+    is_audio = fmt in AUDIO_FORMATS
+    is_video = fmt in VIDEO_FORMATS
+    if not (is_audio or is_video):
+        return
+    # Only convert real media
+    if src.suffix.lower() not in (".mp4",".mkv",".webm",".mov",".avi",".flv",".ts",
+                                  ".m4v",".3gp",".m4a",".mp3",".aac",".opus",".ogg",
+                                  ".flac",".wav",".wmv",".mpg",".mpeg"):
+        return
+    out = src.with_name(f"{src.stem}.{fmt}")
+    if out == src:
+        return
+    await _prog(jid, {"status": "converting", "progress": 96,
+                      "filename": f"Converting → {fmt}…"})
+    if fmt == "gif":
+        cmd = ["ffmpeg","-y","-i",str(src),"-vf",
+               "fps=12,scale=480:-1:flags=lanczos,split[s0][s1];[s0]palettegen[p];[s1][p]paletteuse",
+               "-loop","0",str(out)]
+    elif is_audio:
+        cmd = ["ffmpeg","-y","-i",str(src),"-vn","-acodec",_A_CODEC.get(fmt,"aac")]
+        if fmt not in ("flac","wav","alac"):
+            cmd += ["-b:a","320k" if fmt=="mp3" else "256k"]
+        cmd += [str(out)]
+    else:
+        cmd = ["ffmpeg","-y","-i",str(src)]
+        if fmt in ("mp4","mov"):   cmd += ["-c:v","libx264","-preset","veryfast","-c:a","aac"]
+        elif fmt == "webm":        cmd += ["-c:v","libvpx-vp9","-b:v","0","-crf","33","-c:a","libopus"]
+        else:                      cmd += ["-c","copy"]
+        cmd += ["-movflags","+faststart",str(out)] if fmt in ("mp4","mov") else [str(out)]
+    try:
+        p = await asyncio.create_subprocess_exec(
+            *cmd, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
+        await p.wait()
+        if p.returncode == 0 and out.exists() and out.stat().st_size > 512:
+            try: src.unlink()
+            except Exception: pass
+    except Exception:
+        pass
 
 def _safe(n:str)->str: return re.sub(r'[\\/:*?"<>|]',"_",n)[:200]
 def _uniq(d:Path,n:str)->Path:

@@ -4,8 +4,8 @@ import { Wand2, ChevronDown, ChevronUp, Loader2, CheckCircle2, AlertCircle, Fold
 import { fetchStorage, convertFile, fileDownloadUrl, fmtBytes } from '@/lib/api'
 import type { StorageJob, ConvertRequest } from '@/lib/types'
 
-const VIDEO_FORMATS = ['mp4', 'webm', 'mkv', 'avi', 'mov', 'gif']
-const AUDIO_FORMATS = ['mp3', 'm4a', 'opus', 'ogg', 'flac', 'wav', 'aac']
+const VIDEO_FORMATS = ['mp4', 'mkv', 'webm', 'mov', 'avi', 'flv', 'ts', '3gp', 'gif']
+const AUDIO_FORMATS = ['mp3', 'm4a', 'aac', 'opus', 'ogg', 'flac', 'wav', 'alac']
 const VIDEO_CODECS  = [{ v: '', label: 'Auto' }, { v: 'libx264', label: 'H.264' }, { v: 'libx265', label: 'H.265/HEVC' }, { v: 'libvpx-vp9', label: 'VP9' }, { v: 'copy', label: 'Copy (no re-encode)' }]
 const RESOLUTIONS   = [{ v: '', label: 'Original' }, { v: '1920:1080', label: '1080p' }, { v: '1280:720', label: '720p' }, { v: '854:480', label: '480p' }, { v: '640:360', label: '360p' }]
 const AUDIO_BITRATES= [{ v: '', label: 'Auto' }, { v: '320k', label: '320 kbps' }, { v: '192k', label: '192 kbps' }, { v: '128k', label: '128 kbps' }, { v: '96k', label: '96 kbps' }]

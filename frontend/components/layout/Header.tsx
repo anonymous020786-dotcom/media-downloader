@@ -24,6 +24,10 @@ const DOWNLOADERS = [
   { label: 'Vimeo',       href: '/vimeo-downloader',      icon: <Film           size={14} className="text-cyan-400"  />, desc: 'HD videos' },
   { label: 'SoundCloud',  href: '/soundcloud-downloader', icon: <Music          size={14} className="text-amber-400" />, desc: 'Tracks & playlists' },
   { label: 'Pinterest',   href: '/pinterest-downloader',  icon: <List           size={14} className="text-red-400"   />, desc: 'Pins & boards' },
+  { label: 'Snapchat',    href: '/snapchat-downloader',   icon: <Camera         size={14} className="text-yellow-400"/>, desc: 'Spotlight & Stories' },
+  { label: 'Kick',        href: '/kick-downloader',       icon: <Zap            size={14} className="text-green-400" />, desc: 'VODs & clips' },
+  { label: 'Rumble',      href: '/rumble-downloader',     icon: <Film           size={14} className="text-lime-400"  />, desc: 'Up to 4K' },
+  { label: 'Threads',     href: '/threads-downloader',    icon: <MessageCircle  size={14} className="text-neutral-300"/>, desc: 'Videos & photos' },
 ]
 
 const NAV_ITEMS = [
