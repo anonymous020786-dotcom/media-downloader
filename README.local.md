@@ -67,11 +67,12 @@ in. Optional keys:
 
 Auth / accounts / admin dashboard / blog / pricing / contact-form storage / push
 notifications / S3 upload / download history / Movies & TV (TMDB) / News feed /
-Google Analytics / AdSense / Tawk.to chat / reCAPTCHA / country switcher.
+Google Analytics / AdSense / Tawk.to chat / reCAPTCHA / country switcher /
+video player (`/player`) / social people search (`/people`).
 
 Kept: the download tools, playlists, profiles, batch, convert, merge, web
-search, social people search, player, screen-capture, language switcher, and the
-proxy & cookie helpers. The live download queue (`/api/jobs`) shows what is
-running / recently finished this session.
+search, screen-capture, language switcher, and the proxy & cookie helpers. The
+live download queue (`/api/jobs`) shows what is running / recently finished this
+session.
 
 The old Docker / K8s / nginx / VPS deploy files are kept under `legacy/`.
