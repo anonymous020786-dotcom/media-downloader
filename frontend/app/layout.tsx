@@ -77,7 +77,6 @@ const SCHEMA = {
       '@type': 'Organization', '@id': `${SITE}/#organization`,
       name: 'MediaDL', url: SITE,
       logo: { '@type': 'ImageObject', url: `${SITE}/logo.svg` },
-      sameAs: ['https://twitter.com/mediadl', 'https://github.com/mediadl'],
     },
     {
       '@type': 'WebSite', '@id': `${SITE}/#website`,
