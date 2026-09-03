@@ -1,7 +1,7 @@
 // Curated list of supported sites (powered by yt-dlp's ~1,800+ named extractors,
 // gallery-dl's ~300+ patterns, streamlink's 100+ live-TV plugins, you-get, and
 // a headless-browser fallback that covers any site with embedded video or images).
-// Combined coverage: 14,000+ sites and URL patterns.
+// Combined coverage: 2,000+ sites and URL patterns.
 
 export interface SiteCategory { name: string; sites: string[] }
 
@@ -420,6 +420,8 @@ export const SITE_CATEGORIES: SiteCategory[] = [
 // you-get:         ~50 Chinese video sites
 // Generic fallback: any page with embedded video or images (millions of URLs)
 // Named sites above: 500+ curated entries
-// Total unique domain coverage claimed: 14,000+
+// Total unique domain / URL-pattern coverage: ~2,000 (yt-dlp ~1,800 + gallery-dl
+// ~300 + this project's custom extractors), plus a headless-browser fallback
+// that handles most other pages.
 
-export const TOTAL_SITES = 14000
+export const TOTAL_SITES = 2000

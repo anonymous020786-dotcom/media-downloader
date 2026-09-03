@@ -11,7 +11,7 @@ export default function LiveSiteCount() {
     <div className="inline-flex flex-wrap items-center justify-center gap-x-6 gap-y-2 mt-6 px-5 py-3 rounded-2xl border border-[var(--border)] bg-[var(--bg-card)]">
       <span className="text-sm text-[var(--text-2)]">
         <strong className="text-[var(--text)] text-lg">
-          {s ? s.named_extractors.toLocaleString() : '5,000'}+
+          {s ? s.named_extractors.toLocaleString() : '2,000'}+
         </strong> named site extractors
       </span>
       {s && (

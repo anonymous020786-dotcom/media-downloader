@@ -30,7 +30,7 @@ const SITE  = process.env.NEXT_PUBLIC_SITE_URL ?? 'http://localhost:3000'
 export const metadata: Metadata = {
   metadataBase: new URL(SITE),
   title:       { default: 'MediaDL — Download Any Video or Image', template: '%s | MediaDL' },
-  description: 'Free online downloader for videos and images from 14,000+ sites. YouTube, Instagram, TikTok, Twitter, Facebook and more. HD, 4K, MP3, MP4, bulk download, playlist, HLS streams.',
+  description: 'Free online downloader for videos and images from 2,000+ sites. YouTube, Instagram, TikTok, Twitter, Facebook and more. HD, 4K, MP3, MP4, bulk download, playlist, HLS streams.',
   keywords:    ['video downloader','image downloader','youtube downloader','instagram downloader','tiktok downloader','free downloader','mp4','mp3','hls'],
   authors:     [{ name: 'MediaDL Team' }],
   openGraph: {
@@ -39,7 +39,7 @@ export const metadata: Metadata = {
     url:          SITE,
     siteName:    'MediaDL',
     title:       'MediaDL — Download Any Video or Image from Any Website',
-    description: 'Free online downloader. 14,000+ sites, unlimited downloads, HD/4K/8K, MP4/MP3/WebM, playlists, bulk scraping.',
+    description: 'Free online downloader. 2,000+ sites, unlimited downloads, HD/4K/8K, MP4/MP3/WebM, playlists, bulk scraping.',
     images: [{ url: '/og-image.svg', width: 1200, height: 630, alt: 'MediaDL' }],
   },
   twitter: {
@@ -89,7 +89,7 @@ const SCHEMA = {
       name: 'MediaDL', applicationCategory: 'MultimediaApplication',
       operatingSystem: 'Web, iOS, Android', url: SITE,
       offers: { '@type': 'Offer', price: '0', priceCurrency: 'USD' },
-      description: 'Free online video and image downloader supporting 14,000+ websites.',
+      description: 'Free online video and image downloader supporting 2,000+ websites.',
       aggregateRating: { '@type': 'AggregateRating', ratingValue: '4.9', reviewCount: '12847', bestRating: '5' },
     },
     {

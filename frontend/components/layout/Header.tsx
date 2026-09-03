@@ -136,7 +136,7 @@ export default function Header() {
                   <div className="px-4 pt-2 border-t border-[var(--border)]">
                     <Link href="/supported-sites"
                       className="flex items-center gap-1 text-xs font-semibold text-[var(--brand)] hover:text-[var(--brand-light)] transition-colors">
-                      View all 14,000+ supported sites <ChevronRight size={12} />
+                      View all 2,000+ supported sites <ChevronRight size={12} />
                     </Link>
                   </div>
                 </div>
@@ -231,7 +231,7 @@ export default function Header() {
                 ))}
                 <Link href="/supported-sites"
                   className="flex items-center gap-1 px-3 py-2 text-xs font-semibold text-[var(--brand)]">
-                  All 14,000+ sites <ChevronRight size={11} />
+                  All 2,000+ sites <ChevronRight size={11} />
                 </Link>
               </div>
             )}

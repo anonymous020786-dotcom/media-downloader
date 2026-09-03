@@ -11,7 +11,7 @@ const LINKS = {
     { label: 'YouTube Downloader',   href: '/youtube-downloader'    },
     { label: 'Instagram Downloader', href: '/instagram-downloader'  },
     { label: 'TikTok Downloader',    href: '/tiktok-downloader'     },
-    { label: 'All 14,000+ Sites',    href: '/supported-sites'       },
+    { label: 'All 2,000+ Sites',    href: '/supported-sites'       },
   ],
   Company: [
     { label: 'About',    href: '/about'   },
@@ -80,7 +80,7 @@ export default function Footer() {
               <span className="font-black text-[var(--text)] text-lg">Media<span className="gradient-text">DL</span></span>
             </Link>
             <p className="text-sm text-[var(--text-2)] leading-relaxed max-w-xs">
-              Download any video or image from any website. 14,000+ sites, unlimited downloads, HD/4K/8K quality.
+              Download any video or image from any website. 2,000+ sites, unlimited downloads, HD/4K/8K quality.
             </p>
           </div>
 
