@@ -1,7 +1,6 @@
 import type { MetadataRoute } from 'next'
 import { getAllPlatformSlugs } from '@/lib/platforms'
 import { LEGAL_SLUGS } from '@/lib/legal'
-import { fetchBlogList } from '@/lib/api'
 
 const SITE = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://mediadl.app'
 
@@ -44,26 +43,14 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
 
   // ── Tier 3: Content hubs (0.8) ───────────────────────────────────────────
   const tier3: MetadataRoute.Sitemap = [
-    entry('/movies',          0.8, 'daily',  now),
-    entry('/news',            0.8, 'daily',  now),
     entry('/people',          0.8, 'weekly', now),
     entry('/schedules',       0.75, 'daily', now),
-    entry('/history',         0.7,  'daily', now),
-  ]
-
-  // ── Tier 4: Movies sub-pages ──────────────────────────────────────────────
-  const moviesStatic: MetadataRoute.Sitemap = [
-    entry('/movies/explorer',  0.75, 'weekly', now),
-    entry('/movies/people',    0.7,  'weekly', now),
-    entry('/movies/reference', 0.65, 'monthly', now),
   ]
 
   // ── Tier 5: Company / info pages (0.65–0.7) ──────────────────────────────
   const company: MetadataRoute.Sitemap = [
     entry('/about',    0.7,  'monthly', now),
     entry('/services', 0.7,  'monthly', now),
-    entry('/pricing',  0.7,  'weekly',  now),
-    entry('/blog',     0.7,  'daily',   now),
     entry('/contact',  0.65, 'monthly', now),
     entry('/faq',      0.65, 'monthly', now),
   ]
@@ -83,37 +70,13 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     entry(`/${s}`, 0.4, 'yearly', now),
   )
 
-  // ── Blog posts (0.65) — paged from API ───────────────────────────────────
-  const blogEntries: MetadataRoute.Sitemap = []
-  try {
-    const first = await fetchBlogList({ page: 1, limit: 60 })
-    const totalPages = Math.min(first.pages, 40)
-    const pageResults = await Promise.all(
-      Array.from({ length: totalPages }, (_, i) =>
-        i === 0 ? Promise.resolve(first) : fetchBlogList({ page: i + 1, limit: 60 }),
-      ),
-    )
-    for (const data of pageResults) {
-      for (const post of data.posts) {
-        blogEntries.push({
-          url: `${SITE}/blog/${post.slug}`,
-          lastModified: post.published_at ? new Date(post.published_at) : now,
-          changeFrequency: 'monthly',
-          priority: 0.65,
-        })
-      }
-    }
-  } catch { /* sitemap still valid without blog URLs */ }
-
   return [
     ...tier1,
     ...tier2,
     ...tier3,
-    ...moviesStatic,
     ...company,
     ...utility,
     ...platforms,
     ...legal,
-    ...blogEntries,
   ]
 }

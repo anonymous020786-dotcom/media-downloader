@@ -16,8 +16,6 @@ const LINKS = {
   Company: [
     { label: 'About',    href: '/about'   },
     { label: 'Services', href: '/services'},
-    { label: 'Pricing',  href: '/pricing' },
-    { label: 'Blog',     href: '/blog'    },
     { label: 'Contact',  href: '/contact' },
   ],
   Support: [
@@ -88,16 +86,9 @@ export default function Footer() {
               <Image src="/logo.svg" alt="MediaDL" width={32} height={32} className="rounded-xl" />
               <span className="font-black text-[var(--text)] text-lg">Media<span className="gradient-text">DL</span></span>
             </Link>
-            <p className="text-sm text-[var(--text-2)] leading-relaxed mb-3 max-w-xs">
+            <p className="text-sm text-[var(--text-2)] leading-relaxed mb-5 max-w-xs">
               Download any video or image from any website. 14,000+ sites, unlimited downloads, HD/4K/8K quality.
             </p>
-            <p className="text-xs text-[var(--text-3)] mb-1">
-              Built by <span className="text-[var(--text-2)] font-semibold">Naushad Alam</span> · India 🇮🇳
-            </p>
-            <a href="mailto:contact@zestcommerce.in"
-              className="text-xs text-[var(--brand)] hover:text-[var(--accent)] transition-colors mb-5 block">
-              contact@zestcommerce.in
-            </a>
             <div className="flex items-center gap-2">
               {SOCIAL.map((s) => (
                 <a key={s.name} href={s.href} target="_blank" rel="noopener noreferrer" aria-label={s.name}
@@ -210,7 +201,7 @@ export default function Footer() {
 
         {/* Bottom bar */}
         <div className="border-t border-[var(--border)] pt-6 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-[var(--text-3)]">
-          <p>© {YEAR} MediaDL. Built by <span className="text-[var(--text-2)]">Naushad Alam</span>, India 🇮🇳 · All rights reserved.</p>
+          <p>© {YEAR} MediaDL · All rights reserved.</p>
           <div className="flex items-center gap-4">
             <Link href="/privacy-policy"   className="hover:text-[var(--text-2)] transition-colors">Privacy</Link>
             <Link href="/terms-of-service" className="hover:text-[var(--text-2)] transition-colors">Terms</Link>

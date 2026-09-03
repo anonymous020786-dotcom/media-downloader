@@ -11,18 +11,10 @@ import jobsRouter     from './routes/jobs.js'
 import filesRouter    from './routes/files.js'
 import storageRouter  from './routes/storage.js'
 import contentRouter  from './routes/content.js'
-import tmdbRouter     from './routes/tmdb.js'
-import newsRouter     from './routes/news.js'
 import { createServer } from 'node:http'
 import { startWorker } from './workers/downloadWorker.js'
-import { runMigrations } from './db.js'
 import { initSocket } from './socket.js'
-import notifRouter   from './routes/notifications.js'
-import historyRouter from './routes/history.js'
 import usersRouter   from './routes/users.js'
-import uploadRouter  from './routes/upload.js'
-import otpRouter     from './routes/otp.js'
-import mfaRouter     from './routes/mfa.js'
 import proxyRouter   from './routes/proxy.js'
 import streamRouter  from './routes/stream.js'
 import cookiesRouter from './routes/cookies.js'
@@ -67,36 +59,19 @@ app.use(cors({
 app.use(compression({ level: 6 }))
 app.use(express.json({ limit: '256kb' }))
 
-// ── Rate limiting (per-user when authenticated, else per-IP) ──────────────────
-// We extract the Supabase sub from the JWT for rate-limiting without a DB round-trip.
-import jwt from 'jsonwebtoken'
-const _JWT_SECRET = process.env.SUPABASE_JWT_SECRET ?? ''
-function _extractSub(req: express.Request): string | null {
-  const header = req.header('Authorization') ?? ''
-  const token = header.startsWith('Bearer ') ? header.slice(7) : ''
-  if (!token || !_JWT_SECRET) return null
-  try { return (jwt.decode(token) as any)?.sub ?? null } catch { return null }
-}
-const keyByUserOrIp = (req: express.Request): string => {
-  const sub = _extractSub(req)
-  return sub ? `u:${sub}` : `ip:${req.ip}`
-}
-const isAuthed = (req: express.Request) => !!_extractSub(req)
-
+// ── Rate limiting (per-IP — generous, this is a local single-user build) ──────
 const stdLimit = rateLimit({
   windowMs: 60_000,
-  max: (req) => (isAuthed(req) ? 600 : 150),   // signed-in users: 4× quota
-  keyGenerator: keyByUserOrIp,
+  max: 2000,
   standardHeaders: 'draft-8', legacyHeaders: false,
-  message: { error: 'Rate limit exceeded — please wait a moment or sign in for higher limits.' },
+  message: { error: 'Rate limit exceeded — please wait a moment.' },
   skip: (req) => req.path.includes('/progress') || req.path.includes('/health'),
 })
 const analysisLimit = rateLimit({
   windowMs: 60_000,
-  max: (req) => (isAuthed(req) ? 200 : 40),
-  keyGenerator: keyByUserOrIp,
+  max: 600,
   standardHeaders: 'draft-8', legacyHeaders: false,
-  message: { error: 'Analysis rate limit exceeded. Sign in for higher limits.' },
+  message: { error: 'Analysis rate limit exceeded — please wait a moment.' },
 })
 app.use('/api', stdLimit)
 app.use('/api/analyze', analysisLimit)
@@ -108,22 +83,11 @@ app.use('/api/jobs',     jobsRouter)
 app.use('/api/files',    filesRouter)
 app.use('/api/storage',  storageRouter)
 app.use('/api/content',  contentRouter)
-app.use('/api/tmdb',     tmdbRouter)
-app.use('/api/news',     newsRouter)
-app.use('/api/notifications', notifRouter)
-app.use('/api/history',      historyRouter)
 app.use('/api/users',        usersRouter)
-app.use('/api/upload',       uploadRouter)
-app.use('/api/otp',          otpRouter)
-app.use('/api/mfa',          mfaRouter)
 app.use('/api/proxy',        proxyRouter)
 app.use('/api/stream',       streamRouter)
 app.use('/api/cookies',      cookiesRouter)
 app.use('/api/status',       statusRouter)
-
-// Serve uploaded media (images/files embedded in blog posts)
-import { UPLOAD_DIR } from './routes/content.js'
-app.use('/api/uploads', express.static(UPLOAD_DIR, { maxAge: '7d', immutable: true }))
 
 // Playlist analysis proxied to Python
 app.post('/api/analyze-playlist', async (req, res) => {
@@ -141,20 +105,16 @@ app.get('/health', (_req, res) =>
   res.json({ status: 'ok', version: '3.0.0', env: ENV, uptime: Math.floor(process.uptime()) })
 )
 
-// Deep health — aggregates redis, mysql, python-service
+// Deep health — python-service only (no redis/mysql in local mode)
 app.get('/health/deep', async (_req, res) => {
-  const checks: Record<string, string> = {}
-  try { const { redisConnection } = await import('./workers/downloadWorker.js'); await redisConnection.ping(); checks.redis = 'ok' }
-  catch (e: any) { checks.redis = `down: ${e.message}` }
-  try { const { query } = await import('./db.js'); await query('SELECT 1'); checks.mysql = 'ok' }
-  catch (e: any) { checks.mysql = `down: ${e.message}` }
+  const checks: Record<string, string> = { store: 'ok' }
   try {
     const { default: axios } = await import('axios')
     const PY = process.env.PYTHON_SERVICE_URL ?? 'http://localhost:8000'
     const { data } = await axios.get(`${PY}/health/deep`, { timeout: 8000 })
     checks.python = data.status
   } catch (e: any) { checks.python = `down: ${e.message}` }
-  const healthy = checks.redis === 'ok' && checks.mysql === 'ok' && checks.python === 'ok'
+  const healthy = checks.python === 'ok'
   res.status(healthy ? 200 : 503).json({ status: healthy ? 'ok' : 'degraded', checks })
 })
 
@@ -172,14 +132,8 @@ app.use((err: Error, _req: express.Request, res: express.Response, _next: expres
 const httpServer = createServer(app)
 initSocket(httpServer)
 
-const server = httpServer.listen(PORT, async () => {
+const server = httpServer.listen(PORT, () => {
   console.log(`[server] v3.0.0 (${ENV}) → http://localhost:${PORT}`)
-  try { await runMigrations(); console.log('[db] migrations ok') } catch (e: any) { console.error('[db] migration failed:', e.message) }
-  // Start Kafka producer (non-blocking; skipped if KAFKA_BROKER not set)
-  import('./services/kafka.js').then(({ isEnabled }) => {
-    if (isEnabled()) console.log('[kafka] enabled →', process.env.KAFKA_BROKER)
-    else console.log('[kafka] disabled (set KAFKA_BROKER to enable)')
-  }).catch(() => {})
   startWorker()
 })
 

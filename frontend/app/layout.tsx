@@ -4,12 +4,8 @@ import { Inter, Lexend } from 'next/font/google'
 import { Toaster } from 'sonner'
 import ThemeProvider from '@/components/layout/ThemeProvider'
 import { AuthProvider } from '@/components/auth/AuthContext'
-import WhatsAppButton from '@/components/widgets/WhatsAppButton'
-import TawkChat from '@/components/widgets/TawkChat'
-import AuthSync from '@/components/auth/AuthSync'
 import BackgroundDownloads from '@/components/BackgroundDownloads'
 import LanguageProvider from '@/components/i18n/LanguageProvider'
-import { CountryProvider } from '@/components/widgets/CountrySwitcher'
 import PWAInstall from '@/components/widgets/PWAInstall'
 import CookieBanner from '@/components/widgets/CookieBanner'
 import WelcomeBanner from '@/components/widgets/WelcomeBanner'
@@ -31,8 +27,7 @@ const lexend = Lexend({
   preload:  false,
 })
 
-const SITE  = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://mediadl.app'
-const GA_ID = process.env.NEXT_PUBLIC_GA_ID    ?? ''
+const SITE  = process.env.NEXT_PUBLIC_SITE_URL ?? 'http://localhost:3000'
 
 export const metadata: Metadata = {
   metadataBase: new URL(SITE),
@@ -120,46 +115,28 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     >
       <head>
         <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(SCHEMA) }} />
-        {process.env.NEXT_PUBLIC_ADSENSE_CLIENT && (
-          <script
-            async
-            src={`https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=${process.env.NEXT_PUBLIC_ADSENSE_CLIENT}`}
-            crossOrigin="anonymous"
-          />
-        )}
       </head>
       <body className={inter.className}>
-        {GA_ID && (
-          <Script id="ga-consent" strategy="afterInteractive">{`
-            (function(){
-              function loadGA(){
-                if(window.__ga_loaded)return;window.__ga_loaded=true;
-                var s=document.createElement('script');s.src='https://www.googletagmanager.com/gtag/js?id=${GA_ID}';s.async=true;document.head.appendChild(s);
-                window.dataLayer=window.dataLayer||[];function gtag(){dataLayer.push(arguments);}window.gtag=gtag;
-                gtag('js',new Date());gtag('config','${GA_ID}',{page_path:window.location.pathname});
-              }
-              try{var c=JSON.parse(localStorage.getItem('cookie_consent')||'{}');if(c.analytics)loadGA();}catch(e){}
-              window.addEventListener('cookie-consent',function(e){if(e.detail&&e.detail.analytics)loadGA();});
-            })();
-          `}</Script>
-        )}
-
         <Script id="sw-register" strategy="afterInteractive">{`
-          if('serviceWorker' in navigator){navigator.serviceWorker.register('/sw.js',{scope:'/'}).catch(()=>{});}
+          (function(){
+            if(!('serviceWorker' in navigator)) return;
+            var DEV = ${process.env.NODE_ENV !== 'production'};
+            if(DEV){
+              // The service worker cache-firsts build chunks — in dev that serves
+              // stale Turbopack chunks ("module factory is not available"). Kill it.
+              navigator.serviceWorker.getRegistrations().then(function(rs){rs.forEach(function(r){r.unregister()})});
+              if(window.caches) caches.keys().then(function(ks){ks.forEach(function(k){caches.delete(k)})});
+            } else {
+              navigator.serviceWorker.register('/sw.js',{scope:'/'}).catch(function(){});
+            }
+          })();
         `}</Script>
 
         <AuthProvider>
         <ThemeProvider>
           <LanguageProvider>
-          <CountryProvider>
-            <AuthSync />
             {children}
             <BackgroundDownloads />
-            <WhatsAppButton phone={process.env.NEXT_PUBLIC_WHATSAPP_NUMBER ?? '+1234567890'} />
-            <TawkChat
-              propertyId={process.env.NEXT_PUBLIC_TAWK_PROPERTY_ID  ?? ''}
-              widgetId={process.env.NEXT_PUBLIC_TAWK_WIDGET_ID    ?? 'default'}
-            />
             <Toaster
               theme="system"
               position="bottom-right"
@@ -170,7 +147,6 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             <CookieBanner />
             <WelcomeBanner />
             <ScrollButtons />
-          </CountryProvider>
           </LanguageProvider>
         </ThemeProvider>
         </AuthProvider>

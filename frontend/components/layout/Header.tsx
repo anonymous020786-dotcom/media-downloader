@@ -4,17 +4,13 @@ import Link from 'next/link'
 import Image from 'next/image'
 import { usePathname } from 'next/navigation'
 import {
-  Menu, X, Download, ChevronDown, LogIn,
+  Menu, X, Download, ChevronDown,
   Play, Camera, MessageCircle, Users, Film,
-  Music, Globe, Zap, List, User, ChevronRight,
+  Music, Globe, Zap, List, ChevronRight,
 } from 'lucide-react'
-import { useAuth } from '@/components/auth/AuthContext'
-import UserMenu from '@/components/auth/UserMenu'
 import ThemeChanger from '@/components/widgets/ThemeChanger'
 import LanguageSwitcher from '@/components/i18n/LanguageSwitcher'
-import NotifBell from '@/components/widgets/NotifBell'
 import AccessibilityPanel from '@/components/widgets/AccessibilityPanel'
-import CountrySwitcher from '@/components/widgets/CountrySwitcher'
 
 // ── Nav data ──────────────────────────────────────────────────────────────────
 const DOWNLOADERS = [
@@ -32,14 +28,9 @@ const DOWNLOADERS = [
 
 const NAV_ITEMS = [
   { label: 'Sites',      href: '/supported-sites' },
-  { label: 'Movies',     href: '/movies'    },
-  { label: 'News',       href: '/news'      },
   { label: 'People',     href: '/people'    },
   { label: 'Player',     href: '/player'        },
   { label: 'Tools',      href: '/tools/convert' },
-  { label: 'Pricing',    href: '/pricing'   },
-  { label: 'Blog',       href: '/blog'      },
-  { label: 'History',    href: '/history'   },
 ]
 
 export default function Header() {
@@ -47,7 +38,6 @@ export default function Header() {
   const [megaOpen,     setMegaOpen]     = useState(false)
   const [scrolled,     setScrolled]     = useState(false)
   const [mobileDropOpen, setMobileDropOpen] = useState(false)
-  const { isSignedIn, isLoaded } = useAuth()
   const pathname = usePathname()
   const megaRef  = useRef<HTMLDivElement>(null)
   const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -168,25 +158,14 @@ export default function Header() {
             {/* Widgets — hidden on small screens */}
             <span className="hidden xl:flex items-center gap-1">
               <LanguageSwitcher />
-              <CountrySwitcher />
             </span>
             <span className="hidden sm:flex items-center gap-1">
               <AccessibilityPanel />
-              <NotifBell />
               <ThemeChanger />
             </span>
             <span className="sm:hidden flex items-center gap-1">
               <ThemeChanger />
             </span>
-
-            {/* Sign in */}
-            {isLoaded && !isSignedIn && (
-              <Link href="/sign-in"
-                className="hidden md:flex items-center gap-1.5 px-3 py-2 text-sm font-semibold text-[var(--text-2)] hover:text-[var(--text)] rounded-xl hover:bg-[var(--bg-hover)] transition-colors">
-                <LogIn size={14} />
-                <span className="hidden lg:inline">Sign in</span>
-              </Link>
-            )}
 
             {/* CTA */}
             <Link href="/download"
@@ -195,9 +174,6 @@ export default function Header() {
               <span className="hidden md:inline">Download Free</span>
               <span className="md:hidden">Download</span>
             </Link>
-
-            {/* User avatar */}
-            {isLoaded && isSignedIn && <UserMenu />}
 
             {/* Hamburger */}
             <button
@@ -272,25 +248,12 @@ export default function Header() {
           <div className="px-4 pb-6 pt-2 space-y-2 border-t border-[var(--border)] safe-bottom">
             <div className="flex items-center gap-2 pb-2">
               <LanguageSwitcher />
-              <CountrySwitcher />
               <AccessibilityPanel />
-              <NotifBell />
             </div>
             <Link href="/download"
               className="flex items-center justify-center gap-2 w-full py-3.5 bg-[var(--brand)] hover:bg-[var(--brand-dark)] text-white font-bold rounded-xl text-sm shadow-[var(--shadow-brand)] transition-colors">
               <Download size={15} /> Start Downloading Free
             </Link>
-            {isLoaded && !isSignedIn && (
-              <Link href="/sign-in"
-                className="flex items-center justify-center gap-2 w-full py-3 border border-[var(--border)] text-[var(--text-2)] font-semibold rounded-xl text-sm hover:bg-[var(--bg-hover)] transition-colors">
-                <LogIn size={14} /> Sign in
-              </Link>
-            )}
-            {isLoaded && isSignedIn && (
-              <div className="flex items-center gap-3 px-3 py-2 rounded-xl bg-[var(--bg-card)]">
-                <UserMenu showLabel />
-              </div>
-            )}
           </div>
         </div>
       )}

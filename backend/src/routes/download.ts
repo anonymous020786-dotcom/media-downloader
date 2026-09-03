@@ -2,7 +2,6 @@ import { Router } from 'express'
 import { v4 as uuidv4 } from 'uuid'
 import axios from 'axios'
 import { downloadQueue, redisConnection } from '../workers/downloadWorker.js'
-import { query } from '../db.js'
 import { requireAuth } from '../middleware/requireAuth.js'
 import { resolveProxy } from './proxy.js'
 import { resolveCookies } from './cookies.js'
@@ -14,15 +13,6 @@ const PYTHON = process.env.PYTHON_SERVICE_URL ?? 'http://localhost:8000'
 
 // All download tools require a signed-in user.
 router.use(requireAuth)
-
-async function recordStat(job: DownloadJob, userId?: string) {
-  try {
-    await query(
-      'INSERT INTO download_stats (job_id,user_id,url,media_type,format,quality,status,title) VALUES (?,?,?,?,?,?,?,?)',
-      [job.jobId, userId ?? null, job.url.slice(0, 2000), job.mediaType, job.format, job.quality ?? null, 'queued', job.title ?? null]
-    )
-  } catch { /* stats are non-critical */ }
-}
 
 async function enqueue(job: DownloadJob, delaySeconds?: number) {
   await redisConnection.set(
@@ -99,13 +89,11 @@ router.post('/', async (req, res) => {
   const pattern = body.repeatEvery ? CRON[body.repeatEvery] : undefined
   if (pattern) {
     await downloadQueue.add('download', job, { repeat: { pattern } })
-    void recordStat(job, userId)
     res.json({ jobId, recurring: body.repeatEvery })
     return
   }
 
   await enqueue(job, body.delaySeconds)
-  void recordStat(job, userId)
   res.json({ jobId, scheduled: !!(body.delaySeconds && body.delaySeconds > 0) })
 })
 
@@ -172,7 +160,6 @@ router.post('/batch', async (req, res) => {
       concurrentFragments: sharedOpts.concurrentFragments ?? 16,
     }
     await enqueue(job, sharedOpts.delaySeconds)
-    void recordStat(job, req.header('X-User-Id') || undefined)
     jobs.push({ jobId, url: item.url, title: item.title })
   }
 

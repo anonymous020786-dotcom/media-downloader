@@ -25,6 +25,15 @@ function getMime(filename: string): string {
   return MIME[ext] ?? 'application/octet-stream'
 }
 
+// Files are not kept on the server. Anything left behind is swept by the
+// python-service after DOWNLOAD_TTL_MINUTES; a ZIP "download all" also removes
+// the job directory right after it is sent.
+function purgeJob(jobId: string) {
+  const dir = path.join(DOWNLOAD_DIR, jobId)
+  if (!dir.startsWith(DOWNLOAD_DIR + path.sep)) return
+  fs.rm(dir, { recursive: true, force: true }, () => {})
+}
+
 // File access is by the job's UUID, which acts as an unguessable capability
 // (122 bits of randomness). This is required because browsers cannot attach the
 // Authorization header to <video src>, <img src>, or download-link navigations —
@@ -68,6 +77,8 @@ router.get('/:jobId/zip', optionalAuth, async (req, res) => {
   archive.pipe(res)
   archive.directory(dir, false)
   archive.finalize()
+  // "Download all" — the user has taken everything; drop it from the server.
+  res.on('finish', () => purgeJob(jobId))
 })
 
 // ── Stream/download a file ────────────────────────────────────────────────────

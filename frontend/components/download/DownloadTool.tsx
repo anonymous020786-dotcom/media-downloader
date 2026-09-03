@@ -6,7 +6,6 @@ import { toast } from 'sonner'
 import URLInputSection from '@/components/URLInputSection'
 import DownloadQueue from '@/components/DownloadQueue'
 import StoragePanel from '@/components/StoragePanel'
-import HistoryPanel from '@/components/download/HistoryPanel'
 import type { Job } from '@/lib/types'
 import { fetchStats } from '@/lib/api'
 
@@ -151,7 +150,6 @@ export default function DownloadTool() {
       />
 
       <StoragePanel />
-      <HistoryPanel />
 
       {/* Bookmarklet */}
       <div className="rounded-xl border border-[#21293a] p-4 space-y-2">

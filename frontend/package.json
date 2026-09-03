@@ -16,10 +16,7 @@
     "sonner": "latest",
     "next-themes": "latest",
     "clsx": "latest",
-    "@supabase/supabase-js": "^2.49.0",
-    "@supabase/ssr": "^0.6.1",
     "socket.io-client": "^4.8.1",
-    "firebase": "^10.12.0",
     "hls.js": "^1.5.15"
   },
   "devDependencies": {

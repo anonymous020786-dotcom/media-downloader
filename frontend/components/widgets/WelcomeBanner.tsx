@@ -120,13 +120,6 @@ export default function WelcomeBanner() {
           </button>
         </div>
 
-        {/* Footer credit */}
-        <div className="border-t border-[var(--border)] px-7 py-3 text-center">
-          <p className="text-[11px] text-[var(--text-3)]">
-            Built by <span className="text-[var(--text-2)] font-semibold">Naushad Alam</span>, India 🇮🇳 ·{' '}
-            <a href="mailto:contact@zestcommerce.in" className="text-[var(--brand)] hover:underline">contact@zestcommerce.in</a>
-          </p>
-        </div>
       </div>
     </div>
   )

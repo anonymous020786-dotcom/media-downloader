@@ -5,7 +5,7 @@ const SITE = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://mediadl.app'
 // ── Strict Content-Security-Policy ───────────────────────────────────────────
 // Permissive CSP — allows all external providers needed to run every service:
 // Supabase, Google/GitHub/Microsoft OAuth, TMDB, Firebase, GA, AdSense, Tawk.to,
-// Hostinger (zestcommerce.in), YouTube/Vimeo embeds, S3, etc.
+// YouTube/Vimeo embeds, image CDNs, etc.
 const CSP = [
   "default-src 'self'",
   "script-src 'self' 'unsafe-inline' 'unsafe-eval' https: blob:",
@@ -48,6 +48,9 @@ const nextConfig: NextConfig = {
   poweredByHeader: false,
   reactStrictMode: true,
 
+  // This app is one workspace among sibling lockfiles — pin the root explicitly.
+  turbopack: { root: __dirname },
+
   // ── Image optimisation ────────────────────────────────────────────────────
   images: {
     formats:          ['image/avif', 'image/webp'],
@@ -73,23 +76,23 @@ const nextConfig: NextConfig = {
 
   // ── HTTP headers ──────────────────────────────────────────────────────────
   async headers() {
+    // In dev, custom Cache-Control on build assets makes the browser (and the
+    // service worker) serve stale Turbopack chunks — "module factory is not
+    // available". Only apply the long-cache headers in production builds.
+    const prod = process.env.NODE_ENV === 'production'
     return [
+      ...(prod ? [
+        {
+          source: '/_next/static/:path*',
+          headers: [{ key: 'Cache-Control', value: 'public, max-age=31536000, immutable' }],
+        },
+        {
+          source: '/:file(.*\\.(?:svg|png|jpg|jpeg|gif|ico|webp|avif|woff2|woff|ttf|otf))',
+          headers: [{ key: 'Cache-Control', value: 'public, max-age=604800, stale-while-revalidate=2592000' }],
+        },
+      ] : []),
       {
-        // Static assets — 1 year immutable
-        source: '/_next/static/:path*',
-        headers: [
-          { key: 'Cache-Control', value: 'public, max-age=31536000, immutable' },
-        ],
-      },
-      {
-        // Fonts, images, icons — 7-day cache with stale-while-revalidate
-        source: '/:file(.*\\.(?:svg|png|jpg|jpeg|gif|ico|webp|avif|woff2|woff|ttf|otf))',
-        headers: [
-          { key: 'Cache-Control', value: 'public, max-age=604800, stale-while-revalidate=2592000' },
-        ],
-      },
-      {
-        // All pages — security + performance
+        // All pages — security headers
         source: '/(.*)',
         headers: securityHeaders,
       },
@@ -108,7 +111,6 @@ const nextConfig: NextConfig = {
   experimental: {
     optimizePackageImports: [
       'lucide-react',
-      '@supabase/supabase-js',
       'sonner',
     ],
   },

@@ -24,27 +24,65 @@ import yt_dlp
 import httpx
 from PIL import Image
 from bs4 import BeautifulSoup
-import redis.asyncio as aioredis
-import redis as _sync_redis_lib
 import asyncio
 import aiofiles
-import os, json, io, re, random, tempfile, shutil
+import os, json, io, re, random, tempfile, shutil, time as _time
 from pathlib import Path
 from typing import Optional, Literal
 from urllib.parse import urlparse, urljoin
 
 # ── Config ────────────────────────────────────────────────────────────────────
-DOWNLOAD_DIR    = Path(os.getenv("DOWNLOAD_DIR",    "/downloads"))
-REDIS_URL        = os.getenv("REDIS_URL",            "redis://redis:6379")
+DOWNLOAD_DIR    = Path(os.getenv("DOWNLOAD_DIR",    "downloads"))
 MAX_CONCURRENT   = int(os.getenv("MAX_CONCURRENT_DOWNLOADS", "5"))
 MAX_PAGE_IMAGES  = int(os.getenv("MAX_PAGE_IMAGES",  "2000"))
 VERIFY_SSL       = os.getenv("VERIFY_SSL", "true").lower() not in ("false", "0", "no")
 DOWNLOAD_TTL_DAYS = int(os.getenv("DOWNLOAD_TTL_DAYS", "7"))   # auto-delete after N days (0 = off)
 
+
+# ── In-memory KV (local build — replaces Redis) ──────────────────────────────
+# Single-process job progress + small caches. Resets when the service restarts.
+class _MemKV:
+    def __init__(self):
+        self._d: dict = {}
+
+    def _get(self, key):
+        v = self._d.get(key)
+        if v is None:
+            return None
+        val, exp = v
+        if exp is not None and _time.time() > exp:
+            self._d.pop(key, None)
+            return None
+        return val
+
+    def _set(self, key, value, ex=None):
+        self._d[key] = (value, (_time.time() + ex) if ex else None)
+
+    # async surface (used as `_aredis`)
+    async def get(self, key):            return self._get(key)
+    async def set(self, key, value, ex=None): self._set(key, value, ex); return True
+    async def delete(self, *keys):
+        for k in keys: self._d.pop(k, None)
+        return True
+    async def ping(self):               return True
+    async def aclose(self):             self._d.clear()
+
+    # sync surface (used as `_sredis` — `_prog_s` calls .set without await)
+    def get_s(self, key):               return self._get(key)
+    def set_s(self, key, value, ex=None): self._set(key, value, ex)
+
+
+class _SyncView:
+    """Sync-style wrapper sharing one _MemKV, so `_sredis.set(...)` works un-awaited."""
+    def __init__(self, kv: "_MemKV"): self._kv = kv
+    def get(self, key):                return self._kv.get_s(key)
+    def set(self, key, value, ex=None): self._kv.set_s(key, value, ex)
+    def close(self):                   pass
+
 # ── Globals ───────────────────────────────────────────────────────────────────
 _sem:          asyncio.Semaphore
-_aredis:       aioredis.Redis
-_sredis:       _sync_redis_lib.Redis
+_aredis:       "_MemKV"
+_sredis:       "_SyncView"
 
 _UA_POOL = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
@@ -67,28 +105,32 @@ _BASE_HDR = {
 }
 def _ua() -> str: return random.choice(_UA_POOL)
 
+# Files are NOT kept on the server — a finished download is auto-removed a short
+# time after it completes. Override with DOWNLOAD_TTL_MINUTES (0 = keep forever).
+DOWNLOAD_TTL_MINUTES = int(os.getenv("DOWNLOAD_TTL_MINUTES", "30"))
+
 # ── Lifespan ──────────────────────────────────────────────────────────────────
 async def _cleanup_old_downloads():
-    """Delete job directories older than DOWNLOAD_TTL_DAYS. Runs every 12 hours."""
-    if DOWNLOAD_TTL_DAYS <= 0:
+    """Delete job directories older than DOWNLOAD_TTL_MINUTES. Runs every 2 min."""
+    if DOWNLOAD_TTL_MINUTES <= 0:
         return
-    import time
-    cutoff = time.time() - DOWNLOAD_TTL_DAYS * 86400
+    cutoff_secs = DOWNLOAD_TTL_MINUTES * 60
     while True:
         try:
             removed = 0
+            now = _time.time()
             for entry in DOWNLOAD_DIR.iterdir():
-                if entry.is_dir() and entry.stat().st_mtime < cutoff:
+                if entry.is_dir() and (now - entry.stat().st_mtime) > cutoff_secs:
                     try:
                         shutil.rmtree(entry)
                         removed += 1
                     except Exception:
                         pass
             if removed:
-                print(f"[cleanup] removed {removed} old job dir(s) (>{DOWNLOAD_TTL_DAYS}d old)")
+                print(f"[cleanup] removed {removed} job dir(s) (>{DOWNLOAD_TTL_MINUTES}min old)")
         except Exception as e:
             print(f"[cleanup] error: {e}")
-        await asyncio.sleep(12 * 3600)  # run every 12 hours
+        await asyncio.sleep(120)  # every 2 minutes
 
 
 def _patch_xhamster_mirrors():
@@ -119,8 +161,8 @@ def _patch_xhamster_mirrors():
 async def lifespan(app: FastAPI):
     global _sem, _aredis, _sredis
     _sem    = asyncio.Semaphore(MAX_CONCURRENT)
-    _aredis = await aioredis.from_url(REDIS_URL, decode_responses=True)
-    _sredis = _sync_redis_lib.Redis.from_url(REDIS_URL, decode_responses=True)
+    _aredis = _MemKV()
+    _sredis = _SyncView(_aredis)
     DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
     _patch_xhamster_mirrors()
     # Start background cleanup task
@@ -189,6 +231,19 @@ class DownloadReq(BaseModel):
 # ── Progress helpers ──────────────────────────────────────────────────────────
 async def _prog(jid: str, d: dict): await _aredis.set(f"job:{jid}:progress", json.dumps(d), ex=86400)
 def _prog_s(jid: str, d: dict):    _sredis.set(f"job:{jid}:progress", json.dumps(d), ex=86400)
+
+
+@app.get("/progress/{job_id}")
+async def get_progress(job_id: str):
+    """Current progress for a job. The backend polls this to mirror progress to
+    its own store (there is no shared Redis in the local build)."""
+    raw = await _aredis.get(f"job:{job_id}:progress")
+    if not raw:
+        return {"status": "unknown", "progress": 0}
+    try:
+        return json.loads(raw)
+    except Exception:
+        return {"status": "unknown", "progress": 0}
 
 # ── Headless-browser rendering (for JS-heavy sites / any website) ──────────────
 _render_sem = asyncio.Semaphore(2)   # chromium is heavy — cap concurrent renders
@@ -384,7 +439,7 @@ def _rank_video(urls: list[str]) -> list[str]:
 # ─────────────────────────────────────────────────────────────────────────────
 @app.get("/health")
 async def health(): return {"status":"ok","version":"3.0.0","max_concurrent":MAX_CONCURRENT,
-                            "download_ttl_days": DOWNLOAD_TTL_DAYS}
+                            "download_ttl_minutes": DOWNLOAD_TTL_MINUTES}
 
 @app.post("/proxy/test")
 async def proxy_test(payload: dict):
@@ -513,12 +568,7 @@ async def storage_disk():
 @app.get("/health/deep")
 async def health_deep():
     """Deep health — pings dependencies and checks the extractor engines."""
-    checks: dict = {}
-    # Redis
-    try:
-        await _aredis.ping(); checks["redis"] = "ok"
-    except Exception as e:
-        checks["redis"] = f"down: {str(e)[:80]}"
+    checks: dict = {"store": "ok"}
     # Engines present
     ev = _engine_versions()
     checks["engines"] = {k: ("ok" if v else "missing") for k, v in ev.items()}
@@ -529,7 +579,7 @@ async def health_deep():
         checks["downloads_dir"] = "ok"
     except Exception as e:
         checks["downloads_dir"] = f"not writable: {str(e)[:60]}"
-    ok = checks.get("redis") == "ok" and checks.get("downloads_dir") == "ok"
+    ok = checks.get("downloads_dir") == "ok"
     return {"status": "ok" if ok else "degraded", "checks": checks, "versions": ev}
 
 
@@ -3850,8 +3900,12 @@ async def _analyze_pat_com(url: str, token: Optional[str] = None) -> dict:
         "qualities": _PAT_QUALITY_PREF[:4],  # show available quality labels
         "video_formats": ["mp4", "mkv"],
         "_pat_file_id": file_id,
-        "_pat_needs_auth": not bool(token),
-        "_pat_note": "Requires pat.com login — add pat_token=<JWT> or pat_email=x pat_password=y in Cookies",
+        "_pat_needs_auth": False,
+        "_pat_note": (
+            "Public videos download without login (headless CDN capture). "
+            "For private/members-only videos add pat_token=<JWT> or "
+            "pat_email=x pat_password=y in the Cookies field."
+        ),
     }
 
 
@@ -4724,7 +4778,7 @@ async def preview_page(req: AnalyzeReq):
         async with _client() as c:
             r = await c.get(req.url, timeout=30)
             r.raise_for_status()
-            soup = BeautifulSoup(r.text, "lxml")
+            soup = BeautifulSoup(r.text, "html.parser")
         title = soup.title.string.strip() if soup.title else ""
         imgs  = _scrape_imgs(soup, req.url)
 
@@ -4736,7 +4790,7 @@ async def preview_page(req: AnalyzeReq):
             try:
                 async with _client() as c:
                     r2 = await c.get(pg, timeout=20)
-                    soup2 = BeautifulSoup(r2.text, "lxml")
+                    soup2 = BeautifulSoup(r2.text, "html.parser")
                 imgs += _scrape_imgs(soup2, pg)
             except Exception:
                 pass
@@ -5876,7 +5930,7 @@ async def _dl_page(req: DownloadReq, job_dir: Path, cookie_file: Optional[str] =
     # Tier 2: HTML scrape (+ render fallback below)
     async with _client(req.proxy) as c:
         r = await c.get(req.url, timeout=30); r.raise_for_status()
-        soup = BeautifulSoup(r.text,"lxml")
+        soup = BeautifulSoup(r.text,"html.parser")
     img_urls = _scrape_imgs(soup, req.url)
 
     # Follow next-page links (up to 10 pages)
@@ -5888,7 +5942,7 @@ async def _dl_page(req: DownloadReq, job_dir: Path, cookie_file: Optional[str] =
         try:
             async with _client(req.proxy) as c:
                 r2 = await c.get(nx, timeout=20)
-                extra = BeautifulSoup(r2.text,"lxml")
+                extra = BeautifulSoup(r2.text,"html.parser")
             img_urls += _scrape_imgs(extra, nx)
         except Exception: pass
 

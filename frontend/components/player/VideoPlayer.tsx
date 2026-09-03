@@ -1,7 +1,6 @@
 'use client'
 import { useRef, useEffect, useState, useCallback } from 'react'
 import { toast } from 'sonner'
-import { createClient } from '@/lib/supabase/client'
 import {
   Play, Pause, Volume2, VolumeX, Maximize, Minimize,
   SkipBack, SkipForward, Download, Loader2,
@@ -12,18 +11,9 @@ import {
 
 const API_BASE = (process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000').replace(/\/$/, '')
 
-const _supabase = createClient()
-// The analyze/stream/search/download endpoints now require auth — attach the
-// Supabase session token (and user id) to every request.
+// Local build: no auth. Endpoints are open.
 async function authHeaders(): Promise<Record<string, string>> {
-  const h: Record<string, string> = { 'Content-Type': 'application/json' }
-  try {
-    const { data } = await _supabase.auth.getSession()
-    const t = data.session?.access_token
-    if (t) h['Authorization'] = `Bearer ${t}`
-    if (data.session?.user?.id) h['X-User-Id'] = data.session.user.id
-  } catch { /* anonymous */ }
-  return h
+  return { 'Content-Type': 'application/json' }
 }
 
 // ── Types ─────────────────────────────────────────────────────────────────────

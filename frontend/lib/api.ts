@@ -129,16 +129,6 @@ export const retryJob   = (id: string) => _f(`/api/jobs/${id}/retry`, { method: 
 export const clearJobs  = (type?: 'completed'|'failed') =>
   _f(`/api/jobs${type ? `?type=${type}` : ''}`, { method: 'DELETE' })
 
-export interface DownloadHistoryItem {
-  id: number; job_id: string | null; url: string; media_type: string
-  format: string; quality: string | null; status: string
-  title: string | null; files: string[]; created_at: string
-}
-export const fetchDownloadHistory = (page = 1, limit = 20) =>
-  _f<{ items: DownloadHistoryItem[]; total: number; page: number; pages: number }>(
-    `/api/history?page=${page}&limit=${limit}`,
-  )
-
 export const fetchStorage = () => _f<{ jobs: StorageJob[]; total_bytes: number; total_jobs: number }>('/api/storage')
 export const deleteStorage = (jobId: string) => _f(`/api/storage/${jobId}`, { method: 'DELETE' })
 
@@ -172,9 +162,6 @@ export interface BlogQuery { q?:string; category?:string; tag?:string; sort?:str
 export interface FaqItem  { id:number; question:string; answer:string; category:string; sort_order:number }
 export interface Testimonial { id:number; name:string; role:string; avatar?:string; content:string; rating:number }
 
-export interface HistoryRow { id:number; url:string; media_type:string; format:string; quality?:string; status:string; created_at:string }
-export const fetchHistory  = () => _f<HistoryRow[]>('/api/content/history')
-export const clearHistory  = () => _f('/api/content/history', { method: 'DELETE' })
 
 // ── Batch download ────────────────────────────────────────────────────────────
 export interface BatchItem { url: string; title?: string; thumbnail?: string; mediaType?: string; format?: string }

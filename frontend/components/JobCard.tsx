@@ -275,7 +275,8 @@ function JobCardInner({ job, onDelete, onRetry, bulkMode, selected, onToggleSele
             })}
           </div>
           <p className="text-[9px] text-emerald-700/70 mt-1.5">
-            ↳ <strong>Download</strong> saves instantly to your browser's download folder. <strong>Save as…</strong> lets you pick a folder (Chrome/Edge).
+            ↳ <strong>Download</strong> saves to your browser's download folder. <strong>Save as…</strong> lets you pick a folder (Chrome/Edge).
+            Files are removed from the server ~30&nbsp;min after finishing — grab them now.
           </p>
         </div>
       )}

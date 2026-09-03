@@ -1,0 +1,23 @@
+{
+  "name": "media-downloader-local",
+  "version": "3.0.0",
+  "private": true,
+  "description": "Local-only MediaDL — Next.js + Express + FastAPI, no Docker / Redis / MySQL / auth.",
+  "scripts": {
+    "setup:py": "python -m venv .venv && node scripts/py.mjs -m pip install --upgrade pip && node scripts/py.mjs -m pip install -r python-service/requirements.txt && node scripts/py.mjs -m playwright install chromium",
+    "install:all": "npm install && npm --prefix backend install && npm --prefix frontend install && npm run setup:py",
+    "dev": "concurrently -k -n py,api,web -c magenta,cyan,green \"npm:dev:py\" \"npm:dev:api\" \"npm:dev:web\"",
+    "dev:py": "cross-env DOWNLOAD_DIR=./downloads PYTHONUNBUFFERED=1 node scripts/py.mjs -m uvicorn main:app --app-dir python-service --host 127.0.0.1 --port 8000",
+    "dev:api": "cross-env NODE_ENV=development DOWNLOAD_DIR=./downloads tsx watch backend/src/index.ts",
+    "dev:web": "npm --prefix frontend run dev",
+    "build": "npm --prefix frontend run build",
+    "start:py": "cross-env DOWNLOAD_DIR=./downloads PYTHONUNBUFFERED=1 node scripts/py.mjs -m uvicorn main:app --app-dir python-service --host 127.0.0.1 --port 8000",
+    "start:api": "cross-env NODE_ENV=production DOWNLOAD_DIR=./downloads tsx backend/src/index.ts",
+    "start": "concurrently -k -n py,api,web -c magenta,cyan,green \"npm:start:py\" \"npm:start:api\" \"npm --prefix frontend run start\""
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.0",
+    "cross-env": "^7.0.3",
+    "tsx": "^4.19.4"
+  }
+}
