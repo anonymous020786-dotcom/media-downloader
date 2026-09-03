@@ -3,7 +3,6 @@ import Script from 'next/script'
 import { Inter, Lexend } from 'next/font/google'
 import { Toaster } from 'sonner'
 import ThemeProvider from '@/components/layout/ThemeProvider'
-import { AuthProvider } from '@/components/auth/AuthContext'
 import BackgroundDownloads from '@/components/BackgroundDownloads'
 import LanguageProvider from '@/components/i18n/LanguageProvider'
 import PWAInstall from '@/components/widgets/PWAInstall'
@@ -132,7 +131,6 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           })();
         `}</Script>
 
-        <AuthProvider>
         <ThemeProvider>
           <LanguageProvider>
             {children}
@@ -149,7 +147,6 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             <ScrollButtons />
           </LanguageProvider>
         </ThemeProvider>
-        </AuthProvider>
       </body>
     </html>
   )

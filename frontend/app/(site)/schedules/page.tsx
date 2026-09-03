@@ -1,8 +1,7 @@
 'use client'
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
-import { useAuth } from '@/components/auth/AuthContext'
-import { CalendarClock, Trash2, RefreshCw, LogIn, Plus, Clock, RepeatIcon } from 'lucide-react'
+import { CalendarClock, Trash2, RefreshCw, Plus, Clock, RepeatIcon } from 'lucide-react'
 import { toast } from 'sonner'
 import { fetchSchedules, deleteSchedule, type ScheduleRow } from '@/lib/api'
 
@@ -26,7 +25,6 @@ function nextRun(ts: number) {
 }
 
 export default function SchedulesPage() {
-  const { isSignedIn, isLoaded } = useAuth()
   const [rows,    setRows]    = useState<ScheduleRow[]>([])
   const [loading, setLoading] = useState(true)
   const [deleting, setDeleting] = useState<string | null>(null)
@@ -50,19 +48,6 @@ export default function SchedulesPage() {
     } finally {
       setDeleting(null)
     }
-  }
-
-  if (isLoaded && !isSignedIn) {
-    return (
-      <div className="max-w-2xl mx-auto px-4 py-24 text-center">
-        <CalendarClock size={40} strokeWidth={1.2} className="mx-auto mb-4 text-[var(--text-3)]" />
-        <h1 className="text-2xl font-black text-[var(--text)] mb-2">Sign in to manage schedules</h1>
-        <p className="text-[var(--text-2)] mb-6">Recurring download schedules are tied to your account.</p>
-        <Link href="/sign-in" className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-[var(--brand)] text-white font-semibold text-sm">
-          <LogIn size={15} /> Sign in
-        </Link>
-      </div>
-    )
   }
 
   return (

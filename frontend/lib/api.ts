@@ -1,29 +1,13 @@
 import type { AnalyzeResult, Job, JobProgress, PlaylistInfo, StorageJob, AdvancedOptions, FeedResult, ConvertRequest } from './types'
 
 const PUBLIC_BASE = (process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000').replace(/\/$/, '')
-// On the server (SSR) localhost:4000 points at the frontend container itself, not the
-// backend — use the internal service URL so server-rendered pages get real data.
+// On the server (SSR) use the internal URL so server-rendered pages get real data.
 const BASE = typeof window === 'undefined'
   ? (process.env.BACKEND_INTERNAL_URL ?? PUBLIC_BASE).replace(/\/$/, '')
   : PUBLIC_BASE
 
-// Set by <AuthSync> when a Supabase user is signed in — forwarded for per-user rate limits.
-let _userId: string | null = null
-export function setApiUserId(id: string | null) { _userId = id }
-
-// Set by <AuthSync> — returns a fresh Supabase session JWT for verified admin calls.
-let _getToken: (() => Promise<string | null>) | null = null
-export function setApiTokenGetter(fn: (() => Promise<string | null>) | null) { _getToken = fn }
-
-async function _authHeaders(h: Headers) {
-  if (_userId) h.set('X-User-Id', _userId)
-  if (_getToken) { try { const t = await _getToken(); if (t) h.set('Authorization', `Bearer ${t}`) } catch {} }
-}
-
 async function _f<T>(path: string, init?: RequestInit): Promise<T> {
-  const headers = new Headers(init?.headers)
-  await _authHeaders(headers)
-  const r = await fetch(`${BASE}${path}`, { ...init, headers })
+  const r = await fetch(`${BASE}${path}`, init)
   if (!r.ok) {
     const b = await r.json().catch(() => ({}))
     throw new Error(b.error ?? `HTTP ${r.status}`)
@@ -139,13 +123,7 @@ export const listPlaylist = (url: string) =>
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url }),
   })
 
-// ── CMS content (MySQL) ───────────────────────────────────────────────────────
-export interface BlogPost { id:number; title:string; slug:string; excerpt:string; content?:string; author:string; cover_image?:string; tags?:string; category?:string; read_minutes?:number; published_at:string }
-export interface BlogCategory { category:string; count:number }
-export interface BlogListResponse { posts:BlogPost[]; total:number; page:number; limit:number; pages:number; categories:BlogCategory[] }
-export interface BlogQuery { q?:string; category?:string; tag?:string; sort?:string; page?:number; limit?:number }
 export interface FaqItem  { id:number; question:string; answer:string; category:string; sort_order:number }
-export interface Testimonial { id:number; name:string; role:string; avatar?:string; content:string; rating:number }
 
 
 // ── Batch download ────────────────────────────────────────────────────────────
@@ -202,64 +180,9 @@ export const fetchSchedules  = () => _f<ScheduleRow[]>('/api/download/schedules'
 export const deleteSchedule  = (key: string) =>
   _f(`/api/download/schedules/${encodeURIComponent(key)}`, { method: 'DELETE' })
 
-export const fetchBlogList    = (qy: BlogQuery = {}) => {
-  const sp = new URLSearchParams()
-  Object.entries(qy).forEach(([k, v]) => { if (v !== undefined && v !== '' && v !== null) sp.set(k, String(v)) })
-  const qs = sp.toString()
-  return _f<BlogListResponse>(`/api/content/blog${qs ? `?${qs}` : ''}`)
-}
-// Back-compat helper used by admin: returns just the posts array
-export const fetchBlog        = () => fetchBlogList({ limit: 60 }).then((r) => r.posts)
-export const fetchBlogPost    = (slug: string) => _f<BlogPost>(`/api/content/blog/${slug}`)
-
-// Upload an image/file for embedding in a post; returns the public URL
-export async function uploadMedia(file: File): Promise<{ url:string; name:string; size:number; type:string }> {
-  const fd = new FormData()
-  fd.append('file', file)
-  const headers = new Headers()
-  await _authHeaders(headers)
-  const r = await fetch(`${BASE}/api/content/admin/upload`, { method: 'POST', body: fd, headers })
-  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error ?? `HTTP ${r.status}`)
-  return r.json()
-}
-export const mediaUrl = (u: string) => (u.startsWith('http') ? u : `${BASE}${u}`)
 export const fetchFaq         = () => _f<FaqItem[]>('/api/content/faq')
-export const fetchTestimonials= () => _f<Testimonial[]>('/api/content/testimonials')
-export const fetchContentStats= () => _f<{total_downloads:string|number; total_sites:string}>('/api/content/stats')
 export interface SupportedSites { named_extractors:number; by_engine:Record<string,number>; generic_fallback:boolean; note:string }
 export const fetchSupportedSites = () => _f<SupportedSites>('/api/content/sites')
-export const submitContact    = (data: {name:string;email:string;subject?:string;message:string;recaptchaToken?:string}) =>
-  _f<{success:boolean;message:string}>('/api/content/contact', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data),
-  })
-
-// ── Admin ──────────────────────────────────────────────────────────────────────
-export interface DeepHealth { status:string; checks:Record<string,any>; versions?:Record<string,string|null> }
-export const fetchHealthDeep = () => _f<DeepHealth>('/health/deep')
-export const adminEngines = () => _f<{ engines: Record<string,string|null> }>('/api/content/admin/engines')
-export const adminUpdateEngines = () => _f<{ before: Record<string,string|null>; after: Record<string,string|null>; changed: string[]; note: string }>('/api/content/admin/engines/update', { method: 'POST' })
-export const adminDownloads = () => _f<any>('/api/content/admin/downloads')
-export const adminMessages      = () => _f<{ messages: any[]; unread: number }>('/api/content/admin/messages')
-export const adminDeleteMessage = (id: number) => _f(`/api/content/admin/messages/${id}`, { method: 'DELETE' })
-export const adminMarkMessage   = (id: number, status: 'read' | 'unread') =>
-  _f(`/api/content/admin/messages/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status }) })
-export const adminReplyMessage  = (id: number, replyText: string) =>
-  _f<{ success: boolean }>(`/api/content/admin/messages/${id}/reply`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ replyText }) })
-export const adminEmailConfig   = () => _f<{ configured: boolean; provider: string; from: string; admin_to: string }>('/api/content/admin/email-config')
-export const adminTestEmail     = (to?: string) =>
-  _f<{ success: boolean }>('/api/content/admin/email-test', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ to }) })
-export const adminAnalytics     = (days = 30) => _f<any>(`/api/content/admin/analytics?days=${days}`)
-
-export const adminSettings = () => _f<{key_name:string;value:string;updated_at:string}[]>('/api/content/admin/settings')
-export const adminUpdateSettings = (updates: Record<string,string>) =>
-  _f('/api/content/admin/settings', { method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify(updates) })
-
-export const adminCreateBlog = (post: any) =>
-  _f<{success:boolean;id:number}>('/api/content/admin/blog', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(post) })
-export const adminUpdateBlog = (id: number, post: any) =>
-  _f(`/api/content/admin/blog/${id}`, { method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify(post) })
-export const adminDeleteBlog = (id: number) =>
-  _f(`/api/content/admin/blog/${id}`, { method:'DELETE' })
 
 export function subscribeProgress(jobId: string, onUpdate: (p: JobProgress) => void, onDone: () => void): () => void {
   // Try Socket.io first; if not connected yet, fall back to SSE
@@ -298,21 +221,6 @@ export function subscribeProgress(jobId: string, onUpdate: (p: JobProgress) => v
     socketUnsub?.()
   }
 }
-
-// ── Push notification token registration ─────────────────────────────────────
-export const registerPushToken  = (token: string, deviceId?: string) => {
-  const headers: Record<string,string> = { 'Content-Type': 'application/json' }
-  if (deviceId) headers['X-Device-Id'] = deviceId
-  return _f<{ success: boolean; enabled: boolean }>('/api/notifications/register', {
-    method: 'POST', headers, body: JSON.stringify({ token }),
-  })
-}
-export const unregisterPushToken = (deviceId?: string) => {
-  const headers: Record<string,string> = {}
-  if (deviceId) headers['X-Device-Id'] = deviceId
-  return _f('/api/notifications/unregister', { method: 'DELETE', headers })
-}
-export const notificationStatus  = () => _f<{ fcm_enabled: boolean }>('/api/notifications/status')
 
 // ── Proxy / VPN manager ───────────────────────────────────────────────────────
 export interface SavedProxy {
