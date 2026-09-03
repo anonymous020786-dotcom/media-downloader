@@ -2,10 +2,11 @@ import type { NextConfig } from 'next'
 
 const SITE = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://mediadl.app'
 
-// ── Strict Content-Security-Policy ───────────────────────────────────────────
-// Permissive CSP — allows all external providers needed to run every service:
-// Supabase, Google/GitHub/Microsoft OAuth, TMDB, Firebase, GA, AdSense, Tawk.to,
-// YouTube/Vimeo embeds, image CDNs, etc.
+// ── Content-Security-Policy ──────────────────────────────────────────────────
+// Permissive on `https:` so optional integrations work when configured
+// (Cloudflare Turnstile, Google Analytics) alongside media/embed CDNs and the
+// headless-capture fallbacks. No third-party script is loaded unless its env
+// key is set.
 const CSP = [
   "default-src 'self'",
   "script-src 'self' 'unsafe-inline' 'unsafe-eval' https: blob:",

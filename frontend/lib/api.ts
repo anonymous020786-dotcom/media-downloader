@@ -1,4 +1,5 @@
 import type { AnalyzeResult, Job, JobProgress, PlaylistInfo, StorageJob, AdvancedOptions, FeedResult, ConvertRequest } from './types'
+import { turnstileEnabled, awaitTurnstileToken, consumeTurnstileToken } from './turnstile'
 
 const PUBLIC_BASE = (process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000').replace(/\/$/, '')
 // On the server (SSR) use the internal URL so server-rendered pages get real data.
@@ -6,13 +7,31 @@ const BASE = typeof window === 'undefined'
   ? (process.env.BACKEND_INTERNAL_URL ?? PUBLIC_BASE).replace(/\/$/, '')
   : PUBLIC_BASE
 
+// Endpoints that queue a download — these are the ones the backend guards with
+// Cloudflare Turnstile (when TURNSTILE_SECRET_KEY is configured).
+const GUARDED = ['/api/download', '/api/download/batch', '/api/download/auto']
+
 async function _f<T>(path: string, init?: RequestInit): Promise<T> {
-  const r = await fetch(`${BASE}${path}`, init)
-  if (!r.ok) {
-    const b = await r.json().catch(() => ({}))
-    throw new Error(b.error ?? `HTTP ${r.status}`)
+  let opts = init
+  const guarded = turnstileEnabled && typeof window !== 'undefined'
+    && (init?.method ?? 'GET').toUpperCase() === 'POST'
+    && GUARDED.some((p) => path === p || path.startsWith(p + '?'))
+
+  if (guarded) {
+    const token = await awaitTurnstileToken()
+    if (token) opts = { ...init, headers: { ...(init?.headers as Record<string, string>), 'cf-turnstile-response': token } }
   }
-  return r.json()
+
+  try {
+    const r = await fetch(`${BASE}${path}`, opts)
+    if (!r.ok) {
+      const b = await r.json().catch(() => ({}))
+      throw new Error(b.error ?? `HTTP ${r.status}`)
+    }
+    return r.json()
+  } finally {
+    if (guarded) consumeTurnstileToken() // single-use — mint a fresh one for next time
+  }
 }
 
 export const analyzeUrl = (url: string) =>

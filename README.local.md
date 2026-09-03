@@ -62,13 +62,23 @@ in. Optional keys:
 
 - `PROXY_POOL` — preset proxies: `"Germany|http://de.example:8080;US|socks5://us.example:1080"`
 - `MAX_CONCURRENT_DOWNLOADS`, `WORKER_CONCURRENCY`, `DOWNLOAD_TTL_MINUTES`
+- `NEXT_PUBLIC_GA_ID` (`frontend/.env.local`) — Google Analytics 4 ID, e.g.
+  `G-XXXXXXXXXX`. Blank = no analytics script is loaded at all.
+- `NEXT_PUBLIC_TURNSTILE_SITE_KEY` (`frontend/.env.local`) + `TURNSTILE_SECRET_KEY`
+  (root `.env`) — Cloudflare Turnstile human-verification on the download API.
+  Set **both** to enable; blank = the download endpoints accept requests with no
+  CAPTCHA (the default for local use). Keys:
+  <https://dash.cloudflare.com/?to=/:account/turnstile>
 
 ## What was removed
 
 Auth / accounts / admin dashboard / blog / pricing / contact-form storage / push
 notifications / S3 upload / download history / Movies & TV (TMDB) / News feed /
-Google Analytics / AdSense / Tawk.to chat / reCAPTCHA / country switcher /
-video player (`/player`) / social people search (`/people`).
+AdSense / Tawk.to chat / reCAPTCHA / country switcher / video player (`/player`) /
+social people search (`/people`).
+
+(Google Analytics and Cloudflare Turnstile were removed as always-on, then
+re-added as **opt-in** integrations — see Configuration above.)
 
 Kept: the download tools, playlists, profiles, batch, convert, merge, web
 search, screen-capture, language switcher, and the proxy & cookie helpers. The

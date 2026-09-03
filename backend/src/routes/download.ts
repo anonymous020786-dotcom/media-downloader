@@ -3,6 +3,7 @@ import { v4 as uuidv4 } from 'uuid'
 import axios from 'axios'
 import { downloadQueue, redisConnection } from '../workers/downloadWorker.js'
 import { requireAuth } from '../middleware/requireAuth.js'
+import { verifyTurnstile } from '../middleware/verifyTurnstile.js'
 import { resolveProxy } from './proxy.js'
 import { resolveCookies } from './cookies.js'
 import { ensureDiskSpace } from './storage.js'
@@ -33,7 +34,7 @@ const CRON: Record<string, string> = {
   weekly: '0 9 * * 1',
 }
 
-router.post('/', async (req, res) => {
+router.post('/', verifyTurnstile, async (req, res) => {
   const body = req.body as Partial<DownloadJob> & { delaySeconds?: number; repeatEvery?: string }
   const { url, mediaType } = body
 
@@ -113,7 +114,7 @@ router.delete('/schedules/:key', async (req, res) => {
 })
 
 // ── Batch: queue multiple URLs in one request ─────────────────────────────────
-router.post('/batch', async (req, res) => {
+router.post('/batch', verifyTurnstile, async (req, res) => {
   const { items, ...sharedOpts } = req.body as {
     items: Array<{ url: string; title?: string; thumbnail?: string; mediaType?: MediaType; format?: string }>
     mediaType?: MediaType; format?: string; quality?: string; priority?: number
@@ -214,7 +215,7 @@ router.post('/merge', async (req, res) => {
 })
 
 // ── Auto: analyze + queue from just a URL (used by the browser extension) ──────
-router.post('/auto', async (req, res) => {
+router.post('/auto', verifyTurnstile, async (req, res) => {
   const { url, delaySeconds } = req.body as { url?: string; delaySeconds?: number }
   if (!url) { res.status(400).json({ error: 'url is required' }); return }
   const diskErr = await ensureDiskSpace()

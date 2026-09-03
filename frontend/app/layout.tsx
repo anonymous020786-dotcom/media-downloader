@@ -8,6 +8,8 @@ import LanguageProvider from '@/components/i18n/LanguageProvider'
 import PWAInstall from '@/components/widgets/PWAInstall'
 import WelcomeBanner from '@/components/widgets/WelcomeBanner'
 import ScrollButtons from '@/components/widgets/ScrollButtons'
+import GoogleAnalytics from '@/components/analytics/GoogleAnalytics'
+import Turnstile from '@/components/security/Turnstile'
 import './globals.css'
 
 // ── Fonts — self-hosted via next/font (no external network request) ───────────
@@ -90,7 +92,6 @@ const SCHEMA = {
       operatingSystem: 'Web, iOS, Android', url: SITE,
       offers: { '@type': 'Offer', price: '0', priceCurrency: 'USD' },
       description: 'Free online video and image downloader supporting 2,000+ websites.',
-      aggregateRating: { '@type': 'AggregateRating', ratingValue: '4.9', reviewCount: '12847', bestRating: '5' },
     },
     {
       '@type': 'HowTo', name: 'How to Download a Video with MediaDL',
@@ -114,6 +115,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(SCHEMA) }} />
       </head>
       <body className={inter.className}>
+        <GoogleAnalytics />
+        <Turnstile />
         <Script id="sw-register" strategy="afterInteractive">{`
           (function(){
             if(!('serviceWorker' in navigator)) return;
