@@ -16,7 +16,6 @@ import { startWorker } from './workers/downloadWorker.js'
 import { initSocket } from './socket.js'
 import usersRouter   from './routes/users.js'
 import proxyRouter   from './routes/proxy.js'
-import streamRouter  from './routes/stream.js'
 import cookiesRouter from './routes/cookies.js'
 import statusRouter  from './routes/status.js'
 
@@ -85,7 +84,6 @@ app.use('/api/storage',  storageRouter)
 app.use('/api/content',  contentRouter)
 app.use('/api/users',        usersRouter)
 app.use('/api/proxy',        proxyRouter)
-app.use('/api/stream',       streamRouter)
 app.use('/api/cookies',      cookiesRouter)
 app.use('/api/status',       statusRouter)
 

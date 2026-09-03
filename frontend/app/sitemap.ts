@@ -30,7 +30,6 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   const tier1: MetadataRoute.Sitemap = [
     entry('',          1.0, 'daily',   now),
     entry('/download', 0.95, 'daily',  now),
-    entry('/player',   0.9,  'weekly', now),
   ]
 
   // ── Tier 2: Tools & features (0.85) ──────────────────────────────────────
@@ -43,7 +42,6 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
 
   // ── Tier 3: Content hubs (0.8) ───────────────────────────────────────────
   const tier3: MetadataRoute.Sitemap = [
-    entry('/people',          0.8, 'weekly', now),
     entry('/schedules',       0.75, 'daily', now),
   ]
 

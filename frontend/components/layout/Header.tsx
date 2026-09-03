@@ -28,8 +28,6 @@ const DOWNLOADERS = [
 
 const NAV_ITEMS = [
   { label: 'Sites',      href: '/supported-sites' },
-  { label: 'People',     href: '/people'    },
-  { label: 'Player',     href: '/player'        },
   { label: 'Tools',      href: '/tools/convert' },
 ]
 

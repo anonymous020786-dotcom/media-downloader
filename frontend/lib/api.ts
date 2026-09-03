@@ -99,21 +99,6 @@ export const queueDownload = (payload: {
     }),
   })
 
-// ── Social people / profile discovery ─────────────────────────────────────────
-export interface SocialProfile {
-  platform: string; platform_name: string; username?: string; display_name?: string
-  url: string; title?: string; kind: 'video'|'image'|'mixed'; login_required: boolean
-  status: 'verified'|'blocked'|'candidate'; avatar?: string
-}
-export interface SocialSearchResponse { query: string; count: number; platforms_searched: number; profiles: SocialProfile[]; _cached?: boolean }
-export interface SocialPlatform { id: string; name: string; kind: string; login_required: boolean }
-export const socialSearch = (query: string, platforms?: string[]) =>
-  _f<SocialSearchResponse>('/api/analyze/social/search', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ query, platforms }),
-  })
-export const socialPlatforms = () => _f<{ platforms: SocialPlatform[] }>('/api/analyze/social/platforms')
-
 export interface ActiveJob {
   jobId: string; bullId: string; url: string; title: string | null
   mediaType: string; addedAt: number; state: string

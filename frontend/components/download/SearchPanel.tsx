@@ -2,7 +2,7 @@
 import { useState, useEffect, useRef } from 'react'
 import {
   Search, Download, Loader2, Globe, FileText, ImageIcon, Film,
-  ExternalLink, Magnet, Newspaper, Copy, Check, Rss, Play, Shield, ShieldOff,
+  ExternalLink, Magnet, Newspaper, Copy, Check, Rss, Shield, ShieldOff,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { searchWeb, queueDownload, type SearchResult } from '@/lib/api'
@@ -311,10 +311,6 @@ export default function SearchPanel({ onQueued }: Props) {
                 <p className="text-[11px] text-[var(--text-3)] truncate">{r.snippet || r.url}</p>
                 {r.duration && <span className="text-[10px] text-[var(--text-3)]">{r.duration}</span>}
               </div>
-              <a href={`/player?url=${encodeURIComponent(r.source || r.url)}`} target="_blank" rel="noopener noreferrer"
-                className="shrink-0 flex items-center gap-1.5 px-3 py-2 rounded-lg bg-violet-600 hover:bg-violet-500 text-white text-xs font-bold transition-colors" title="Play in the in-app player">
-                <Play size={13} /> Play
-              </a>
               <a href={r.source || r.url} target="_blank" rel="noopener noreferrer"
                 className="shrink-0 p-2 rounded-lg text-[var(--text-3)] hover:text-[var(--text)]" title="Open source">
                 <ExternalLink size={14} />

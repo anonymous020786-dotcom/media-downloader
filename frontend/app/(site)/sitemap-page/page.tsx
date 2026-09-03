@@ -47,17 +47,9 @@ const SECTIONS: SitemapSection[] = [
     color: 'text-violet-400', bgColor: 'bg-violet-500/10 border-violet-500/20',
     links: [
       { label: 'Download Tool',    href: '/download',       badge: 'Free' },
-      { label: 'Video Player',      href: '/player',         badge: 'New' },
       { label: 'Format Converter', href: '/tools/convert'               },
       { label: 'Screen Capture',   href: '/screen-capture'              },
       { label: 'Schedules',        href: '/schedules'                   },
-    ],
-  },
-  {
-    id: 'explore', title: 'Discover', icon: <Users size={16} />,
-    color: 'text-cyan-400', bgColor: 'bg-cyan-500/10 border-cyan-500/20',
-    links: [
-      { label: 'Social People',     href: '/people'           },
     ],
   },
   {
