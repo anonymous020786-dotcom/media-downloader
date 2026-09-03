@@ -506,6 +506,24 @@ const PLATFORMS: Platform[] = [
     ],
     features: ['Up to 4K', 'Mirror Domains', 'Galleries', 'Audio Only', 'No Watermark', 'Age-Gated'],
   },
+  {
+    slug: 'xiaohongshu-downloader',
+    name: 'Xiaohongshu',
+    emoji: '📕',
+    color: 'from-red-500 to-rose-600',
+    tagline: 'Download Xiaohongshu (RED / 小红书) Videos & Photos',
+    description: 'Download videos and photo posts from Xiaohongshu / RED — including xhslink.com share links — with no watermark. Full-resolution images and HD video, no app.',
+    formats: ['MP4','WebM','MP3','Original','JPG'],
+    qualities: ['Best','1080p','720p','Audio Only','Original Images'],
+    steps: ['Open the note in the RED app and tap Share → Copy Link (or copy a xiaohongshu.com/explore/... URL)','Paste it into MediaDL above','Choose video or image download','Click Download'],
+    faqs: [
+      { q: 'Do xhslink.com short links work?', a: 'Yes. MediaDL follows the short link to the real note automatically.' },
+      { q: 'Are multi-image posts supported?', a: 'Yes — every image in the carousel is downloaded at full resolution.' },
+      { q: 'Is the watermark removed?', a: 'Downloads use the source media, so there is no burned-in share watermark.' },
+      { q: 'Do I need an account?', a: 'Public notes need no login. Account-only notes require your cookies in the Cookies field.' },
+    ],
+    features: ['No Watermark', 'Short Links', 'Photo Carousels', 'HD Video', 'Audio Extract', 'Full-Res Images'],
+  },
 ]
 
 export function getPlatformBySlug(slug: string): Platform | undefined {

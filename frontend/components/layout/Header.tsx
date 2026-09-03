@@ -29,6 +29,7 @@ const DOWNLOADERS = [
   { label: 'Rumble',      href: '/rumble-downloader',     icon: <Film           size={14} className="text-lime-400"  />, desc: 'Up to 4K' },
   { label: 'Threads',     href: '/threads-downloader',    icon: <MessageCircle  size={14} className="text-neutral-300"/>, desc: 'Videos & photos' },
   { label: 'Terabox',     href: '/terabox-downloader',    icon: <List           size={14} className="text-sky-400"   />, desc: 'Files, no speed cap' },
+  { label: 'Xiaohongshu', href: '/xiaohongshu-downloader',icon: <Camera         size={14} className="text-rose-400"  />, desc: 'RED videos & photos' },
 ]
 
 const NAV_ITEMS = [

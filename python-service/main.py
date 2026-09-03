@@ -1179,6 +1179,20 @@ _TERABOX_RE = re.compile(
     r')\.(?:com|app|fun|club|net|org|link|pro|xyz|to|me|cc|in|co)/',
     re.I)
 
+# Xiaohongshu / RED  — note pages + xhslink.com short links
+#   https://www.xiaohongshu.com/explore/{id}
+#   https://www.xiaohongshu.com/discovery/item/{id}
+#   http://xhslink.com/{code}   (redirects to a note page)
+_XHS_RE = re.compile(
+    r'^https?://(?:www\.)?(?:'
+    r'xiaohongshu\.com/(?:explore|discovery/item)/[0-9a-f]+'
+    r'|xhslink\.com/[A-Za-z0-9/_-]+'
+    r')', re.I)
+
+# HQporner  https://hqporner.com/hdporn/{id}-{slug}.html  |  /watch/{id}
+_HQPORNER_RE = re.compile(
+    r'^https?://(?:www\.)?hqporner\.com/(?:hdporn|watch)/([^/?\s]+)', re.I)
+
 
 def _is_custom_site(url: str) -> bool:
     return bool(
@@ -1201,7 +1215,7 @@ def _is_custom_site(url: str) -> bool:
         _COOMER_RE.match(url) or _KEMONO_RE.match(url) or
         _TURBOBIT_RE.match(url) or _RAPIDGATOR_RE.match(url) or
         _NITROFLARE_RE.match(url) or _UPLOADEE_RE.match(url) or
-        _TERABOX_RE.match(url)
+        _TERABOX_RE.match(url) or _XHS_RE.match(url) or _HQPORNER_RE.match(url)
     )
 
 
@@ -2264,6 +2278,223 @@ async def _dl_terabox(req: DownloadReq, job_dir: Path):
     if not saved:
         raise HTTPException(502, "Terabox: nothing could be downloaded")
     await _prog(req.job_id, {"status": "completed", "progress": 100, "files": saved})
+
+
+# ── Xiaohongshu / RED ─────────────────────────────────────────────────────────
+
+async def _xhs_unshorten(url: str) -> str:
+    """Follow an xhslink.com short link to the real xiaohongshu.com note URL."""
+    if "xhslink.com" not in url.lower():
+        return url
+    try:
+        async with httpx.AsyncClient(follow_redirects=True, timeout=20,
+                                     verify=VERIFY_SSL,
+                                     headers={"User-Agent": _ua()}) as c:
+            r = await c.get(url)
+            return str(r.url) or url
+    except Exception:
+        return url
+
+
+async def _xhs_extract(url: str, proxy: Optional[str] = None) -> dict:
+    """Return {title, videos:[...], images:[...]} scraped from a note page."""
+    real = await _xhs_unshorten(url)
+    out = {"title": "Xiaohongshu note", "videos": [], "images": [], "url": real}
+    try:
+        async with httpx.AsyncClient(follow_redirects=True, timeout=25,
+                                     verify=VERIFY_SSL, proxy=proxy or None,
+                                     headers={"User-Agent": _ua(),
+                                              "Referer": "https://www.xiaohongshu.com/",
+                                              "Accept": "text/html,*/*;q=0.9"}) as c:
+            r = await c.get(real)
+            html = r.text
+    except Exception:
+        return out
+
+    mt = re.search(r'<title[^>]*>([^<]+)</title>', html, re.I)
+    if mt:
+        out["title"] = _safe(mt.group(1).split(" - ")[0].strip() or out["title"])
+
+    ms = re.search(r'window\.__INITIAL_STATE__\s*=\s*({.+?})\s*</script>', html, re.S)
+    if ms:
+        blob = ms.group(1).replace("undefined", "null")
+        try:
+            data = json.loads(blob)
+        except Exception:
+            data = None
+        if data:
+            nd = (((data.get("note") or {}).get("noteDetailMap")) or {})
+            for _k, v in nd.items():
+                note = (v or {}).get("note") or {}
+                # video
+                streams = (((note.get("video") or {}).get("media") or {}).get("stream") or {})
+                for codec in ("h265", "h264", "av1"):
+                    for s in streams.get(codec, []) or []:
+                        u = s.get("masterUrl") or (s.get("backupUrls") or [None])[0]
+                        if u:
+                            out["videos"].append(u)
+                            break
+                    if out["videos"]:
+                        break
+                # images
+                for im in note.get("imageList", []) or []:
+                    u = im.get("urlDefault") or im.get("url") or (
+                        (im.get("infoList") or [{}])[-1].get("url"))
+                    if u:
+                        out["images"].append(u)
+                if note.get("title"):
+                    out["title"] = _safe(note["title"])
+                if out["videos"] or out["images"]:
+                    break
+
+    # Fallbacks from raw HTML / meta tags
+    if not out["videos"]:
+        for m in re.findall(r'"(https?://[^"]+?\.(?:mp4|m3u8)[^"]*)"', html):
+            out["videos"].append(m.replace("\\u002F", "/").replace("\\/", "/"))
+    if not out["videos"] and not out["images"]:
+        og = re.search(r'<meta[^>]+property=["\']og:image["\'][^>]+content=["\']([^"\']+)', html, re.I)
+        if og:
+            out["images"].append(og.group(1))
+
+    out["videos"] = list(dict.fromkeys(out["videos"]))
+    out["images"] = list(dict.fromkeys(out["images"]))
+    return out
+
+
+async def _analyze_xiaohongshu(url: str) -> dict:
+    info = await _xhs_extract(url)
+    if info["videos"]:
+        return {"type": "video", "title": info["title"], "url": info["url"],
+                "extractor": "xiaohongshu", "thumbnail": (info["images"] or [None])[0],
+                "qualities": [], "video_formats": MEDIA_FORMATS}
+    if info["images"]:
+        return {"type": "playlist" if len(info["images"]) > 1 else "image",
+                "title": info["title"], "url": info["url"], "extractor": "xiaohongshu",
+                "thumbnail": info["images"][0], "item_count": len(info["images"]),
+                "qualities": [], "video_formats": ["original"] + IMAGE_FORMATS}
+    return {"type": "video", "title": info["title"], "url": info["url"],
+            "extractor": "xiaohongshu", "qualities": [], "video_formats": MEDIA_FORMATS,
+            "_note": "Could not read this note directly — download will try gallery-dl "
+                     "and a headless browser. Private / account-only notes need cookies."}
+
+
+async def _dl_xiaohongshu(req: DownloadReq, job_dir: Path):
+    await _prog(req.job_id, {"status": "starting", "progress": 5,
+                             "info": "Reading Xiaohongshu note…"})
+    info = await _xhs_extract(req.url, req.proxy)
+    media = [(u, "video") for u in info["videos"]] + [(u, "image") for u in info["images"]]
+
+    if media:
+        ref = "https://www.xiaohongshu.com/"
+        total = len(media)
+        for i, (u, kind) in enumerate(media, 1):
+            if kind == "video" and ".m3u8" in u.split("?")[0]:
+                await _dl_direct(u, req.job_id, job_dir, req.format, referer=ref, proxy=req.proxy)
+            else:
+                raw = u.split("/")[-1].split("?")[0] or f"xhs_{i}"
+                if "." not in raw:
+                    raw = f"{raw}.{'mp4' if kind == 'video' else 'jpg'}"
+                out = _uniq(job_dir, _safe(raw))
+                if not await _aria2_dl(u, out, req.job_id, ref, req.proxy):
+                    try:
+                        async with httpx.AsyncClient(follow_redirects=True, timeout=httpx.Timeout(None, connect=20),
+                                                     verify=VERIFY_SSL, proxy=req.proxy or None,
+                                                     headers={"User-Agent": _ua(), "Referer": ref}) as c:
+                            async with c.stream("GET", u) as resp:
+                                if resp.status_code in (200, 206):
+                                    async with aiofiles.open(out, "wb") as fo:
+                                        async for chunk in resp.aiter_bytes(1 << 20):
+                                            await fo.write(chunk)
+                    except Exception:
+                        pass
+            _prog_s(req.job_id, {"status": "downloading", "progress": min(95, int(i / total * 95))})
+
+    if not _has_files(job_dir):
+        await _dl_gallery_dl(info["url"], req.job_id, job_dir,
+                             cookie_file=_write_cookies(req.cookies) if req.cookies else None,
+                             proxy=req.proxy, max_items=req.max_items)
+    if not _has_files(job_dir):
+        try:
+            imgs, vids = await asyncio.wait_for(
+                _render_media(info["url"], proxy=req.proxy, want_video=True, timeout_ms=40000), timeout=55)
+            for u in (list(vids)[:1] or list(imgs)[:20]):
+                await _dl_direct(u, req.job_id, job_dir, req.format,
+                                 referer="https://www.xiaohongshu.com/", proxy=req.proxy)
+        except Exception:
+            pass
+
+    if not _has_files(job_dir):
+        raise HTTPException(502, "Could not download this Xiaohongshu note. It may be "
+                                 "account-only — add your cookies and try again.")
+    files = [f.name for f in job_dir.iterdir() if f.is_file()]
+    await _prog(req.job_id, {"status": "completed", "progress": 100, "files": files})
+
+
+# ── HQporner ──────────────────────────────────────────────────────────────────
+
+async def _hqporner_resolve(url: str, proxy: Optional[str] = None) -> tuple[list[str], str]:
+    """Return ([mp4 urls best-first], title)."""
+    hdr = {"User-Agent": _ua(), "Referer": "https://hqporner.com/",
+           "Accept": "text/html,*/*;q=0.9"}
+    title = "HQporner video"
+    try:
+        async with httpx.AsyncClient(follow_redirects=True, timeout=25,
+                                     verify=VERIFY_SSL, proxy=proxy or None, headers=hdr) as c:
+            r = await c.get(url)
+            html = r.text
+            mt = re.search(r'<title[^>]*>([^<|]+)', html, re.I)
+            if mt:
+                title = _safe(mt.group(1).strip())
+            iframes = re.findall(r'<iframe[^>]+src=["\']([^"\']+)["\']', html, re.I)
+            iframes = [i if i.startswith("http") else "https:" + i for i in iframes
+                       if "hqporner" in i or "fpttable" in i or "myfacefeel" in i or i.startswith("//")]
+            urls: list[str] = []
+            for fr in iframes[:3]:
+                try:
+                    fr_r = await c.get(fr, headers={**hdr, "Referer": url})
+                    for m in re.findall(r'(?:src|file)\s*[:=]\s*["\']([^"\']+\.mp4[^"\']*)["\']', fr_r.text, re.I):
+                        u = m if m.startswith("http") else "https:" + m
+                        urls.append(u)
+                except Exception:
+                    continue
+            # rank by the quality tag in the path (…_720p.mp4)
+            def _q(u: str) -> int:
+                mm = re.search(r'(\d{3,4})p?\.mp4', u)
+                return int(mm.group(1)) if mm else 0
+            urls = sorted(dict.fromkeys(urls), key=_q, reverse=True)
+            return urls, title
+    except Exception:
+        return [], title
+
+
+async def _analyze_hqporner(url: str) -> dict:
+    urls, title = await _hqporner_resolve(url)
+    return {"type": "video", "title": title, "url": url, "extractor": "hqporner",
+            "qualities": [], "video_formats": MEDIA_FORMATS,
+            **({} if urls else {"_note": "Player not resolved on analyze — download "
+                                         "will retry with a headless browser."})}
+
+
+async def _dl_hqporner(req: DownloadReq, job_dir: Path):
+    await _prog(req.job_id, {"status": "starting", "progress": 5})
+    urls, _title = await _hqporner_resolve(req.url, req.proxy)
+    for u in urls:
+        if await _dl_direct(u, req.job_id, job_dir, req.format,
+                            referer="https://hqporner.com/", proxy=req.proxy):
+            break
+    if not _has_files(job_dir):
+        try:
+            _imgs, vids = await asyncio.wait_for(
+                _render_media(req.url, proxy=req.proxy, want_video=True, timeout_ms=40000), timeout=55)
+            for u in list(vids)[:1]:
+                await _dl_direct(u, req.job_id, job_dir, req.format,
+                                 referer="https://hqporner.com/", proxy=req.proxy)
+        except Exception:
+            pass
+    if not _has_files(job_dir):
+        raise HTTPException(502, "Could not extract the HQporner video URL")
+    files = [f.name for f in job_dir.iterdir() if f.is_file()]
+    await _prog(req.job_id, {"status": "completed", "progress": 100, "files": files})
 
 
 # ── FileMoon ──────────────────────────────────────────────────────────────────
@@ -4469,6 +4700,8 @@ async def _do_analyze(url: str) -> dict:
     if _NITROFLARE_RE.match(url):    return await _analyze_nitroflare(url)
     if _UPLOADEE_RE.match(url):      return await _analyze_uploadee(url)
     if _TERABOX_RE.match(url):       return await _analyze_terabox(url)
+    if _XHS_RE.match(url):           return await _analyze_xiaohongshu(url)
+    if _HQPORNER_RE.match(url):      return await _analyze_hqporner(url)
     # 0. Torrent / magnet
     if url.startswith("magnet:") or url.split("?")[0].lower().endswith(".torrent"):
         name = "torrent"
@@ -5192,6 +5425,8 @@ async def download(req: DownloadReq):
             elif _NITROFLARE_RE.match(req.url):    await _dl_nitroflare(req, job_dir)
             elif _UPLOADEE_RE.match(req.url):      await _dl_uploadee(req, job_dir)
             elif _TERABOX_RE.match(req.url):       await _dl_terabox(req, job_dir)
+            elif _XHS_RE.match(req.url):           await _dl_xiaohongshu(req, job_dir)
+            elif _HQPORNER_RE.match(req.url):      await _dl_hqporner(req, job_dir)
             elif req.capture and req.media_type == "video":
                 await _dl_capture(req, job_dir)
             elif req.media_type in ("playlist","profile"):
