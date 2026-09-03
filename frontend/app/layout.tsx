@@ -6,7 +6,6 @@ import ThemeProvider from '@/components/layout/ThemeProvider'
 import BackgroundDownloads from '@/components/BackgroundDownloads'
 import LanguageProvider from '@/components/i18n/LanguageProvider'
 import PWAInstall from '@/components/widgets/PWAInstall'
-import CookieBanner from '@/components/widgets/CookieBanner'
 import WelcomeBanner from '@/components/widgets/WelcomeBanner'
 import ScrollButtons from '@/components/widgets/ScrollButtons'
 import './globals.css'
@@ -142,7 +141,6 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               toastOptions={{ style: { fontSize: '13px' } }}
             />
             <PWAInstall />
-            <CookieBanner />
             <WelcomeBanner />
             <ScrollButtons />
           </LanguageProvider>
