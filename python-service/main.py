@@ -1215,7 +1215,8 @@ def _is_custom_site(url: str) -> bool:
         _COOMER_RE.match(url) or _KEMONO_RE.match(url) or
         _TURBOBIT_RE.match(url) or _RAPIDGATOR_RE.match(url) or
         _NITROFLARE_RE.match(url) or _UPLOADEE_RE.match(url) or
-        _TERABOX_RE.match(url) or _XHS_RE.match(url) or _HQPORNER_RE.match(url)
+        _TERABOX_RE.match(url) or _XHS_RE.match(url) or _HQPORNER_RE.match(url) or
+        _JAV_STREAM_RE.match(url) or _JAVBUS_RE.match(url)
     )
 
 
@@ -2493,6 +2494,234 @@ async def _dl_hqporner(req: DownloadReq, job_dir: Path):
             pass
     if not _has_files(job_dir):
         raise HTTPException(502, "Could not extract the HQporner video URL")
+    files = [f.name for f in job_dir.iterdir() if f.is_file()]
+    await _prog(req.job_id, {"status": "completed", "progress": 100, "files": files})
+
+
+# ── JAV / Asian streaming aggregators ────────────────────────────────────────
+# A single handler for the many JAV / hentai / asian-porn *streaming* sites that
+# share the same shape: a page (often with a packed-JS or iframe player) that
+# resolves to an HLS (.m3u8) or mp4 stream. yt-dlp is tried first by the caller;
+# this adds packed-JS unpacking + a headless-render capture that works when the
+# player URL only appears in network traffic after pressing play.
+_JAV_STREAM_RE = re.compile(
+    r'^https?://(?:[a-z0-9-]+\.)?(?:'
+    r'jable\.tv|javmost\.com|7mmtv\.(?:tv|cc|sx)|netflav\.com|av01\.tv|avple\.tv|'
+    r'javdoe\.(?:tv|sx|com)|javhihi\.com|javbangers\.com|javfor\.me|javhd\.today|'
+    r'javcl\.com|javgg\.net|javhub\.net|javout\.net|javhdfree\.net|javfull\.net|'
+    r'missav\.(?:com|ws|to|ai)|missav123\.com|supjav\.com|hpjav\.tv|njav\.tv|'
+    r'javfree\.(?:me|sh)|javfinder\.(?:la|sh)|jav\.guru|javtiful\.com|'
+    r'javclan\.com|javplayer\.com|18av\.mm-cg\.com|18av\.multi-checker\.com|'
+    r'hanime\.tv|hanimes\.org|hentaimama\.io|hentaimama\.tv|hentaihaven\.xxx|'
+    r'muchohentai\.com|hentaiplay\.net|hentaidude\.com|highporn\.net|'
+    r'iqqtv\.cloud|iqq\.today|iqqtv\.com|whichav\.video|av01\.(?:tv|me)|'
+    r'thisav\.com|avgle\.com|av6k\.com|x6av\.com|watchjavonline\.com'
+    r')(?:/|$)', re.I)
+
+
+async def _jav_stream_from_html(html: str, base_url: str,
+                                c: "httpx.AsyncClient", hdr: dict) -> Optional[tuple[str, str]]:
+    """Return (stream_url, kind) where kind is 'm3u8' or 'mp4', or None."""
+    m3u8 = _extract_m3u8(html)
+    if m3u8:
+        return (m3u8 if m3u8.startswith("http") else _origin(base_url) + m3u8, "m3u8")
+    mp4 = _extract_mp4(html)
+    if mp4:
+        return (mp4 if mp4.startswith("http") else _origin(base_url) + mp4, "mp4")
+    # Follow the first plausible iframe player
+    for fr in re.findall(r'<iframe[^>]+src=["\']([^"\']+)["\']', html, re.I)[:3]:
+        if fr.startswith("//"):
+            fr = "https:" + fr
+        if not fr.startswith("http"):
+            continue
+        if any(x in fr for x in ("disqus", "google", "facebook", "twitter", "ads")):
+            continue
+        try:
+            fr_r = await c.get(fr, headers={**hdr, "Referer": base_url})
+            inner = _extract_m3u8(fr_r.text)
+            if inner:
+                return (inner, "m3u8")
+            inner = _extract_mp4(fr_r.text)
+            if inner:
+                return (inner, "mp4")
+        except Exception:
+            continue
+    return None
+
+
+async def _analyze_jav_stream(url: str) -> dict:
+    title = "Video"
+    poster = None
+    try:
+        async with httpx.AsyncClient(follow_redirects=True, timeout=20,
+                                     verify=VERIFY_SSL,
+                                     headers={"User-Agent": _ua()}) as c:
+            r = await c.get(url)
+            mt = re.search(r'<meta[^>]+property=["\']og:title["\'][^>]+content=["\']([^"\']+)', r.text, re.I) \
+                or re.search(r'<title[^>]*>([^<|]+)', r.text, re.I)
+            if mt:
+                title = _safe(mt.group(1).strip())
+            mp = re.search(r'<meta[^>]+property=["\']og:image["\'][^>]+content=["\']([^"\']+)', r.text, re.I)
+            if mp:
+                poster = mp.group(1)
+    except Exception:
+        pass
+    return {"type": "video", "title": title, "url": url, "extractor": "jav-stream",
+            "thumbnail": poster, "qualities": [], "video_formats": STREAM_FORMATS + AUDIO_FORMATS}
+
+
+async def _dl_jav_stream(req: DownloadReq, job_dir: Path):
+    await _prog(req.job_id, {"status": "scraping", "progress": 4})
+    hdr = {"User-Agent": _ua(), "Accept": "text/html,*/*;q=0.9",
+           "Referer": _origin(req.url) + "/"}
+    found: Optional[tuple[str, str]] = None
+    try:
+        async with httpx.AsyncClient(follow_redirects=True, timeout=25,
+                                     verify=VERIFY_SSL, proxy=req.proxy or None,
+                                     headers=hdr) as c:
+            r = await c.get(req.url)
+            found = await _jav_stream_from_html(r.text, req.url, c, hdr)
+    except Exception:
+        pass
+
+    if found:
+        stream, kind = found
+        out = _uniq(job_dir, _safe((req.url.rstrip("/").split("/")[-1] or "video")) + (".mp4"))
+        if kind == "m3u8":
+            await _run_ffmpeg_hls(stream, out, req.job_id, req.url, req.proxy)
+        else:
+            await _dl_direct(stream, req.job_id, job_dir, req.format, referer=req.url, proxy=req.proxy)
+
+    # Headless capture — the player URL often only fires after pressing play
+    if not _has_files(job_dir):
+        await _prog(req.job_id, {"status": "scraping", "progress": 8,
+                                 "info": "Launching headless browser…"})
+        try:
+            _imgs, vids = await asyncio.wait_for(
+                _render_media(req.url, proxy=req.proxy, scroll=False,
+                              timeout_ms=45000, want_video=True), timeout=90)
+        except Exception:
+            vids = []
+        for media_url in _rank_video(vids):
+            ref = (_LAST_MEDIA_HEADERS.get(media_url) or {}).get("referer") or req.url
+            out = _uniq(job_dir, _safe("video") + ".mp4")
+            mb = media_url.split("?")[0].lower()
+            try:
+                if mb.endswith(".m3u8") or ".m3u8" in mb:
+                    if await _run_ffmpeg_hls(media_url, out, req.job_id, ref, req.proxy):
+                        break
+                elif await _dl_direct(media_url, req.job_id, job_dir, req.format, referer=ref, proxy=req.proxy):
+                    break
+            except Exception:
+                continue
+
+    if not _has_files(job_dir):
+        raise HTTPException(502,
+            "Could not extract a playable stream from this page. It may be "
+            "geo-blocked (try a proxy), require login (add cookies), or be "
+            "DRM-protected.")
+    files = [f.name for f in job_dir.iterdir() if f.is_file()]
+    await _prog(req.job_id, {"status": "completed", "progress": 100, "files": files})
+
+
+# ── JavBus (cover + sample images + magnet links) ────────────────────────────
+_JAVBUS_RE = re.compile(
+    r'^https?://(?:www\.)?javbus\.(?:com|icu|one|co|cc|zone|org|red|life|pw)'
+    r'|^https?://(?:www\.)?(?:javbusxx|seedmm|busfan|cdnbus)\.\w+', re.I)
+
+
+async def _javbus_magnets(html: str, page_url: str,
+                          c: "httpx.AsyncClient", hdr: dict) -> list[str]:
+    mags = list(dict.fromkeys(re.findall(r'(magnet:\?xt=urn:btih:[^\s"\'<>]+)', html, re.I)))
+    if mags:
+        return mags
+    # JavBus loads magnets via an AJAX endpoint parameterised by inline JS vars
+    gid = re.search(r'var\s+gid\s*=\s*(\d+)', html)
+    uc = re.search(r'var\s+uc\s*=\s*(\d+)', html)
+    img = re.search(r'var\s+img\s*=\s*[\'"]([^\'"]+)', html)
+    if gid:
+        try:
+            aj = await c.get(
+                f"{_origin(page_url)}/ajax/uncledatoolsbyajax.php",
+                params={"gid": gid.group(1), "lang": "en",
+                        "img": img.group(1) if img else "",
+                        "uc": uc.group(1) if uc else "0", "floor": "706"},
+                headers={**hdr, "Referer": page_url,
+                         "X-Requested-With": "XMLHttpRequest"})
+            mags = list(dict.fromkeys(re.findall(
+                r'(magnet:\?xt=urn:btih:[^\s"\'<>]+)', aj.text, re.I)))
+        except Exception:
+            pass
+    return mags
+
+
+async def _javbus_scrape(url: str, proxy: Optional[str] = None) -> dict:
+    hdr = {"User-Agent": _ua(), "Accept": "text/html,*/*;q=0.9",
+           "Referer": _origin(url) + "/"}
+    out = {"title": "JavBus", "cover": None, "samples": [], "magnets": [], "url": url}
+    try:
+        async with httpx.AsyncClient(follow_redirects=True, timeout=25,
+                                     verify=VERIFY_SSL, proxy=proxy or None,
+                                     headers=hdr) as c:
+            r = await c.get(url)
+            html = r.text
+            mt = re.search(r'<h3>([^<]+)</h3>', html) or re.search(r'<title>([^<|]+)', html)
+            if mt:
+                out["title"] = _safe(mt.group(1).strip())
+            mc = re.search(r'<a[^>]+class=["\']bigImage["\'][^>]+href=["\']([^"\']+)', html, re.I) \
+                or re.search(r'<a[^>]+class=["\']bigImage["\'][^>]*>\s*<img[^>]+src=["\']([^"\']+)', html, re.I)
+            if mc:
+                out["cover"] = mc.group(1) if mc.group(1).startswith("http") else _origin(url) + mc.group(1)
+            for s in re.findall(r'<a[^>]+class=["\']sample-box["\'][^>]+href=["\']([^"\']+)', html, re.I):
+                out["samples"].append(s if s.startswith("http") else _origin(url) + s)
+            out["magnets"] = await _javbus_magnets(html, url, c, hdr)
+    except Exception:
+        pass
+    return out
+
+
+async def _analyze_javbus(url: str) -> dict:
+    info = await _javbus_scrape(url)
+    n = len(info["samples"]) + (1 if info["cover"] else 0)
+    return {"type": "playlist" if n > 1 else "image",
+            "title": info["title"], "url": url, "extractor": "javbus",
+            "thumbnail": info["cover"], "item_count": n,
+            "magnet_count": len(info["magnets"]),
+            "qualities": [], "video_formats": IMAGE_FORMATS,
+            "_note": (f'{len(info["magnets"])} magnet link(s) found — saved to '
+                      f'magnets.txt with the images.') if info["magnets"] else
+                     "No magnets found on this page (images only)."}
+
+
+async def _dl_javbus(req: DownloadReq, job_dir: Path):
+    await _prog(req.job_id, {"status": "scraping", "progress": 6})
+    info = await _javbus_scrape(req.url, req.proxy)
+    imgs = ([info["cover"]] if info["cover"] else []) + info["samples"]
+    ref = _origin(req.url) + "/"
+    total = max(1, len(imgs))
+    for i, u in enumerate(imgs, 1):
+        raw = u.split("/")[-1].split("?")[0] or f"javbus_{i}.jpg"
+        out = _uniq(job_dir, _safe(raw))
+        if not await _aria2_dl(u, out, req.job_id, ref, req.proxy):
+            try:
+                async with httpx.AsyncClient(follow_redirects=True, verify=VERIFY_SSL,
+                                             proxy=req.proxy or None,
+                                             timeout=httpx.Timeout(None, connect=20),
+                                             headers={"User-Agent": _ua(), "Referer": ref}) as c:
+                    rr = await c.get(u)
+                    if rr.status_code == 200:
+                        async with aiofiles.open(out, "wb") as fo:
+                            await fo.write(rr.content)
+            except Exception:
+                pass
+        _prog_s(req.job_id, {"status": "downloading", "progress": min(90, int(i / total * 90))})
+
+    if info["magnets"]:
+        async with aiofiles.open(job_dir / "magnets.txt", "w", encoding="utf-8") as fo:
+            await fo.write(f"# {info['title']}\n# {req.url}\n\n" + "\n".join(info["magnets"]) + "\n")
+
+    if not _has_files(job_dir):
+        raise HTTPException(502, "JavBus: could not fetch cover / sample images from this page")
     files = [f.name for f in job_dir.iterdir() if f.is_file()]
     await _prog(req.job_id, {"status": "completed", "progress": 100, "files": files})
 
@@ -4702,6 +4931,8 @@ async def _do_analyze(url: str) -> dict:
     if _TERABOX_RE.match(url):       return await _analyze_terabox(url)
     if _XHS_RE.match(url):           return await _analyze_xiaohongshu(url)
     if _HQPORNER_RE.match(url):      return await _analyze_hqporner(url)
+    if _JAVBUS_RE.match(url):        return await _analyze_javbus(url)
+    if _JAV_STREAM_RE.match(url):    return await _analyze_jav_stream(url)
     # 0. Torrent / magnet
     if url.startswith("magnet:") or url.split("?")[0].lower().endswith(".torrent"):
         name = "torrent"
@@ -5427,6 +5658,8 @@ async def download(req: DownloadReq):
             elif _TERABOX_RE.match(req.url):       await _dl_terabox(req, job_dir)
             elif _XHS_RE.match(req.url):           await _dl_xiaohongshu(req, job_dir)
             elif _HQPORNER_RE.match(req.url):      await _dl_hqporner(req, job_dir)
+            elif _JAVBUS_RE.match(req.url):        await _dl_javbus(req, job_dir)
+            elif _JAV_STREAM_RE.match(req.url):    await _dl_jav_stream(req, job_dir)
             elif req.capture and req.media_type == "video":
                 await _dl_capture(req, job_dir)
             elif req.media_type in ("playlist","profile"):
