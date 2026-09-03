@@ -2517,7 +2517,7 @@ _JAV_STREAM_RE = re.compile(
     r'iqqtv\.cloud|iqq\.today|iqqtv\.com|whichav\.video|av01\.(?:tv|me)|'
     r'thisav\.com|avgle\.com|av6k\.com|x6av\.com|watchjavonline\.com|'
     r'xxxvideo\.link|xvideos\.link|xnxxvideo\.link|123av\.com|123avx\.com|'
-    r'javtsunami\.com|javpoll\.com|1024jav\.com'
+    r'javtsunami\.com|javpoll\.com|1024jav\.com|xxxbp\.tv|xxxbp\.com'
     r')(?:/|$)', re.I)
 
 
