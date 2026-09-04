@@ -44,7 +44,6 @@ const SECTIONS: SitemapSection[] = [
     color: 'text-violet-400', bgColor: 'bg-violet-500/10 border-violet-500/20',
     links: [
       { label: 'Download Tool',    href: '/download',       badge: 'Free' },
-      { label: 'Format Converter', href: '/tools/convert'               },
       { label: 'Screen Capture',   href: '/screen-capture'              },
       { label: 'Schedules',        href: '/schedules'                   },
     ],

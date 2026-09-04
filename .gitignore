@@ -21,3 +21,6 @@ coverage/
 .turbo/
 *.tsbuildinfo
 next-env.d.ts
+
+# Telegram bot local state
+telegram-bot/data/

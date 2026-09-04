@@ -1,4 +1,4 @@
-import type { AnalyzeResult, Job, JobProgress, PlaylistInfo, StorageJob, AdvancedOptions, FeedResult, ConvertRequest } from './types'
+import type { AnalyzeResult, Job, JobProgress, PlaylistInfo, AdvancedOptions, FeedResult } from './types'
 import { turnstileEnabled, awaitTurnstileToken, consumeTurnstileToken } from './turnstile'
 
 const PUBLIC_BASE = (process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000').replace(/\/$/, '')
@@ -9,7 +9,7 @@ const BASE = typeof window === 'undefined'
 
 // Endpoints that queue a download — these are the ones the backend guards with
 // Cloudflare Turnstile (when TURNSTILE_SECRET_KEY is configured).
-const GUARDED = ['/api/download', '/api/download/batch', '/api/download/auto']
+const GUARDED = ['/api/download', '/api/download/batch', '/api/download/auto', '/api/stream']
 
 async function _f<T>(path: string, init?: RequestInit): Promise<T> {
   let opts = init
@@ -59,6 +59,15 @@ export const searchWeb = (query: string, kind: 'web'|'file'|'image'|'video'|'tor
   _f<SearchResponse>('/api/analyze/search', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ query, kind, filetype, limit, page, safe }),
+  })
+
+// Pipe-through stream link — nothing is written to the server. Open the returned
+// URL to download straight from the source (with an on-the-fly ffmpeg remux for
+// HLS/DASH). Rejects (422) for playlists / torrents / page scrapes.
+export const createStreamLink = (payload: { url: string; format?: string; quality?: string; cookies?: string; proxy?: string }) =>
+  _f<{ url: string; token: string }>('/api/stream', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
   })
 
 export const queueDownload = (payload: {
@@ -115,9 +124,6 @@ export const deleteJob  = (id: string) => _f(`/api/jobs/${id}`,    { method: 'DE
 export const retryJob   = (id: string) => _f(`/api/jobs/${id}/retry`, { method: 'POST'   })
 export const clearJobs  = (type?: 'completed'|'failed') =>
   _f(`/api/jobs${type ? `?type=${type}` : ''}`, { method: 'DELETE' })
-
-export const fetchStorage = () => _f<{ jobs: StorageJob[]; total_bytes: number; total_jobs: number }>('/api/storage')
-export const deleteStorage = (jobId: string) => _f(`/api/storage/${jobId}`, { method: 'DELETE' })
 
 export const fileDownloadUrl = (jobId: string, filename: string) =>
   `${BASE}/api/files/${jobId}/${encodeURIComponent(filename)}`
@@ -178,12 +184,6 @@ export const parseFeed = (url: string) =>
     body: JSON.stringify({ url }),
   })
 
-// ── Convert already-downloaded file ──────────────────────────────────────────
-export const convertFile = (req: ConvertRequest) =>
-  _f<{ success: boolean; output_file: string; output_job_id: string; size: number }>('/api/download/convert', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(req),
-  })
 
 // ── Merge audio + video files ─────────────────────────────────────────────────
 export const mergeFiles = (jobId: string, videoFile: string, audioFile: string, outputFormat = 'mp4') =>
@@ -270,16 +270,9 @@ export interface SystemStatus {
   incident: { active: boolean; message: string; severity: string } | null
   checks: Record<string, 'ok' | 'down'>
   engines: Record<string, string | null>
-  disk: { percent_used: number; free: number; total: number } | null
   sites: { named_extractors: number; by_engine: Record<string, number> } | null
 }
 export const fetchSystemStatus = () => _f<SystemStatus>('/api/status')
-
-// ── Disk usage ────────────────────────────────────────────────────────────────
-export interface DiskInfo {
-  total: number; used: number; free: number; percent_used: number; downloads_bytes: number
-}
-export const fetchDisk = () => _f<DiskInfo>('/api/storage/disk')
 
 // ── Per-site cookie store ─────────────────────────────────────────────────────
 export interface SavedCookie {

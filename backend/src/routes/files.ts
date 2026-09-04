@@ -1,11 +1,14 @@
 import { Router } from 'express'
 import path from 'path'
+import os from 'os'
 import fs from 'fs'
 import archiver from 'archiver'
 import { optionalAuth } from '../middleware/requireAuth.js'
 
 const router = Router()
-const DOWNLOAD_DIR = path.resolve(process.env.DOWNLOAD_DIR ?? './downloads')
+// Must match the python service: OS temp dir unless DOWNLOAD_DIR is set. Files
+// here are a transient staging area, wiped shortly after they're downloaded.
+const DOWNLOAD_DIR = path.resolve(process.env.DOWNLOAD_DIR || path.join(os.tmpdir(), 'mediadl'))
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
 const MIME: Record<string, string> = {
@@ -25,13 +28,29 @@ function getMime(filename: string): string {
   return MIME[ext] ?? 'application/octet-stream'
 }
 
-// Files are not kept on the server. Anything left behind is swept by the
-// python-service after DOWNLOAD_TTL_MINUTES; a ZIP "download all" also removes
-// the job directory right after it is sent.
+// Nothing is meant to live on the server: a job's files are streamed to the
+// client, then dropped. A ZIP "download all" purges immediately; a single-file
+// download schedules a debounced purge — any further byte transfer from the job
+// (more files, video seeking) pushes it back, and DOWNLOAD_GRACE_SECONDS after
+// the last one the whole directory is removed. Set DOWNLOAD_GRACE_SECONDS=0 to
+// purge the instant the first download finishes.
+const GRACE_MS = Number(process.env.DOWNLOAD_GRACE_SECONDS ?? 300) * 1000
+const purgeTimers = new Map<string, NodeJS.Timeout>()
+
 function purgeJob(jobId: string) {
+  const t = purgeTimers.get(jobId)
+  if (t) { clearTimeout(t); purgeTimers.delete(jobId) }
   const dir = path.join(DOWNLOAD_DIR, jobId)
   if (!dir.startsWith(DOWNLOAD_DIR + path.sep)) return
   fs.rm(dir, { recursive: true, force: true }, () => {})
+}
+
+function schedulePurge(jobId: string) {
+  if (GRACE_MS <= 0) { purgeJob(jobId); return }
+  clearTimeout(purgeTimers.get(jobId))
+  const t = setTimeout(() => { purgeTimers.delete(jobId); purgeJob(jobId) }, GRACE_MS)
+  t.unref?.()
+  purgeTimers.set(jobId, t)
 }
 
 // File access is by the job's UUID, which acts as an unguessable capability
@@ -107,6 +126,8 @@ router.get('/:jobId/:filename', optionalAuth, async (req, res) => {
     res.setHeader('Content-Length', chunkSize)
     res.setHeader('Content-Type',   mime)
     fs.createReadStream(filePath, { start, end }).pipe(res)
+    // Streaming/seeking keeps the job alive; it's swept once activity stops.
+    res.on('finish', () => schedulePurge(jobId))
     return
   }
   res.setHeader('Content-Type',        mime)
@@ -115,6 +136,8 @@ router.get('/:jobId/:filename', optionalAuth, async (req, res) => {
   res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(safe)}`)
   res.setHeader('Cache-Control',       'no-store')
   fs.createReadStream(filePath).pipe(res)
+  // Full download taken — schedule the job's removal from the server.
+  res.on('finish', () => schedulePurge(jobId))
 })
 
 export default router

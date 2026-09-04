@@ -1,6 +1,6 @@
 import type { Metadata } from 'next'
 import Link from 'next/link'
-import { Film, ImageIcon, Music, List, Globe, Zap, Layers, Subtitles, Cookie, Shuffle, HardDrive, Cpu, ArrowRight, Download } from 'lucide-react'
+import { Film, ImageIcon, Music, List, Globe, Zap, Layers, Subtitles, Cookie, Cpu, ArrowRight, Download } from 'lucide-react'
 
 export const metadata: Metadata = {
   title: 'Services & Features — Everything MediaDL Can Do',
@@ -17,10 +17,8 @@ const SERVICES = [
   { icon: <Layers size={24} />,    title: 'Profile Download',     desc: 'Download all videos and photos from a social media profile — Instagram, TikTok, Twitter, and more.', color: 'text-amber-400 bg-amber-900/20' },
   { icon: <Zap size={24} />,       title: 'HLS / DASH Streams',   desc: 'Download live and on-demand HLS (m3u8) and DASH streams, including AES-128 encrypted streams via FFmpeg.', color: 'text-orange-400 bg-orange-900/20' },
   { icon: <Subtitles size={24} />, title: 'Subtitle Download',    desc: 'Download and embed subtitles in your videos. Multi-language support with automatic embedding.', color: 'text-teal-400 bg-teal-900/20' },
-  { icon: <Shuffle size={24} />,   title: 'Format Conversion',    desc: 'Convert between 20+ formats on the fly. Server-side FFmpeg conversion for maximum compatibility.', color: 'text-rose-400 bg-rose-900/20' },
   { icon: <Cookie size={24} />,    title: 'Cookie Authentication',desc: 'Paste browser cookies to download members-only, age-restricted, or premium content you have access to.', color: 'text-yellow-400 bg-yellow-900/20' },
   { icon: <Cpu size={24} />,       title: 'Parallel Downloads',   desc: '16× concurrent fragment downloading and a 5-worker queue for blazing-fast bulk operations.', color: 'text-indigo-400 bg-indigo-900/20' },
-  { icon: <HardDrive size={24} />, title: 'Storage Manager',      desc: 'Browse, re-download, and manage all your downloaded files directly from the web interface.', color: 'text-slate-400 bg-slate-900/20' },
 ]
 
 export default function ServicesPage() {

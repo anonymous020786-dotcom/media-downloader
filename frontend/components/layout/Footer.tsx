@@ -7,7 +7,6 @@ const YEAR = new Date().getFullYear()
 const LINKS = {
   Product: [
     { label: 'Download Tool',        href: '/download'              },
-    { label: 'Format Converter',     href: '/tools/convert'         },
     { label: 'YouTube Downloader',   href: '/youtube-downloader'    },
     { label: 'Instagram Downloader', href: '/instagram-downloader'  },
     { label: 'TikTok Downloader',    href: '/tiktok-downloader'     },
@@ -40,7 +39,6 @@ const LINKS = {
     { label: 'TikTok No Watermark', href: '/tiktok-downloader'     },
     { label: 'Twitter Video DL',    href: '/twitter-downloader'    },
     { label: 'SoundCloud to MP3',   href: '/soundcloud-downloader' },
-    { label: 'Format Converter',    href: '/tools/convert'         },
   ],
 }
 

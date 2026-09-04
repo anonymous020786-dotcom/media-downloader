@@ -3,7 +3,7 @@ import StatusBoard from '@/components/status/StatusBoard'
 
 export const metadata: Metadata = {
   title: 'System Status | MediaDL',
-  description: 'Live operational status of MediaDL — download engine, queue, database, storage and supported-site coverage. Auto-refreshes every 20 seconds.',
+  description: 'Live operational status of MediaDL — download engine, queue and supported-site coverage. Auto-refreshes every 20 seconds.',
   alternates: { canonical: '/status' },
 }
 

@@ -6,7 +6,6 @@ import { requireAuth } from '../middleware/requireAuth.js'
 import { verifyTurnstile } from '../middleware/verifyTurnstile.js'
 import { resolveProxy } from './proxy.js'
 import { resolveCookies } from './cookies.js'
-import { ensureDiskSpace } from './storage.js'
 import type { DownloadJob, MediaType } from '../types.js'
 
 const router = Router()
@@ -41,9 +40,6 @@ router.post('/', verifyTurnstile, async (req, res) => {
   if (!url || !mediaType) {
     res.status(400).json({ error: 'url and mediaType are required' }); return
   }
-
-  const diskErr = await ensureDiskSpace()
-  if (diskErr) { res.status(507).json({ error: diskErr }); return }
 
   const jobId = uuidv4()
   const userId = req.authUser!.id
@@ -131,9 +127,6 @@ router.post('/batch', verifyTurnstile, async (req, res) => {
     res.status(400).json({ error: 'Maximum 200 items per batch' }); return
   }
 
-  const diskErr = await ensureDiskSpace()
-  if (diskErr) { res.status(507).json({ error: diskErr }); return }
-
   const jobs: Array<{ jobId: string; url: string; title?: string }> = []
   for (const item of items) {
     if (!item.url) continue
@@ -167,26 +160,6 @@ router.post('/batch', verifyTurnstile, async (req, res) => {
   res.json({ count: jobs.length, jobs })
 })
 
-// ── Convert: re-encode an already-downloaded file ────────────────────────────
-router.post('/convert', async (req, res) => {
-  const body = req.body as {
-    job_id: string; filename: string; output_format: string
-    new_job_id?: string; video_codec?: string; resolution?: string; crf?: number; fps?: number
-    audio_codec?: string; audio_bitrate?: string; extract_audio?: boolean
-    gif_fps?: number; gif_scale?: number; start_time?: string; end_time?: string
-  }
-  if (!body.job_id || !body.filename || !body.output_format) {
-    res.status(400).json({ error: 'job_id, filename and output_format are required' }); return
-  }
-  try {
-    const { data } = await axios.post(`${PYTHON}/convert`, body, { timeout: 0 })
-    res.json(data)
-  } catch (e: any) {
-    const msg = e.response?.data?.detail ?? e.message
-    res.status(502).json({ error: msg })
-  }
-})
-
 // ── RSS/M3U feed parser ───────────────────────────────────────────────────────
 router.post('/feed', async (req, res) => {
   const { url } = req.body as { url?: string }
@@ -218,8 +191,6 @@ router.post('/merge', async (req, res) => {
 router.post('/auto', verifyTurnstile, async (req, res) => {
   const { url, delaySeconds } = req.body as { url?: string; delaySeconds?: number }
   if (!url) { res.status(400).json({ error: 'url is required' }); return }
-  const diskErr = await ensureDiskSpace()
-  if (diskErr) { res.status(507).json({ error: diskErr }); return }
   const userId = req.authUser!.id
   try {
     let mediaType: MediaType = 'video'

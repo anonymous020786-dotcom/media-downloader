@@ -7,9 +7,9 @@ import rateLimit from 'express-rate-limit'
 import { randomUUID } from 'crypto'
 import analyzeRouter  from './routes/analyze.js'
 import downloadRouter from './routes/download.js'
+import streamRouter   from './routes/stream.js'
 import jobsRouter     from './routes/jobs.js'
 import filesRouter    from './routes/files.js'
-import storageRouter  from './routes/storage.js'
 import contentRouter  from './routes/content.js'
 import { createServer } from 'node:http'
 import { startWorker } from './workers/downloadWorker.js'
@@ -49,7 +49,7 @@ app.use(cors({
     cb(new Error(`CORS: ${origin} not allowed`))
   },
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'X-Request-Id', 'Authorization', 'X-User-Id'],
+  allowedHeaders: ['Content-Type', 'X-Request-Id', 'Authorization', 'X-User-Id', 'cf-turnstile-response', 'X-Internal-Key'],
   credentials: true,
   maxAge: 86400,
 }))
@@ -78,9 +78,9 @@ app.use('/api/analyze', analysisLimit)
 // ── Routes ────────────────────────────────────────────────────────────────────
 app.use('/api/analyze',  analyzeRouter)
 app.use('/api/download', downloadRouter)
+app.use('/api/stream',   streamRouter)
 app.use('/api/jobs',     jobsRouter)
 app.use('/api/files',    filesRouter)
-app.use('/api/storage',  storageRouter)
 app.use('/api/content',  contentRouter)
 app.use('/api/users',        usersRouter)
 app.use('/api/proxy',        proxyRouter)

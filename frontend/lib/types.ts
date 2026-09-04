@@ -156,28 +156,4 @@ export interface FeedResult {
   _cached?:    boolean
 }
 
-// ── Convert job types ─────────────────────────────────────────────────────────
-export interface ConvertRequest {
-  job_id:         string
-  filename:       string
-  output_format:  string
-  new_job_id?:    string
-  video_codec?:   string
-  resolution?:    string
-  crf?:           number
-  fps?:           number
-  audio_codec?:   string
-  audio_bitrate?: string
-  extract_audio?: boolean
-  gif_fps?:       number
-  gif_scale?:     number
-  start_time?:    string
-  end_time?:      string
-}
 
-export interface StorageJob {
-  job_id:     string
-  files:      { name: string; size: number }[]
-  total_size: number
-  file_count: number
-}

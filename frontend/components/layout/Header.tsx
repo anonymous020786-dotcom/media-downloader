@@ -34,7 +34,6 @@ const DOWNLOADERS = [
 
 const NAV_ITEMS = [
   { label: 'Sites',      href: '/supported-sites' },
-  { label: 'Tools',      href: '/tools/convert' },
 ]
 
 export default function Header() {

@@ -10,12 +10,17 @@ import axios from 'axios'
  * `cf-turnstile-response`) that passes Cloudflare's siteverify check.
  */
 const SECRET = process.env.TURNSTILE_SECRET_KEY?.trim()
+const INTERNAL_KEY = process.env.INTERNAL_API_KEY?.trim()
 const SITEVERIFY = 'https://challenges.cloudflare.com/turnstile/v0/siteverify'
 
 export const turnstileEnabled = !!SECRET
 
 export async function verifyTurnstile(req: Request, res: Response, next: NextFunction) {
   if (!SECRET) { next(); return }
+
+  // Trusted server-to-server callers (the Telegram bot) present a shared secret
+  // and skip the human-verification challenge.
+  if (INTERNAL_KEY && req.get('x-internal-key') === INTERNAL_KEY) { next(); return }
 
   const token: string | undefined =
     (req.body && typeof req.body.turnstileToken === 'string' && req.body.turnstileToken) ||

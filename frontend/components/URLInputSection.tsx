@@ -13,7 +13,7 @@ import MediaPreviewGrid, { type PreviewItem } from './download/MediaPreviewGrid'
 import SearchPanel from './download/SearchPanel'
 import type { AnalyzeResult, PlaylistInfo, DownloadMode, Job, AdvancedOptions as Opts, FeedResult, FeedItem } from '@/lib/types'
 import { DEFAULT_ADVANCED } from '@/lib/types'
-import { analyzeUrl, analyzePlaylist, queueDownload, previewPage, listPlaylist, fmtDuration, fmtBytes, parseFeed, batchDownload } from '@/lib/api'
+import { analyzeUrl, analyzePlaylist, queueDownload, createStreamLink, previewPage, listPlaylist, fmtDuration, fmtBytes, parseFeed, batchDownload } from '@/lib/api'
 import { FileDown, SearchCheck, Rss, CheckSquare, Square, ChevronDown, ChevronUp } from 'lucide-react'
 import { toast } from 'sonner'
 
@@ -85,6 +85,7 @@ export default function URLInputSection({ onQueued, initialUrl = '' }: Props) {
   const [format,      setFormat]      = useState('mp4')
   const [quality,     setQuality]     = useState('best')
   const [queueing,    setQueueing]    = useState(false)
+  const [streaming,   setStreaming]   = useState(false)
   const [showBulk,    setShowBulk]    = useState(false)
   const [opts,        setOpts]        = useState<Opts>(DEFAULT_ADVANCED)
   // Preview grid
@@ -214,6 +215,26 @@ export default function URLInputSection({ onQueued, initialUrl = '' }: Props) {
       setUrl(''); reset()
     } catch (e: any) { setError(e.message) }
     finally { setQueueing(false) }
+  }
+
+  // ── Direct download — pipe from source, nothing stored on the server ──────
+  async function handleStream() {
+    const u = url.trim()
+    if (!u) return
+    setStreaming(true); setError('')
+    try {
+      const isAudio = ['mp3', 'm4a', 'aac', 'opus', 'ogg', 'flac', 'wav'].includes(format)
+      const { url: link } = await createStreamLink({
+        url: u,
+        format,
+        quality: (info?.type === 'video' && !isAudio) ? quality : undefined,
+        cookies: opts.cookies || undefined,
+        proxy: opts.proxy || undefined,
+      })
+      // Navigate to the link so the browser starts the download from the pipe.
+      window.location.href = link
+    } catch (e: any) { setError(e.message) }
+    finally { setStreaming(false) }
   }
 
   // ── Preview & select flow ─────────────────────────────────────────────────
@@ -667,8 +688,17 @@ export default function URLInputSection({ onQueued, initialUrl = '' }: Props) {
               <Grid3x3 size={15} /> Preview & Select
             </button>
           )}
-          {/* Download all / direct */}
-          <button onClick={handleDownload} disabled={queueing}
+          {/* Direct download — straight from source, nothing stored server-side */}
+          {!isPlaylistMode && info && ['video', 'file', 'image'].includes(info.type) && (
+            <button onClick={handleStream} disabled={streaming || queueing} title="Download straight from the source — nothing is stored on the server"
+              className="flex items-center justify-center gap-2 py-3.5 px-5 bg-[var(--bg-hover)] hover:bg-[var(--border)] disabled:opacity-50 text-[var(--text)] font-bold text-sm rounded-xl border border-[var(--border)] transition-all">
+              {streaming
+                ? <><span className="w-4 h-4 border-2 border-current/30 border-t-current rounded-full spin"/>Resolving…</>
+                : <><Zap size={15}/>Direct</>}
+            </button>
+          )}
+          {/* Download via queue */}
+          <button onClick={handleDownload} disabled={queueing || streaming}
             className="flex-1 flex items-center justify-center gap-2 py-3.5 bg-gradient-to-r from-[var(--brand)] to-[var(--accent)] hover:opacity-90 disabled:opacity-50 text-white font-bold text-sm rounded-xl transition-all shadow-lg shadow-indigo-900/25">
             {queueing
               ? <><span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full spin"/>Adding…</>

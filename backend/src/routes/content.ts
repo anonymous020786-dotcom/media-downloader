@@ -38,7 +38,7 @@ const FAQ = [
   { id: 2, question: 'Can I download entire playlists or profiles?', answer: 'Yes. Use Playlist / Profile mode to grab a whole YouTube playlist, channel or a social profile. You can cap the number of items or fetch everything.', category: 'Features', sort_order: 2 },
   { id: 3, question: 'What formats can I get?', answer: 'MP4, WebM, MKV, MP3, M4A, Opus and more. Pick quality (Best / 1080p / 720p / …) and format after analyzing a URL.', category: 'Features', sort_order: 3 },
   { id: 4, question: 'Can it download HLS / encrypted streams?', answer: 'Yes — FFmpeg handles HLS (m3u8), DASH and AES-128 encrypted streams; the key is fetched automatically.', category: 'Technical', sort_order: 4 },
-  { id: 5, question: 'Where do my downloads go?', answer: 'Files are saved on the machine running the app under the downloads/ folder and served back to your browser. They are auto-cleaned after a few days.', category: 'General', sort_order: 5 },
+  { id: 5, question: 'Where do my downloads go?', answer: 'The server assembles the file in a temporary staging area, streams it to your browser, then deletes it. Nothing is kept — "Download ZIP" (grab-all) also purges immediately.', category: 'General', sort_order: 5 },
   { id: 6, question: 'Login-walled content?', answer: 'Paste a Netscape cookies.txt (or a browser Cookie header) in Advanced options, or save it per-site in the Cookie manager so it is re-applied automatically.', category: 'Features', sort_order: 6 },
 ]
 router.get('/faq', (_req, res) => res.json(FAQ))

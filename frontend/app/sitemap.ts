@@ -34,7 +34,6 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
 
   // ── Tier 2: Tools & features (0.85) ──────────────────────────────────────
   const tier2: MetadataRoute.Sitemap = [
-    entry('/tools/convert',   0.85, 'weekly', now),
     entry('/screen-capture',  0.85, 'weekly', now),
     entry('/supported-sites', 0.85, 'weekly', now),
     entry('/status',          0.6,  'always', now),

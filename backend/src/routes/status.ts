@@ -1,6 +1,5 @@
 import { Router } from 'express'
 import axios from 'axios'
-import { getDiskInfo } from './storage.js'
 
 /**
  * Public system-status endpoint.
@@ -24,8 +23,7 @@ router.get('/', async (_req, res) => {
     if (data?.versions) engines = data.versions
   } catch { checks.python = 'down' }
 
-  // Disk + supported sites (best-effort — never fail the whole response)
-  const disk = await getDiskInfo().catch(() => null)
+  // Supported sites (best-effort — never fail the whole response)
   let sites: any = null
   try { const { data } = await axios.get(`${PYTHON}/engines/sites`, { timeout: 8_000 }); sites = data } catch { /* optional */ }
 
@@ -37,7 +35,6 @@ router.get('/', async (_req, res) => {
     incident: null,
     checks,
     engines,
-    disk: disk ? { percent_used: disk.percent_used, free: disk.free, total: disk.total } : null,
     sites: sites ? { named_extractors: sites.named_extractors, by_engine: sites.by_engine } : null,
   })
 })

@@ -17,8 +17,9 @@ Capabilities
 ─────────────────────────────────────────────────────────────────────────────
 """
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, field_validator
 import yt_dlp
 import httpx
@@ -29,14 +30,46 @@ import aiofiles
 import os, json, io, re, random, tempfile, shutil, time as _time
 from pathlib import Path
 from typing import Optional, Literal
-from urllib.parse import urlparse, urljoin
+from urllib.parse import urlparse, urljoin, quote as _urlquote
 
 # ── Config ────────────────────────────────────────────────────────────────────
-DOWNLOAD_DIR    = Path(os.getenv("DOWNLOAD_DIR",    "downloads"))
+# A private staging area for the download engines (yt-dlp / ffmpeg / aria2c must
+# have somewhere to assemble fragments and mux audio+video). It is NOT storage —
+# a finished job is streamed to the client and then wiped. Defaults to the OS
+# temp dir so nothing lands inside the project. Override with DOWNLOAD_DIR.
+DOWNLOAD_DIR    = Path(os.getenv("DOWNLOAD_DIR") or (Path(tempfile.gettempdir()) / "mediadl"))
 MAX_CONCURRENT   = int(os.getenv("MAX_CONCURRENT_DOWNLOADS", "5"))
 MAX_PAGE_IMAGES  = int(os.getenv("MAX_PAGE_IMAGES",  "2000"))
 VERIFY_SSL       = os.getenv("VERIFY_SSL", "true").lower() not in ("false", "0", "no")
-DOWNLOAD_TTL_DAYS = int(os.getenv("DOWNLOAD_TTL_DAYS", "7"))   # auto-delete after N days (0 = off)
+
+
+def _find_bin(name: str, *extra_globs: str) -> Optional[str]:
+    p = os.getenv(f"{name.upper()}_PATH", "").strip()
+    if p and Path(p).exists():
+        return p
+    found = shutil.which(name) or shutil.which(f"{name}.exe")
+    if found:
+        return found
+    import glob
+    la = os.getenv("LOCALAPPDATA", "")
+    pats = [
+        os.path.join(la, "Microsoft", "WinGet", "Packages", f"*{name}*", "**", f"{name}.exe"),
+        f"/usr/bin/{name}", f"/usr/local/bin/{name}", f"/opt/homebrew/bin/{name}",
+        *extra_globs,
+    ]
+    for pat in pats:
+        hits = glob.glob(pat, recursive=True)
+        if hits:
+            return hits[0]
+    return None
+
+
+_WG = os.path.join(os.getenv("LOCALAPPDATA", ""), "Microsoft", "WinGet", "Packages")
+ARIA2C_BIN = _find_bin("aria2c", os.path.join(_WG, "aria2.aria2*", "**", "aria2c.exe"))
+FFMPEG_BIN = _find_bin("ffmpeg", os.path.join(_WG, "*FFmpeg*", "**", "ffmpeg.exe"),
+                                 os.path.join(_WG, "*ffmpeg*", "**", "ffmpeg.exe"))
+print(f"[startup] aria2c: {ARIA2C_BIN or 'not found — yt-dlp native downloader (slower)'}")
+print(f"[startup] ffmpeg: {FFMPEG_BIN or 'not found — merges/HLS/streaming will fail'}")
 
 # ── Output format catalogue (offered in the UI; ffmpeg does the conversion) ──
 VIDEO_FORMATS  = ["mp4", "mkv", "webm", "mov", "avi", "flv", "ts", "3gp", "gif"]
@@ -44,6 +77,10 @@ AUDIO_FORMATS  = ["mp3", "m4a", "aac", "opus", "ogg", "flac", "wav", "alac"]
 IMAGE_FORMATS  = ["original", "jpg", "png", "webp", "avif", "gif", "bmp", "tiff", "ico"]
 MEDIA_FORMATS  = VIDEO_FORMATS + AUDIO_FORMATS          # everything a video source can become
 STREAM_FORMATS = ["mp4", "mkv", "ts", "webm", "flv"]    # live / HLS / DASH targets
+
+# Extension sets for content-type sniffing during analyze (photo-vs-video detection)
+_IMAGE_EXTS = {"jpg", "jpeg", "png", "webp", "avif", "gif", "bmp", "tiff", "heic", "heif", "jfif"}
+_VIDEO_EXTS = {"mp4", "mkv", "webm", "mov", "avi", "flv", "ts", "m4v", "3gp", "m3u8", "mpd"}
 
 
 # ── In-memory KV (local build — replaces Redis) ──────────────────────────────
@@ -112,34 +149,7 @@ _BASE_HDR = {
 }
 def _ua() -> str: return random.choice(_UA_POOL)
 
-# Files are NOT kept on the server — a finished download is auto-removed a short
-# time after it completes. Override with DOWNLOAD_TTL_MINUTES (0 = keep forever).
-DOWNLOAD_TTL_MINUTES = int(os.getenv("DOWNLOAD_TTL_MINUTES", "30"))
-
 # ── Lifespan ──────────────────────────────────────────────────────────────────
-async def _cleanup_old_downloads():
-    """Delete job directories older than DOWNLOAD_TTL_MINUTES. Runs every 2 min."""
-    if DOWNLOAD_TTL_MINUTES <= 0:
-        return
-    cutoff_secs = DOWNLOAD_TTL_MINUTES * 60
-    while True:
-        try:
-            removed = 0
-            now = _time.time()
-            for entry in DOWNLOAD_DIR.iterdir():
-                if entry.is_dir() and (now - entry.stat().st_mtime) > cutoff_secs:
-                    try:
-                        shutil.rmtree(entry)
-                        removed += 1
-                    except Exception:
-                        pass
-            if removed:
-                print(f"[cleanup] removed {removed} job dir(s) (>{DOWNLOAD_TTL_MINUTES}min old)")
-        except Exception as e:
-            print(f"[cleanup] error: {e}")
-        await asyncio.sleep(120)  # every 2 minutes
-
-
 def _patch_xhamster_mirrors():
     """xhamster's main domains are geo-blocked from many servers, so it serves the
     same content from rotating mirror domains (xhaccess.com, xhopen.com, xhwide*,
@@ -172,10 +182,7 @@ async def lifespan(app: FastAPI):
     _sredis = _SyncView(_aredis)
     DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
     _patch_xhamster_mirrors()
-    # Start background cleanup task
-    cleanup_task = asyncio.create_task(_cleanup_old_downloads())
     yield
-    cleanup_task.cancel()
     await _aredis.aclose()
     _sredis.close()
 
@@ -445,8 +452,7 @@ def _rank_video(urls: list[str]) -> list[str]:
 # ROUTES
 # ─────────────────────────────────────────────────────────────────────────────
 @app.get("/health")
-async def health(): return {"status":"ok","version":"3.0.0","max_concurrent":MAX_CONCURRENT,
-                            "download_ttl_minutes": DOWNLOAD_TTL_MINUTES}
+async def health(): return {"status":"ok","version":"3.0.0","max_concurrent":MAX_CONCURRENT}
 
 @app.post("/proxy/test")
 async def proxy_test(payload: dict):
@@ -516,9 +522,10 @@ async def cancel_job(job_id: str):
     if not re.match(r'^[0-9a-f\-]{36}$', job_id):
         raise HTTPException(400, "Invalid job ID")
     import subprocess
-    # aria2/ffmpeg write into /downloads/<job_id>/ — match processes by that path.
+    # aria2/ffmpeg write into <staging>/<job_id>/ — the job id is in their argv,
+    # so match on it directly (Linux only; a no-op on Windows).
     try:
-        subprocess.run(["pkill", "-9", "-f", f"/downloads/{job_id}"],
+        subprocess.run(["pkill", "-9", "-f", job_id],
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     except Exception:
         pass
@@ -528,48 +535,6 @@ async def cancel_job(job_id: str):
     except Exception:
         pass
     return {"cancelled": True, "job_id": job_id}
-
-
-@app.post("/storage/cleanup")
-async def storage_cleanup(older_than_days: int = DOWNLOAD_TTL_DAYS):
-    """Manually trigger cleanup of job directories older than N days."""
-    if older_than_days <= 0:
-        return {"removed": 0, "note": "older_than_days must be > 0"}
-    import time
-    cutoff = time.time() - older_than_days * 86400
-    removed, freed = 0, 0
-    for entry in DOWNLOAD_DIR.iterdir():
-        if entry.is_dir() and entry.stat().st_mtime < cutoff:
-            try:
-                size = sum(f.stat().st_size for f in entry.rglob("*") if f.is_file())
-                shutil.rmtree(entry)
-                removed += 1; freed += size
-            except Exception:
-                pass
-    return {"removed": removed, "freed_bytes": freed,
-            "freed_mb": round(freed / 1_048_576, 1)}
-
-@app.get("/storage/disk")
-async def storage_disk():
-    """Disk usage for the downloads volume + size of the downloads dir itself.
-       Used by the backend to refuse new jobs when the disk is nearly full."""
-    try:
-        du = shutil.disk_usage(DOWNLOAD_DIR if DOWNLOAD_DIR.exists() else "/")
-        total, used, free = du.total, du.used, du.free
-    except Exception:
-        total = used = free = 0
-    dl_bytes = 0
-    try:
-        if DOWNLOAD_DIR.exists():
-            for f in DOWNLOAD_DIR.rglob("*"):
-                if f.is_file():
-                    try: dl_bytes += f.stat().st_size
-                    except Exception: pass
-    except Exception:
-        pass
-    pct = round(used / total * 100, 1) if total else 0.0
-    return {"total": total, "used": used, "free": free,
-            "percent_used": pct, "downloads_bytes": dl_bytes}
 
 
 @app.get("/health/deep")
@@ -860,6 +825,185 @@ async def stream_url_endpoint(req: AnalyzeReq):
     # Short TTL — CDN tokens expire; 55 s handles page-refresh without stale-URL risk
     await _cache_set(ck, result, ttl=55)
     return result
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# STREAMING PASS-THROUGH  —  pipe media to the client with NO staging directory
+# ─────────────────────────────────────────────────────────────────────────────
+class StreamReq(BaseModel):
+    url:        str
+    format:     Optional[str] = "mp4"
+    quality:    Optional[str] = "best"
+    cookies:    Optional[str] = None
+    proxy:      Optional[str] = None
+
+_MUX_PLANS: dict[str, dict] = {}   # mux_id -> {cmd, mime, filename, at}
+
+def _height_cap(quality: Optional[str]) -> Optional[int]:
+    q = (quality or "best").lower().strip()
+    if q in ("max", "source", "original", "highest"):
+        return None
+    dflt = os.getenv("DEFAULT_BEST_HEIGHT", "1080").strip()
+    if q in ("best", "0", ""):
+        return int(dflt) if dflt and dflt != "0" else None
+    n = re.sub(r"\D", "", q)
+    return int(n) if n else None
+
+def _ff_headers(hdrs: dict | None) -> list[str]:
+    h = {k: v for k, v in (hdrs or {}).items() if k.lower() != "accept-encoding"}
+    if not h:
+        return []
+    blob = "".join(f"{k}: {v}\r\n" for k, v in h.items())
+    return ["-headers", blob]
+
+async def _resolve_stream_plan(req: StreamReq) -> dict:
+    """→ {mode:'proxy', url, headers, mime, filename, size?}
+       | {mode:'mux', mux_id}
+       | {mode:'unsupported', reason}"""
+    url = _normalize_url(req.url)
+    want_audio = (req.format or "").lower() in AUDIO_FORMATS
+    afmt = (req.format or "mp3").lower() if want_audio else "mp3"
+
+    if url.startswith("magnet:") or url.split("?")[0].lower().endswith(".torrent"):
+        return {"mode": "unsupported", "reason": "Torrents need a download client — can't stream."}
+
+    # A plain direct file / image (no extractor needed)
+    if not _is_custom_site(url):
+        try:
+            async with _client(req.proxy) as c:
+                hr = await c.head(url, timeout=12)
+            ct = (hr.headers.get("content-type", "") or "").split(";")[0].strip().lower()
+            if ct and "text/html" not in ct and any(
+                ct.startswith(p) for p in ("image/", "video/", "audio/", "application/")
+            ):
+                return {"mode": "proxy", "url": url, "headers": {},
+                        "mime": ct, "filename": _safe(_filename_from(url, hr.headers.get("content-disposition", ""))),
+                        "size": int(hr.headers.get("content-length", 0)) or None}
+        except Exception:
+            pass
+
+    try:
+        info = await asyncio.wait_for(
+            asyncio.get_event_loop().run_in_executor(None, _ytdlp_info, url, False), 40)
+    except Exception as e:
+        return {"mode": "unsupported", "reason": f"Couldn't resolve this URL for streaming ({str(e)[:120]})."}
+
+    if not info:
+        return {"mode": "unsupported", "reason": "No media found at this URL."}
+    if info.get("_type") in ("playlist", "multi_video") or info.get("entries"):
+        return {"mode": "unsupported", "reason": "Playlists/profiles have many files — grab items one at a time."}
+
+    title = _safe(info.get("title") or _url_title(url))
+    fmts = [f for f in (info.get("formats") or []) if f.get("url")]
+    cap = _height_cap(req.quality)
+
+    def _h(f): return f.get("height") or 0
+    def _has_v(f): return f.get("vcodec") not in (None, "none")
+    def _has_a(f): return f.get("acodec") not in (None, "none")
+    def _is_hls(f): return "m3u8" in (f.get("protocol") or "") or ".m3u8" in (f.get("url") or "")
+
+    # ── Audio-only request ────────────────────────────────────────────────
+    if want_audio:
+        auds = [f for f in fmts if _has_a(f) and not _has_v(f)]
+        src = max(auds, key=lambda f: f.get("abr") or f.get("tbr") or 0) if auds else None
+        if not src and info.get("url"):
+            src = {"url": info["url"], "http_headers": info.get("http_headers")}
+        if not src:
+            return {"mode": "unsupported", "reason": "No audio track found."}
+        codec = {"mp3": "libmp3lame", "m4a": "aac", "aac": "aac", "opus": "libopus",
+                 "ogg": "libvorbis", "flac": "flac", "wav": "pcm_s16le"}.get(afmt, "libmp3lame")
+        cmd = [FFMPEG_BIN or "ffmpeg", "-hide_banner", "-loglevel", "error",
+               *_ff_headers(src.get("http_headers")), "-i", src["url"],
+               "-vn", "-c:a", codec, *(["-b:a", "256k"] if afmt not in ("flac", "wav") else []),
+               "-f", {"m4a": "ipod", "ogg": "ogg", "flac": "flac", "wav": "wav"}.get(afmt, afmt if afmt != "mp3" else "mp3"),
+               "pipe:1"]
+        mid = _stash_mux(cmd, f"audio/{afmt if afmt!='m4a' else 'mp4'}", f"{title}.{afmt}")
+        return {"mode": "mux", "mux_id": mid}
+
+    # ── Single progressive stream (video+audio in one file) → pure proxy ──
+    prog = [f for f in fmts if _has_v(f) and _has_a(f) and not _is_hls(f)
+            and (cap is None or _h(f) <= cap)]
+    if prog:
+        best = max(prog, key=lambda f: (_h(f), f.get("tbr") or 0))
+        ext = best.get("ext") or "mp4"
+        return {"mode": "proxy", "url": best["url"],
+                "headers": best.get("http_headers") or info.get("http_headers") or {},
+                "mime": f"video/{'mp4' if ext in ('mp4','m4v','mov') else ext}",
+                "filename": f"{title}.{ext}", "size": best.get("filesize") or best.get("filesize_approx")}
+
+    # ── HLS master/variant → ffmpeg remux to fragmented mp4 ──────────────
+    hls = [f for f in fmts if _is_hls(f) and _has_v(f) and (cap is None or _h(f) <= cap)]
+    hls_url = (max(hls, key=_h)["url"] if hls
+              else (info["url"] if info.get("url") and ".m3u8" in info["url"] else None))
+    if hls_url:
+        cmd = [FFMPEG_BIN or "ffmpeg", "-hide_banner", "-loglevel", "error",
+               *_ff_headers(info.get("http_headers")), "-i", hls_url,
+               "-c", "copy", "-bsf:a", "aac_adtstoasc",
+               "-movflags", "frag_keyframe+empty_moov+default_base_moof", "-f", "mp4", "pipe:1"]
+        mid = _stash_mux(cmd, "video/mp4", f"{title}.mp4")
+        return {"mode": "mux", "mux_id": mid}
+
+    # ── Separate video + audio (DASH) → ffmpeg mux, copy when possible ───
+    vids = [f for f in fmts if _has_v(f) and not _has_a(f) and (cap is None or _h(f) <= cap)]
+    auds = [f for f in fmts if _has_a(f) and not _has_v(f)]
+    if vids and auds:
+        # prefer mp4-container-friendly (avc1 + m4a/aac); else webm (vp9/av01 + opus)
+        mp4v = [f for f in vids if (f.get("vcodec") or "").startswith(("avc1", "h264"))]
+        v = max(mp4v or vids, key=lambda f: (_h(f), f.get("tbr") or 0))
+        container = "mp4" if (v.get("vcodec") or "").startswith(("avc1", "h264")) else "webm"
+        a_pool = [f for f in auds if (f.get("ext") == ("m4a" if container == "mp4" else "webm"))] or auds
+        a = max(a_pool, key=lambda f: f.get("abr") or f.get("tbr") or 0)
+        cmd = [FFMPEG_BIN or "ffmpeg", "-hide_banner", "-loglevel", "error",
+               *_ff_headers(v.get("http_headers")), "-i", v["url"],
+               *_ff_headers(a.get("http_headers")), "-i", a["url"],
+               "-map", "0:v:0", "-map", "1:a:0", "-c", "copy",
+               "-movflags", "frag_keyframe+empty_moov+default_base_moof",
+               "-f", container, "pipe:1"]
+        mid = _stash_mux(cmd, f"video/{container}", f"{title}.{container}")
+        return {"mode": "mux", "mux_id": mid}
+
+    return {"mode": "unsupported", "reason": "This source can't be streamed at the chosen quality — try 'download' instead."}
+
+def _stash_mux(cmd: list, mime: str, filename: str) -> str:
+    import uuid as _uuid, time as _t
+    mid = _uuid.uuid4().hex[:16]
+    # sweep old plans (>1h)
+    for k in [k for k, v in _MUX_PLANS.items() if _t.time() - v["at"] > 3600]:
+        _MUX_PLANS.pop(k, None)
+    _MUX_PLANS[mid] = {"cmd": cmd, "mime": mime, "filename": filename, "at": _t.time()}
+    return mid
+
+@app.post("/stream-resolve")
+async def stream_resolve(req: StreamReq):
+    return await _resolve_stream_plan(req)
+
+@app.get("/stream-mux/{mux_id}")
+async def stream_mux(mux_id: str):
+    plan = _MUX_PLANS.get(mux_id)
+    if not plan:
+        raise HTTPException(404, "stream expired — resolve it again")
+    cmd = plan["cmd"]
+    proc = await asyncio.create_subprocess_exec(
+        *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
+
+    async def _gen():
+        try:
+            assert proc.stdout
+            while True:
+                chunk = await proc.stdout.read(65536)
+                if not chunk:
+                    break
+                yield chunk
+        finally:
+            if proc.returncode is None:
+                try: proc.kill()
+                except Exception: pass
+            await proc.wait()
+
+    return StreamingResponse(
+        _gen(), media_type=plan["mime"],
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{_urlquote(plan['filename'])}"},
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -4966,8 +5110,44 @@ async def _do_analyze(url: str) -> dict:
     try:
         info = await asyncio.wait_for(
             asyncio.get_event_loop().run_in_executor(None, _ytdlp_info, url, False), 35)
-        if info and (info.get("formats") or info.get("url")):
-            heights = sorted({f.get("height") for f in (info.get("formats") or [])
+        if info and (info.get("formats") or info.get("url") or info.get("entries")):
+            fmts    = info.get("formats") or []
+            entries = [e for e in (info.get("entries") or []) if isinstance(e, dict)]
+
+            # ── Photo posts (Instagram / X / Threads / Facebook / Reddit …) ──
+            # yt-dlp happily "extracts" image posts, so a naive check classifies
+            # them as video and the UI only offers video formats. Detect a
+            # picture (or an all-image carousel) and route it to the image
+            # pipeline (gallery-dl) instead.
+            def _ext_of(d: dict) -> str: return (d.get("ext") or "").lower()
+            has_real_video = (
+                bool(info.get("duration"))
+                or bool(info.get("is_live"))
+                or any(f.get("vcodec") not in (None, "none") and f.get("height") for f in fmts)
+                or any(e.get("duration") or _ext_of(e) in _VIDEO_EXTS for e in entries)
+            )
+            # Require a positive image signal (an image extension somewhere) so an
+            # audio-only source is never mistaken for a picture.
+            img_signal = (
+                _ext_of(info) in _IMAGE_EXTS
+                or any(_ext_of(f) in _IMAGE_EXTS for f in fmts)
+                or (bool(entries) and all(_ext_of(e) in _IMAGE_EXTS for e in entries))
+            )
+            if img_signal and not has_real_video:
+                thumb = info.get("thumbnail") or (entries[0].get("url") or entries[0].get("thumbnail")
+                                                  if entries else None)
+                return {
+                    "type": "page",   # → _dl_page → gallery-dl grabs the originals
+                    "url": url,
+                    "title": info.get("title") or _url_title(url),
+                    "thumbnail": thumb,
+                    "uploader": info.get("uploader", ""),
+                    "extractor": info.get("extractor", ""),
+                    "image_count": len(entries) or 1,
+                    "image_formats": IMAGE_FORMATS,
+                }
+
+            heights = sorted({f.get("height") for f in fmts
                               if f.get("height") and f.get("vcodec","none") != "none"}, reverse=True)
             return {
                 "type": "video",
@@ -5014,15 +5194,46 @@ async def _do_analyze(url: str) -> dict:
     try:
         imgs, vids = await asyncio.wait_for(
             _render_media(url, scroll=False, timeout_ms=25000, want_video=True), timeout=45)
-        if vids:
+        # The probe sniffs *all* traffic, so a photo page (Instagram/X/Threads/…)
+        # with one stray autoplay clip in a "suggested" strip would look like a
+        # video. Call it a video when the signal is strong: a streaming manifest,
+        # a URL path that clearly names a single video (reel / tv / shorts /
+        # status / watch / …), or a video that isn't drowned out by images.
+        video_url_hint = bool(re.search(
+            r'/(?:reel|tv|shorts|clip|embed|v|video)/[\w.-]+'   # /reel/<id>, /shorts/<id>, …
+            r'|/status/\d+|/videos/\d+|/watch\?|/watch/[\w.-]+'
+            r'|\.mp4(?:$|\?)', url, re.I))
+        strong_video = bool(vids) and (
+            any(v.split("?")[0].lower().endswith((".m3u8", ".mpd")) for v in vids)
+            or video_url_hint
+            or len(imgs) < 8
+        )
+        if strong_video:
             return {"type":"video","title":_url_title(url),"thumbnail":(imgs[0] if imgs else None),
                     "duration":None,"uploader":"","extractor":"rendered",
                     "qualities":[],"video_formats":STREAM_FORMATS,"is_stream":True,
                     "rendered_images": len(imgs)}
-        # No video, but maybe images — fall through to page (preview will render fully)
+        if imgs and not video_url_hint:
+            return {"type":"page","url":url,"image_formats":IMAGE_FORMATS,
+                    "rendered_images": len(imgs)}
+        # Nothing usable — fall through.
     except Exception:
         pass
-    # 5. HTML page fallback (image scraping; preview-page renders if needed)
+    # 5. Unambiguous single-video URL we couldn't extract (usually login-walled —
+    #    Instagram reel/tv, TikTok, an X status, a YT short). Offer it as a video
+    #    anyway so the download path can still try yt-dlp + gallery-dl (which work
+    #    once the site's cookies are saved in the Cookie manager).
+    if re.search(
+        r'instagram\.com/(?:[^/]+/)?(?:reel|tv)/[\w-]+'
+        r'|tiktok\.com/.+/video/\d|(?:x|twitter)\.com/[^/]+/status/\d'
+        r'|youtube\.com/shorts/[\w-]+|facebook\.com/(?:watch/?\?|reel/\d|[^/]+/videos/\d)',
+        url, re.I):
+        return {"type":"video","title":_url_title(url),"thumbnail":None,
+                "duration":None,"uploader":"","extractor":"login-required",
+                "qualities":[],"video_formats":STREAM_FORMATS,"is_stream":True,
+                "note":"Couldn't read this without logging in — save the site's "
+                       "cookies in the Cookie manager for full quality."}
+    # 6. HTML page fallback (image scraping; preview-page renders if needed)
     return {"type":"page","url":url,"image_formats":IMAGE_FORMATS}
 
 
@@ -5588,9 +5799,23 @@ async def _universal_fallback(req: DownloadReq, job_dir: Path, cookie_file: Opti
             return
 
 
+def _sweep_stale(max_age_min: int = 30) -> None:
+    """Opportunistic (no background task): drop job dirs older than N minutes.
+    A completed job whose files were never fetched would otherwise linger since
+    the TTL cleaner was removed. Piggybacks on the download endpoint."""
+    try:
+        cutoff = _time.time() - max_age_min * 60
+        for d in DOWNLOAD_DIR.iterdir():
+            if d.is_dir() and d.stat().st_mtime < cutoff:
+                shutil.rmtree(d, ignore_errors=True)
+    except Exception:
+        pass
+
+
 @app.post("/download")
 async def download(req: DownloadReq):
     req.url = _normalize_url(req.url)            # accept bare domains (pat.com → https://pat.com)
+    _sweep_stale()
     job_dir = DOWNLOAD_DIR / req.job_id
     job_dir.mkdir(parents=True, exist_ok=True)
     # Idempotency: if this job already finished, don't re-download. The job queue
@@ -5686,48 +5911,25 @@ async def download(req: DownloadReq):
             # Guard: if nothing actually landed on disk, this is a failure, not a success
             saved = [f for f in job_dir.iterdir() if f.is_file()] if job_dir.exists() else []
             if not saved:
+                shutil.rmtree(job_dir, ignore_errors=True)   # don't leave an empty dir behind
                 await _prog(req.job_id, {"status":"failed","progress":0,
                     "error":"No file could be downloaded — the source may block direct "
                             "downloads, require login (add cookies), or be DRM-protected."})
                 raise HTTPException(500, "No files downloaded")
             # Mark complete so a re-delivered job won't re-download (idempotency).
-            try: await _aredis.set(f"dl:done:{req.job_id}", "1", ex=DOWNLOAD_TTL_DAYS*86400)
+            try: await _aredis.set(f"dl:done:{req.job_id}", "1", ex=7*86400)
             except Exception: pass
             return {"success":True, "files":[f.name for f in saved]}
         except HTTPException:
             raise
         except Exception as e:
             msg = str(e)[:600]
+            if job_dir.exists() and not any(job_dir.iterdir()):
+                shutil.rmtree(job_dir, ignore_errors=True)
             await _prog(req.job_id, {"status":"failed","progress":0,"error":msg})
             raise HTTPException(500, msg)
         finally:
             if cookie_file: _rm(cookie_file)
-
-
-# ── Storage management ────────────────────────────────────────────────────────
-@app.get("/storage")
-async def list_storage():
-    jobs = []
-    if DOWNLOAD_DIR.exists():
-        for job_dir in sorted(DOWNLOAD_DIR.iterdir(), key=lambda p: p.stat().st_mtime, reverse=True):
-            if not job_dir.is_dir(): continue
-            files = [{"name":f.name,"size":f.stat().st_size}
-                     for f in job_dir.iterdir() if f.is_file()]
-            total = sum(f["size"] for f in files)
-            jobs.append({"job_id":job_dir.name,"files":files,
-                         "total_size":total,"file_count":len(files)})
-    total_bytes = sum(j["total_size"] for j in jobs)
-    return {"jobs":jobs,"total_jobs":len(jobs),"total_bytes":total_bytes}
-
-
-@app.delete("/storage/{job_id}")
-async def delete_storage(job_id: str):
-    if not re.match(r'^[0-9a-f\-]{36}$', job_id):
-        raise HTTPException(400,"Invalid job ID")
-    job_dir = DOWNLOAD_DIR / job_id
-    if job_dir.exists():
-        shutil.rmtree(job_dir)
-    return {"success":True}
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -5756,8 +5958,10 @@ async def _aria2_dl(url: str, out: Path, jid: str,
                     timeout: int = 3600) -> bool:
     """Fast multi-connection download via aria2c (16 parallel streams + resume).
        Returns True on success. Used as the fast path for direct media/file URLs."""
+    if not ARIA2C_BIN:
+        return False  # not installed → caller falls back to httpx
     cmd = [
-        "aria2c", "-x16", "-s16", "-k1M", "--max-tries=10", "--retry-wait=3",
+        ARIA2C_BIN, "-x16", "-s16", "-k1M", "--max-tries=10", "--retry-wait=3",
         "--file-allocation=none", "--auto-file-renaming=false", "--continue=true",
         "--summary-interval=1", "--console-log-level=warn", "--allow-overwrite=true",
         "--check-certificate=false", "--max-connection-per-server=16",
@@ -5932,8 +6136,10 @@ async def _dl_torrent(req: DownloadReq, job_dir: Path):
     """Download a torrent or magnet link via aria2c (BitTorrent + DHT). Downloads the
        torrent's files into job_dir; does not seed (seed-time=0)."""
     await _prog(req.job_id, {"status":"downloading","progress":2})
+    if not ARIA2C_BIN:
+        raise HTTPException(501, "Torrent downloads need aria2c — install it (winget install aria2.aria2) and restart.")
     cmd = [
-        "aria2c", req.url,
+        ARIA2C_BIN, req.url,
         "--dir", str(job_dir),
         "--seed-time=0",                 # don't seed after completing
         "--bt-stop-timeout=120",         # give up if no peers for 2 min
@@ -6305,8 +6511,13 @@ async def _dl_playlist(req: DownloadReq, job_dir: Path, cookie_file: Optional[st
 
 
 def _ytdlp_info(url: str, flat: bool) -> dict:
+    # flat=True  → caller wants the playlist/channel enumerated (analyze-playlist)
+    # flat=False → caller wants THIS one video. A bare /watch?v=…&list=… (a Mix /
+    #              radio / "next up" list) must resolve to the single video, not
+    #              the endless list — otherwise extraction times out and analyze
+    #              falls back to a garbage rendered-page result.
     opts = {"quiet":True,"no_warnings":True,"skip_download":True,
-            "socket_timeout":30,"extract_flat":flat,
+            "socket_timeout":30,"extract_flat":flat,"noplaylist": not flat,
             "geo_bypass":True,"nocheckcertificate":True,"age_limit":99,
             "http_headers":{"User-Agent":_ua()}}
     with yt_dlp.YoutubeDL(opts) as ydl:
@@ -6446,20 +6657,27 @@ def _ytdlp_dl(
         "http_chunk_size": 10485760,    # 10 MB chunks — beats per-request throttling
 
         # Speed: aria2c multi-connection for plain HTTP(S) (YouTube progressive,
-        # direct files); keep yt-dlp's native concurrent fragments for HLS/DASH.
-        "external_downloader": {"http": "aria2c", "https": "aria2c", "ftp": "aria2c"},
+        # direct files) — only when aria2c is actually installed. HLS/DASH stay on
+        # yt-dlp's native concurrent-fragment downloader.
+        **({"external_downloader": {"http": ARIA2C_BIN, "https": ARIA2C_BIN}} if ARIA2C_BIN else {}),
 
         # Access: bypass geo-blocks, SSL issues, and age gates (adult/social sites)
         "geo_bypass": True,
         "nocheckcertificate": True,
         "age_limit": 99,           # confirm-age so adult sites serve content
-        "noplaylist": False,
+        # Single-video downloads must ignore a trailing &list=… (Mix/radio/queue);
+        # only the playlist/profile path opts in.
+        "noplaylist": not is_playlist,
         "hls_prefer_native": False,  # use ffmpeg for HLS (more robust)
 
-        # Anti-blocking: randomised delays
-        "sleep_interval": 1,
-        "max_sleep_interval": 5,
-        "sleep_interval_requests": 0.5,
+        # Note: we deliberately DON'T pin a YouTube player_client. yt-dlp's own
+        # default rotation is tuned upstream every few weeks; overriding it tends
+        # to break ("Requested format is not available" / "page needs reloaded").
+        # aria2c's 16 parallel connections already blunt most per-stream throttle.
+
+        # Anti-blocking: a small delay BETWEEN videos only — never between the
+        # HTTP requests of one download (that murders HLS: 600 fragments × 0.5 s).
+        **({"sleep_interval": 1, "max_sleep_interval": 4} if is_playlist else {}),
 
         # Headers (rotate UA each run)
         "http_headers": {
@@ -6475,7 +6693,8 @@ def _ytdlp_dl(
         "external_downloader_args": {
             "aria2c": ["-x16","-s16","-k1M","--max-tries=10","--retry-wait=3",
                        "--file-allocation=none","--auto-file-renaming=false",
-                       "--continue=true","--summary-interval=0"],
+                       "--continue=true","--summary-interval=0",
+                       "--min-split-size=1M","--max-connection-per-server=16"],
             "ffmpeg_i": ["-protocol_whitelist","all"],
         },
 
@@ -6933,152 +7152,6 @@ async def batch_download(req: BatchReq):
     results = await asyncio.gather(*(_run_one(item) for item in req.items))
     ok = sum(1 for r in results if r.get("success"))
     return {"total": len(results), "succeeded": ok, "failed": len(results) - ok, "results": list(results)}
-
-
-# ── /convert — FFmpeg re-encode / format conversion of a downloaded file ──────
-class ConvertReq(BaseModel):
-    job_id:           str
-    filename:         str
-    output_format:    str                      # e.g. "mp4", "mp3", "webm", "gif"
-    new_job_id:       Optional[str]  = None    # write output here (defaults to job_id)
-    # Video options
-    video_codec:      Optional[str]  = None    # "libx264","libx265","libvpx-vp9","copy"
-    resolution:       Optional[str]  = None    # "1280x720","1920x1080","640x360"
-    crf:              Optional[int]  = None    # 18-28; lower=better quality
-    fps:              Optional[int]  = None    # output frame rate
-    # Audio options
-    audio_codec:      Optional[str]  = None    # "aac","libmp3lame","libopus","copy"
-    audio_bitrate:    Optional[str]  = None    # "128k","192k","320k"
-    extract_audio:    bool           = False   # discard video track
-    # GIF options
-    gif_fps:          int            = 10
-    gif_scale:        int            = 480
-    # Clip
-    start_time:       Optional[str]  = None
-    end_time:         Optional[str]  = None
-
-@app.post("/convert")
-async def convert_file(req: ConvertReq):
-    """Re-encode / convert a file that already lives in DOWNLOAD_DIR.
-    Supports video ↔ video, video → audio, video → GIF, audio → audio."""
-    # Validate path stays inside DOWNLOAD_DIR
-    if not re.match(r'^[0-9a-f\-]{36}$', req.job_id):
-        raise HTTPException(400, "Invalid job_id")
-    safe_name = Path(req.filename).name
-    src = DOWNLOAD_DIR / req.job_id / safe_name
-    if not src.exists():
-        raise HTTPException(404, f"File not found: {req.filename}")
-
-    out_job_id = req.new_job_id or req.job_id
-    if req.new_job_id:
-        if not re.match(r'^[0-9a-f\-]{36}$', req.new_job_id):
-            raise HTTPException(400, "Invalid new_job_id")
-        out_dir = DOWNLOAD_DIR / req.new_job_id
-        out_dir.mkdir(parents=True, exist_ok=True)
-    else:
-        out_dir = DOWNLOAD_DIR / req.job_id
-
-    fmt = req.output_format.lower().lstrip(".")
-    stem = Path(safe_name).stem
-    out = _uniq(out_dir, f"{stem}_converted.{fmt}")
-
-    await _prog(out_job_id, {"status": "converting", "progress": 5,
-                              "filename": f"Converting {safe_name} → {fmt}…"})
-
-    # Build FFmpeg command
-    cmd = ["ffmpeg", "-y", "-i", str(src)]
-
-    if req.start_time:
-        cmd += ["-ss", req.start_time]
-    if req.end_time:
-        cmd += ["-to", req.end_time]
-
-    if fmt == "gif":
-        # Two-pass GIF with palette for quality
-        scale = req.gif_scale or 480
-        fps   = req.gif_fps or 10
-        palette = out_dir / f"{stem}_palette.png"
-        p1 = await asyncio.create_subprocess_exec(
-            "ffmpeg", "-y", "-i", str(src),
-            "-vf", f"fps={fps},scale={scale}:-1:flags=lanczos,palettegen",
-            str(palette), stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
-        await p1.wait()
-        cmd += ["-i", str(palette), "-lavfi",
-                f"fps={fps},scale={scale}:-1:flags=lanczos[x];[x][1:v]paletteuse",
-                "-loop", "0"]
-    elif req.extract_audio:
-        _ACODEC = {
-            "mp3": "libmp3lame", "m4a": "aac", "aac": "aac", "opus": "libopus",
-            "ogg": "libvorbis", "flac": "flac", "wav": "pcm_s16le", "alac": "alac",
-        }
-        acodec = req.audio_codec or _ACODEC.get(fmt, "aac")
-        cmd += ["-vn", "-acodec", acodec]
-        # Lossless targets ignore bitrate; lossy ones default to a sane bitrate.
-        if req.audio_bitrate and fmt not in ("flac", "wav", "alac"):
-            cmd += ["-b:a", req.audio_bitrate]
-        elif fmt in ("mp3", "m4a", "aac", "opus", "ogg"):
-            cmd += ["-b:a", "320k" if fmt == "mp3" else "256k"]
-    else:
-        if req.video_codec:
-            cmd += ["-c:v", req.video_codec]
-        elif fmt in ("mp4", "mov"):
-            cmd += ["-c:v", "libx264", "-preset", "veryfast"]
-        elif fmt == "webm":
-            cmd += ["-c:v", "libvpx-vp9", "-crf", str(req.crf or 33), "-b:v", "0"]
-        elif fmt == "mkv":
-            cmd += ["-c:v", "copy"]
-
-        if req.crf and fmt != "webm":
-            cmd += ["-crf", str(req.crf)]
-        if req.resolution:
-            w, h = req.resolution.replace("x", ":").split(":")
-            cmd += ["-vf", f"scale={w}:{h}"]
-        if req.fps:
-            cmd += ["-r", str(req.fps)]
-        if req.audio_codec:
-            cmd += ["-c:a", req.audio_codec]
-        elif fmt in ("mp4", "mov"):
-            cmd += ["-c:a", "aac"]
-        if req.audio_bitrate:
-            cmd += ["-b:a", req.audio_bitrate]
-        if fmt in ("mp4", "mov"):
-            cmd += ["-movflags", "+faststart"]
-
-    cmd.append(str(out))
-
-    proc = await asyncio.create_subprocess_exec(
-        *cmd, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE)
-
-    dur_re  = re.compile(r"Duration:\s*(\d+):(\d+):(\d+\.?\d*)")
-    time_re = re.compile(r"time=(\d+):(\d+):(\d+\.?\d*)")
-    total_s: Optional[float] = None
-
-    async for raw in proc.stderr:  # type: ignore
-        line = raw.decode("utf-8", "ignore")
-        if total_s is None:
-            m = dur_re.search(line)
-            if m: total_s = _hms(*m.groups())
-        m = time_re.search(line)
-        if m and total_s and total_s > 0:
-            pct = min(94, int(_hms(*m.groups()) / total_s * 90))
-            await _prog(out_job_id, {"status": "converting", "progress": 5 + pct,
-                                      "filename": f"Converting → {fmt}…"})
-
-    await proc.wait()
-
-    # Cleanup palette if GIF
-    if fmt == "gif":
-        palette = out_dir / f"{stem}_palette.png"
-        try: palette.unlink()
-        except Exception: pass
-
-    if proc.returncode != 0 or not out.exists() or out.stat().st_size < 512:
-        raise HTTPException(500, f"FFmpeg conversion failed (exit {proc.returncode})")
-
-    files = [f.name for f in out_dir.iterdir() if f.is_file()]
-    await _prog(out_job_id, {"status": "completed", "progress": 100, "files": files})
-    return {"success": True, "output_file": out.name, "output_job_id": out_job_id,
-            "size": out.stat().st_size}
 
 
 # ── /merge — merge separate audio + video files (or concatenate) ─────────────

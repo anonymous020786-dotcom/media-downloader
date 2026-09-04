@@ -1,7 +1,7 @@
 'use client'
 import { useEffect, useState } from 'react'
-import { Activity, RefreshCw, CheckCircle2, XCircle, HardDrive, Boxes, AlertTriangle } from 'lucide-react'
-import { fetchSystemStatus, fmtBytes, type SystemStatus } from '@/lib/api'
+import { Activity, RefreshCw, CheckCircle2, XCircle, Boxes, AlertTriangle } from 'lucide-react'
+import { fetchSystemStatus, type SystemStatus } from '@/lib/api'
 
 const SERVICE_LABELS: Record<string, string> = {
   redis: 'Queue (Redis)',
@@ -72,20 +72,8 @@ export default function StatusBoard() {
         ))}
       </div>
 
-      {/* Disk + sites */}
+      {/* Sites */}
       <div className="grid sm:grid-cols-2 gap-3">
-        {s?.disk && (
-          <div className="px-4 py-3 rounded-xl bg-[var(--bg-card)] border border-[var(--border)]">
-            <div className="flex items-center justify-between text-sm mb-2">
-              <span className="flex items-center gap-1.5 font-semibold text-[var(--text-2)]"><HardDrive size={14} /> Storage</span>
-              <span className="text-[var(--text-3)]">{fmtBytes(s.disk.free)} free of {fmtBytes(s.disk.total)}</span>
-            </div>
-            <div className="h-2 rounded-full bg-[var(--border)] overflow-hidden">
-              <div className={`h-full rounded-full ${s.disk.percent_used >= 90 ? 'bg-red-500' : s.disk.percent_used >= 75 ? 'bg-amber-500' : 'bg-emerald-500'}`}
-                style={{ width: `${Math.min(100, s.disk.percent_used)}%` }} />
-            </div>
-          </div>
-        )}
         {s?.sites && (
           <div className="px-4 py-3 rounded-xl bg-[var(--bg-card)] border border-[var(--border)]">
             <div className="flex items-center gap-1.5 text-sm font-semibold text-[var(--text-2)] mb-1">

@@ -39,6 +39,16 @@ router.get('/:id/progress', (req, res) => {
   req.on('error', close)
 })
 
+// ── Progress snapshot (JSON, non-streaming) — public, progress data only ──────
+// Same payload as the SSE stream above but as a one-shot GET, for pollers (the
+// Telegram bot) that don't want to hold an event-stream open.
+router.get('/:id/state', async (req, res) => {
+  try {
+    const raw = await redisConnection.get(`job:${req.params.id}:progress`)
+    res.json(raw ? (JSON.parse(raw) as JobProgress) : { status: 'unknown', progress: 0 })
+  } catch (err: any) { res.status(500).json({ error: err.message }) }
+})
+
 // ── List jobs (scoped to authenticated user; admins see all) ──────────────────
 router.get('/', optionalAuth, async (req, res) => {
   try {
