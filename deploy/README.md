@@ -1,8 +1,20 @@
 # Deploy — bot-only, on a VPS
 
 Runs the Telegram bot + its backend (python-service + Express) as `systemd`
-services. **No web UI, no inbound ports except SSH.** Tested on Ubuntu 24.04 /
-26.04, KVM-4 class (4 vCPU / 16 GB).
+services. **No web UI.** Tested on Ubuntu 24.04 / 26.04, KVM-4 class.
+
+## Safe on a shared box
+
+`install.sh` is **strictly additive** — it will not touch your firewall, will
+not replace an existing Node (needs ≥18; aborts if older rather than upgrading),
+refuses to start if ports 8000/4000 are taken, and everything it creates is
+namespaced (`mediadl` user, `mediadl-*` units, `/opt/mediadl`, `/run/mediadl`,
+services bound to `127.0.0.1`). Anything else running on the VPS keeps running.
+
+Locking the box down is a **separate, deliberate** step — `firewall.sh`, which
+shows you what's currently listening and asks before it denies inbound. Run it
+only if MediaDL is the only public-facing thing here; otherwise pass your other
+ports: `bash firewall.sh 80 443`.
 
 ## Why bot-only
 
@@ -75,8 +87,8 @@ systemctl restart mediadl-bot       # after editing .env
 curl -s localhost:4000/health
 ```
 
-Firewall: `install.sh` sets `ufw` to **deny all inbound except SSH**. Check with
-`ufw status`.
+Firewall: not touched by `install.sh`. Run `bash firewall.sh` (optionally with
+extra ports) when you're ready to lock the box to SSH-only.
 
 ## Uninstall
 
