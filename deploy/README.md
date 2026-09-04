@@ -1,0 +1,70 @@
+# Deploy — bot-only, on a VPS
+
+Runs the Telegram bot + its backend (python-service + Express) as `systemd`
+services. **No web UI, no inbound ports except SSH.** Tested on Ubuntu 24.04 /
+26.04, KVM-4 class (4 vCPU / 16 GB).
+
+## Why bot-only
+
+The web UI has no authentication and the analyze/download/stream endpoints fetch
+arbitrary URLs server-side (SSRF). Exposing it publicly is not safe and can get a
+VPS suspended under most hosts' AUP. The bot is gated by `TELEGRAM_ALLOWED_USERS`
+and only talks *outbound* to Telegram, so nothing needs to be open.
+
+## Install
+
+```bash
+ssh root@YOUR_VPS_IP
+git clone https://github.com/anonymous020786-dotcom/media-downloader.git /opt/mediadl
+cd /opt/mediadl/deploy
+bash install.sh          # first run creates /opt/mediadl/.env and stops
+nano /opt/mediadl/.env   # set TELEGRAM_BOT_TOKEN and TELEGRAM_ALLOWED_USERS
+bash install.sh          # second run finishes and starts everything
+```
+
+Re-run `bash install.sh` any time to pull the latest code and restart.
+
+## .env keys that matter
+
+| key | |
+|---|---|
+| `TELEGRAM_BOT_TOKEN` | from @BotFather |
+| `TELEGRAM_ALLOWED_USERS` | comma-separated numeric IDs. Add someone: they message the bot, it replies with their ID, add it, `systemctl restart mediadl-bot`. **No limit on how many.** |
+| `TELEGRAM_ADMINS` | optional subset for engine/global actions |
+| `TELEGRAM_DELIVERY` | `upload` by default. A datacenter's uplink to Telegram is fast, so uploads work — unlike a home ISP. |
+
+## Files bigger than 50 MB
+
+Telegram's Bot API caps *every* upload at 50 MB. To send bigger files, get an
+**API ID + API hash** from <https://my.telegram.org> (that's your Telegram
+*account*, not the bot), put them in `.env`:
+
+```
+TELEGRAM_API_ID=1234567
+TELEGRAM_API_HASH=abcdef...
+```
+
+and re-run `install.sh`. It builds a local `telegram-bot-api` server on
+`127.0.0.1:8081` (≈15 min compile), points the bot at it, and switches delivery
+to `auto` → uploads up to **2 GB**, still zero inbound ports.
+
+## Managing it
+
+```bash
+systemctl status  mediadl-bot mediadl-api mediadl-py
+journalctl -u mediadl-bot -f        # bot logs
+systemctl restart mediadl-bot       # after editing .env
+curl -s localhost:4000/health
+```
+
+Firewall: `install.sh` sets `ufw` to **deny all inbound except SSH**. Check with
+`ufw status`.
+
+## Uninstall
+
+```bash
+systemctl disable --now mediadl-{py,api,bot} telegram-bot-api 2>/dev/null
+rm /etc/systemd/system/mediadl-*.service /etc/systemd/system/telegram-bot-api.service
+systemctl daemon-reload
+userdel mediadl; rm -rf /opt/mediadl
+```

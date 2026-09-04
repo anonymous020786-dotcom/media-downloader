@@ -1,0 +1,18 @@
+[Unit]
+Description=MediaDL Telegram bot
+After=network-online.target mediadl-api.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=@APP_USER@
+WorkingDirectory=@APP_DIR@/telegram-bot
+EnvironmentFile=@APP_DIR@/.env
+ExecStart=@APP_DIR@/telegram-bot/node_modules/.bin/tsx src/index.ts
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
