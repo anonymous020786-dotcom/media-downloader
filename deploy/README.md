@@ -13,16 +13,34 @@ and only talks *outbound* to Telegram, so nothing needs to be open.
 
 ## Install
 
+The repo is **private**, so first get the code onto the VPS one of these ways:
+
+**A — GitHub token** (quickest). Make a token at
+<https://github.com/settings/tokens> with `repo:read` scope, then:
 ```bash
 ssh root@YOUR_VPS_IP
-git clone https://github.com/anonymous020786-dotcom/media-downloader.git /opt/mediadl
+git clone https://TOKEN@github.com/anonymous020786-dotcom/media-downloader.git /opt/mediadl
+```
+
+**B — SSH deploy key**:
+```bash
+ssh root@YOUR_VPS_IP
+ssh-keygen -t ed25519 -f ~/.ssh/id_deploy -N ''   # add the .pub at
+                                                  # repo → Settings → Deploy keys
+GIT_SSH_COMMAND='ssh -i ~/.ssh/id_deploy' git clone \
+  git@github.com:anonymous020786-dotcom/media-downloader.git /opt/mediadl
+```
+
+Then:
+```bash
 cd /opt/mediadl/deploy
 bash install.sh          # first run creates /opt/mediadl/.env and stops
 nano /opt/mediadl/.env   # set TELEGRAM_BOT_TOKEN and TELEGRAM_ALLOWED_USERS
 bash install.sh          # second run finishes and starts everything
 ```
 
-Re-run `bash install.sh` any time to pull the latest code and restart.
+Re-run `bash install.sh` any time to pull the latest code and restart. (With
+option B, prefix it: `GIT_SSH_COMMAND='ssh -i ~/.ssh/id_deploy' bash install.sh`.)
 
 ## .env keys that matter
 
