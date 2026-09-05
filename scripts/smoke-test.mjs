@@ -89,11 +89,10 @@ async function run() {
     assert(buf.length > 100_000, `only got ${buf.length} bytes`)
     assert(buf.subarray(4, 8).toString() === 'ftyp', 'not an MP4')
   })
-  await test('stream: playlist link rejects at GET (422)', async () => {
+  await test('stream: playlist link rejects at POST (422 → caller falls back to queue)', async () => {
     const hdr = { 'Content-Type': 'application/json', ...(INTERNAL_KEY ? { 'X-Internal-Key': INTERNAL_KEY } : {}) }
-    const { url } = await getJSON(`${API}/api/stream`, { method: 'POST', headers: hdr,
+    const r = await fetch(`${API}/api/stream`, { method: 'POST', headers: hdr,
       body: JSON.stringify({ url: 'https://www.youtube.com/playlist?list=PLBCF2DAC6FFB574DE' }) })
-    const r = await fetch(url)
     assert(r.status === 422, `expected 422, got ${r.status}`)
   })
   await test('storage endpoints removed (404)', async () => {

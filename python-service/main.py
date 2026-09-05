@@ -867,6 +867,17 @@ async def _resolve_stream_plan(req: StreamReq) -> dict:
     if url.startswith("magnet:") or url.split("?")[0].lower().endswith(".torrent"):
         return {"mode": "unsupported", "reason": "Torrents need a download client — can't stream."}
 
+    # Aggregator / scrape-only sites (anime, movies, JAV, embed hosts, most
+    # custom extractors) resolve a stream by scraping + headless capture, which
+    # needs a real working directory — route to the download queue instead.
+    if (_STREAM_SITE_RE.match(url) or _JAV_STREAM_RE.match(url) or _JAVBUS_RE.match(url)
+            or _COOMER_RE.match(url) or _KEMONO_RE.match(url) or _HQPORNER_RE.match(url)
+            or _XHS_RE.match(url) or _TERABOX_RE.match(url) or _BUNKR_RE.match(url)
+            or _EROME_RE.match(url) or _CYBERDROP_RE.match(url) or _FAPELLO_RE.match(url)
+            or _SIMPCITY_RE.match(url) or _THOTHUB_RE.match(url)):
+        return {"mode": "unsupported",
+                "reason": "This site is fetched via page scrape — use the download queue, not direct stream."}
+
     # A plain direct file / image (no extractor needed)
     if not _is_custom_site(url):
         try:

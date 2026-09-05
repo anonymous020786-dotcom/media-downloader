@@ -29,15 +29,23 @@ router.post('/', verifyTurnstile, async (req, res) => {
   if (!body.url) { res.status(400).json({ error: 'url is required' }); return }
   sweep()
   const userId = req.authUser!.id
+  const cookies = body.cookies?.trim() || await resolveCookies(body.url, userId)
+  const proxy = await resolveProxy(body.proxy, userId)
+
+  // Validate up front so a caller (the bot) can fall back to the download queue
+  // *before* it hands the user a link that would fail on tap. The GET re-resolves
+  // fresh — this is just a gate, we don't keep the (expiring) resolved URLs.
+  try {
+    const { data } = await axios.post(`${PYTHON}/stream-resolve`, {
+      url: body.url, format: body.format, quality: body.quality, cookies, proxy,
+    }, { timeout: 45_000 })
+    if (data.mode === 'unsupported') { res.status(422).json({ error: data.reason }); return }
+  } catch (e: any) {
+    res.status(422).json({ error: e.response?.data?.detail ?? `not streamable: ${e.message}` }); return
+  }
+
   const token = randomUUID()
-  tokens.set(token, {
-    url: body.url,
-    format: body.format,
-    quality: body.quality,
-    cookies: body.cookies?.trim() || await resolveCookies(body.url, userId),
-    proxy: await resolveProxy(body.proxy, userId),
-    at: Date.now(),
-  })
+  tokens.set(token, { url: body.url, format: body.format, quality: body.quality, cookies, proxy, at: Date.now() })
   const base = (process.env.PUBLIC_BASE_URL || '').replace(/\/$/, '') ||
     `${req.protocol}://${req.get('host')}`
   res.json({ token, url: `${base}/api/stream/${token}` })

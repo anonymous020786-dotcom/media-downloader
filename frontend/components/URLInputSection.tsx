@@ -233,8 +233,14 @@ export default function URLInputSection({ onQueued, initialUrl = '' }: Props) {
       })
       // Navigate to the link so the browser starts the download from the pipe.
       window.location.href = link
-    } catch (e: any) { setError(e.message) }
-    finally { setStreaming(false) }
+    } catch (e: any) {
+      // Some sites can't be streamed (aggregators, playlists) — use the queue.
+      if (/scrape|queue|not streamable|playlist/i.test(e.message || '')) {
+        setStreaming(false)
+        return handleDownload()
+      }
+      setError(e.message)
+    } finally { setStreaming(false) }
   }
 
   // ── Preview & select flow ─────────────────────────────────────────────────
