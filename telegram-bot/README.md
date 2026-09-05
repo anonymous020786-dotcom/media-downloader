@@ -58,10 +58,20 @@ follow the rules below.
 uploads to `api.telegram.org`** (extremely common — the connection can be
 2 KB/s outbound while downloads run fine). Set `TELEGRAM_DELIVERY=link`.
 
-Link URLs use `BOT_PUBLIC_BASE_URL` if set; otherwise the bot auto-detects this
-machine's LAN IP so the link opens on a phone on the **same Wi-Fi**. For access
-from anywhere, point `BOT_PUBLIC_BASE_URL` at a tunnel (`cloudflared tunnel
---url http://localhost:4000`).
+### ⚠️ Making the links reachable
+
+Link URLs use `BOT_PUBLIC_BASE_URL` if set; otherwise the bot uses this machine's
+LAN IP. **A LAN link only works if (a) your phone is on the same Wi-Fi as the
+PC AND (b) the OS firewall allows inbound on port 4000.** On Windows the firewall
+blocks it by default — the bot sends the message, you tap the link, nothing
+happens. Fix one of:
+
+- **Same Wi-Fi:** allow the port — admin PowerShell:
+  `New-NetFirewallRule -DisplayName MediaDL -Direction Inbound -Protocol TCP -LocalPort 4000 -Action Allow`
+- **From anywhere:** `bash deploy/tunnel.sh` (needs `cloudflared`) — starts a
+  free Cloudflare tunnel, writes its URL to `BOT_PUBLIC_BASE_URL`, done.
+- **Best:** run it on a VPS (`deploy/`) — public address + a fast Telegram
+  uplink so `TELEGRAM_DELIVERY=upload` works and files go straight into the chat.
 
 The stock Bot API also caps every upload at 50 MB (`TELEGRAM_MAX_UPLOAD_MB`,
 default 49) — bigger files always go out as links. A local
