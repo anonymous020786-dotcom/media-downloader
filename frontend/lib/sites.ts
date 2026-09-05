@@ -1,7 +1,8 @@
 // Curated list of supported sites (powered by yt-dlp's ~1,800+ named extractors,
-// gallery-dl's ~300+ patterns, streamlink's 100+ live-TV plugins, you-get, and
-// a headless-browser fallback that covers any site with embedded video or images).
-// Combined coverage: 2,000+ sites and URL patterns.
+// gallery-dl's ~300+ patterns, streamlink's 100+ live-TV plugins, you-get,
+// ~200 custom extractors for file hosts + video embeds + free-streaming
+// aggregators, and a headless-browser fallback that covers any site with
+// embedded video or images). Combined coverage: 2,000+ sites and URL patterns.
 
 export interface SiteCategory { name: string; sites: string[] }
 
@@ -48,6 +49,36 @@ export const SITE_CATEGORIES: SiteCategory[] = [
       'Xumo','Stirr','Plex TV','Samsung TV Plus','LG Channels',
       'DistroTV','Haystack TV','NewsON','Freecast','Frndly TV',
       'Kodi','Emby','Jellyfin (public)','Plex Media Server (public)',
+    ],
+  },
+  {
+    name: 'Free Streaming Sites (aggregators)',
+    sites: [
+      // Movies & TV
+      'FMovies','SFlix','123Movies','PrimeWire','LookMovie','Soap2Day','Soaper TV',
+      'Movies2Watch','HDToday','Goku','MyFlixer','Cineb','BFlix','RidoMovies',
+      'Putlocker','YesMovies','GoMovies','M4UFree','HuraWatch','MoviesJoy','Cataz',
+      'SolarMovie','WatchSeriesHD','AttackerTV','Nunflix','RiveStream','NetMirror',
+      'VidSrc','2Embed','AutoEmbed','MultiEmbed','SmashyStream','VidBinge',
+      // Anime
+      'AniWave','HiAnime','Aniwatch','9Anime','AnimePahe','GoGoAnime','KickAssAnime',
+      'AnimeSuge','Anix','AnimeFlix','AnimeOwl','AnimeHeaven','AnimeDao','AniCrush',
+      'Miruro','AllAnime','AniWorld','AnimeFLV','Hikari','Anitaku','AniMixPlay',
+      // Cartoons
+      'KimCartoon','WCOStream','WatchCartoonOnline','KissCartoon','TheWatchCartoonOnline',
+      // Asian drama
+      'DramaCool','KissAsian','MyAsianTV','ViewAsian','AsianC','KShow123','KissKh',
+      'DramaNice','DramaBus','AsianBXO',
+      // Arabic
+      'WeCima','FaselHD','Akwam','CimaClub','EgyBest','MyCima','Shahid4U','ArabSeed',
+      // Sports (live)
+      'StreamEast','SportSurge','BuffStreams','CrackStreams','VIPBox','TotalSportek',
+      'FootyBite','SportsHub','720pStream','NFLBite','NBABite','SportsBay','DaddyLive',
+      'LiveTV.sx','SoccerStreams','CricFree','MMAStreams','RedStream','StrikeOut',
+      // Live TV / IPTV portals
+      'USTVGO','TVPato2','Stream2Watch','DistroTV','FreeShot','PixelSport',
+      // Documentary
+      'Documentary Heaven','Documentary Mania','Top Documentary Films',
     ],
   },
   {

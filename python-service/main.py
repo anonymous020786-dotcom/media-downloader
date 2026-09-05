@@ -1360,7 +1360,7 @@ def _is_custom_site(url: str) -> bool:
         _TURBOBIT_RE.match(url) or _RAPIDGATOR_RE.match(url) or
         _NITROFLARE_RE.match(url) or _UPLOADEE_RE.match(url) or
         _TERABOX_RE.match(url) or _XHS_RE.match(url) or _HQPORNER_RE.match(url) or
-        _JAV_STREAM_RE.match(url) or _JAVBUS_RE.match(url)
+        _JAV_STREAM_RE.match(url) or _JAVBUS_RE.match(url) or _STREAM_SITE_RE.match(url)
     )
 
 
@@ -2665,38 +2665,175 @@ _JAV_STREAM_RE = re.compile(
     r')(?:/|$)', re.I)
 
 
+# ── General streaming aggregators (anime / movies / TV / sports / cartoons /
+#    Asian drama / docs). Same scrape → m3u8/mp4/iframe → headless-capture
+#    pipeline as _dl_jav_stream. Domains rotate constantly, so this covers the
+#    common variants; anything not listed still falls back to the headless probe.
+_STREAM_SITE_DOMAINS = [
+    # ── Anime ──────────────────────────────────────────────────────────────
+    r"aniwave\.(?:to|se|li|nl|vc|bz|ws)", r"9anime\.(?:to|pl|gs|id|ru|me|com\.ru)",
+    r"hianime\.(?:to|tv|nz|pe|sx|mn|bz)", r"aniwatch(?:tv)?\.(?:to|is|la)",
+    r"zoro\.(?:to|si|pe|name)", r"anicrush\.(?:to|com)", r"miruro\.(?:tv|online|to)",
+    r"animepahe\.(?:ru|com|org|si)", r"animesuge\.(?:to|io|nz)", r"anix\.(?:to|ac|is|vc)",
+    r"kickassanime\.(?:am|mx|ro|help|cl|onl)", r"animixplay\.(?:to|name)",
+    r"gogoanime\d?\.(?:to|cl|co|be|dev|fi|ee|link|by|tel|pe|org|io|gg|lol|run|news|so)",
+    r"gogoanimes?\.(?:tv|to|fi|nl|pe|org|co|link)", r"gogotaku\.[a-z]{2,6}",
+    r"animekisa\.(?:tv|in)", r"animefreak\.(?:tv|to)", r"animeowl\.(?:me|us|to|live)",
+    r"animeheaven\.(?:me|ru|dev)", r"animedao\.(?:to|com|net|top|io)", r"animeflix\.(?:live|ru|lol|to)",
+    r"anilab\.(?:to|me)", r"allanime\.(?:to|day|co)", r"otaku(?:us)?\.(?:tv|stream)",
+    r"aniworld\.to", r"s\.to", r"animeflv\.(?:net|io|link)", r"hikari\.gg", r"animegg\.org",
+    r"anitaku\.(?:to|pe|io|bz|so)", r"anima\.moe", r"marin\.moe", r"animenosub\.[a-z]+",
+    # ── Movies / TV shows ─────────────────────────────────────────────────
+    r"fmovies?\d*\.(?:to|se|pub|co|wtf|world|ps|media|hair|llc|cat|is|film)",
+    r"fmoviesz?\.(?:to|se|nl|si|watch)", r"sflix\.(?:to|se|watch|live|is)",
+    r"123movies\w*\.(?:to|net|is|st|la|sc|ac|link|us|com|one)", r"1234movies\.[a-z]+",
+    r"primewire\.(?:mx|li|tf|as|pw|space|to)", r"lookmovie\d?\.(?:to|io|la|ag|foundation|studio|mobi|film)",
+    r"soap2day\w*\.(?:to|day|ac|rs|mx|film|live|nz|sh|tv)", r"soaper\.(?:tv|live|top|cc)",
+    r"movies2watch\.(?:tv|to|cc)", r"hdtoday\.(?:tv|cc|watch|ru|so)", r"goku\.(?:sx|to|cx|film)",
+    r"myflixer\w*\.(?:to|ru|is|cc|be|lat|net)", r"cineb\.(?:rs|net|to)", r"bflix\.(?:gg|io|sx|to|ru)",
+    r"ridomovies\.(?:tv|to|net)", r"watchserieshd?\.(?:st|ru|to)", r"putlocker\w*\.(?:to|sb|vip|fyi|pe)",
+    r"yesmovies\w*\.(?:ag|to|mn|net|gg)", r"gomovies\w*\.(?:sx|to|film|ru|club)",
+    r"m4ufree\.(?:tv|com|se)", r"hurawatch\.(?:cc|bz|to|at|sh)", r"moviesjoy\.(?:to|plus|is|net)",
+    r"cataz\.(?:to|net|ru)", r"levidia\.ch", r"movpon\.[a-z]+", r"vidsrc\.(?:to|me|net|xyz|pro|cc|in|io|stream|vip|nl)",
+    r"2embed\.(?:cc|to|ru|org|skin|stream)", r"multiembed\.mov", r"autoembed\.(?:co|cc|link)",
+    r"smashy\w*\.(?:stream|ru)", r"vidbinge\.[a-z]+", r"embed\.su", r"nunflix\.[a-z]+",
+    r"rivestream\.[a-z]+", r"nepu\.to", r"catflix\.[a-z]+", r"netmirror\.[a-z]+",
+    r"watchseries\w*\.[a-z]+", r"solarmovie\w*\.[a-z]+", r"movie4k\w*\.[a-z]+",
+    r"attackertv\.[a-z]+", r"noxx\.to", r"streamm4u\.[a-z]+", r"vidjoy\.[a-z]+",
+    # ── Arabic ────────────────────────────────────────────────────────────
+    r"wecima\.\w+", r"weciima\.\w+", r"faselhd\w*\.\w+", r"akwam\w*\.\w+",
+    r"cimaclub\.\w+", r"egybest\w*\.\w+", r"mycima\.\w+", r"shahid4u\w*\.\w+",
+    r"arabseed\w*\.\w+", r"asd\.rest",
+    # ── Asian drama ───────────────────────────────────────────────────────
+    r"dramacool\w*\.(?:com\.pa|pa|so|com|bg|sr|watch|cy|hr|ee|la)", r"kissasian\w*\.(?:sh|li|es|pe|vin|mv|ai|fun)",
+    r"myasiantv\.(?:vg|ac|pe|to|com|ru|ch|link)", r"viewasian\.(?:co|tv|net)", r"asianc\w*\.(?:co|sh|to)",
+    r"kshow123\.(?:net|tv|to)", r"dramanice\.(?:vc|to|so)", r"dramabus\.(?:tv|to)",
+    r"dramahood\.[a-z]+", r"asianbxo\.[a-z]+", r"kisskh\.\w+", r"kbjfree\.[a-z]+",
+    # ── Cartoons ──────────────────────────────────────────────────────────
+    r"kimcartoon\.(?:li|si|to|com\.ru|email|cc)", r"wco(?:stream|tube)?\.(?:tv|to|net|bz)",
+    r"watchcartoononline\.(?:bz|com|io|eu|tv|help)", r"thewatchcartoononline\.(?:tv|com)",
+    r"kisscartoon\.(?:sh|nz|li|me|com\.ru)", r"toonanime\.[a-z]+", r"animekaizoku\.[a-z]+",
+    # ── Sports (live) ─────────────────────────────────────────────────────
+    r"(?:the-?)?streameast\.(?:to|io|xyz|app|live|gg|us|net|ac|cc)", r"sportsurge\.(?:net|club|uno|to)",
+    r"buffstream\w*\.(?:app|io|xyz|tv|to|club|us|eu)", r"crackstream\w*\.(?:com|io|net|st|to|cc|online)",
+    r"vipbox\w*\.(?:tv|lc|so|nz|cc)", r"totalsportek\d*\.(?:com|net|io|us)", r"footybite\w*\.(?:com|co|cc|to)",
+    r"sportshub\.(?:stream|to|watch)", r"streamsgate\.[a-z]+", r"720pstream\.(?:me|net|nu)",
+    r"nflbite\.(?:com|io)", r"mmastreams?\.[a-z]+", r"nbabite\.(?:com|io)", r"nbastreams?\.[a-z]+",
+    r"sportsbay\.(?:org|to)", r"livetv\d*\.(?:sx|me|ru)", r"daddylive\w*\.(?:com|dad|click|sx|to|hair|mp)",
+    r"soccerstreams?\.(?:net|io|to)", r"redstream\w*\.[a-z]+", r"cricfree\.\w+", r"strikeout\.[a-z]+",
+    r"embedsports\.\w+", r"weakstreams\.\w+", r"givemereddit\w*\.[a-z]+", r"reddit\w*streams?\.[a-z]+",
+    # ── Docs / general ────────────────────────────────────────────────────
+    r"documentaryheaven\.com", r"documentarymania\.com", r"topdocumentaryfilms\.com",
+    r"docdrive\.[a-z]+", r"cultura\.[a-z]+",
+    # ── Live TV / IPTV portals ───────────────────────────────────────────
+    r"ustvgo\.(?:tv|club|live)", r"tvpato2?\.(?:online|net)", r"stream2watch\.(?:live|ws|to|me)",
+    r"distrotv\.com", r"tvguo\.[a-z]+", r"freeshot\.live", r"pixelsport\.\w+", r"okru\.link",
+]
+_STREAM_SITE_RE = re.compile(
+    r"^https?://(?:[a-z0-9-]+\.)?(?:" + "|".join(_STREAM_SITE_DOMAINS) + r")(?:[/?#]|$)", re.I)
+
+
 async def _jav_stream_from_html(html: str, base_url: str,
                                 c: "httpx.AsyncClient", hdr: dict) -> Optional[tuple[str, str]]:
     """Return (stream_url, kind) where kind is 'm3u8' or 'mp4', or None."""
-    m3u8 = _extract_m3u8(html)
-    if m3u8:
-        return (m3u8 if m3u8.startswith("http") else _origin(base_url) + m3u8, "m3u8")
-    mp4 = _extract_mp4(html)
-    if mp4:
-        return (mp4 if mp4.startswith("http") else _origin(base_url) + mp4, "mp4")
-    # Follow the first plausible iframe player
-    for fr in re.findall(r'<iframe[^>]+src=["\']([^"\']+)["\']', html, re.I)[:3]:
-        if fr.startswith("//"):
-            fr = "https:" + fr
-        if not fr.startswith("http"):
+    return await _deep_stream_from_html(html, base_url, c, hdr, depth=2)
+
+
+def _abs_stream(u: str, base: str) -> str:
+    if u.startswith("http"):
+        return u
+    if u.startswith("//"):
+        return "https:" + u
+    if u.startswith("/"):
+        return _origin(base) + u
+    return urljoin(base, u)
+
+
+def _stream_in_text(text: str) -> Optional[tuple[str, str]]:
+    """Direct m3u8/mp4, JWPlayer sources arrays, or packed-JS variants."""
+    m = _extract_m3u8(text)
+    if m:
+        return (m, "m3u8")
+    # sources:[{file:"...",...}] / "sources":["..."] / {"src":"...","type":"application/x-mpegURL"}
+    for pat in (
+        r'"?(?:file|src|url|hls|source|playlist)"?\s*:\s*"(https?://[^"]+?\.m3u8[^"]*)"',
+        r"'(?:file|src|url|hls)'\s*:\s*'(https?://[^']+?\.m3u8[^']*)'",
+        r'"(https?://[^"]+?\.m3u8[^"]*)"',
+    ):
+        mm = re.search(pat, text, re.I)
+        if mm:
+            return (mm.group(1), "m3u8")
+    m4 = _extract_mp4(text)
+    if m4:
+        return (m4, "mp4")
+    for pat in (
+        r'"?(?:file|src|url|source)"?\s*:\s*"(https?://[^"]+?\.mp4[^"]*)"',
+        r'"(https?://[^"]+?\.mp4[^"]*)"',
+    ):
+        mm = re.search(pat, text, re.I)
+        if mm:
+            return (mm.group(1), "mp4")
+    return None
+
+
+_EMBED_RESOLVER_CACHE: list = []
+def _embed_resolvers() -> list:
+    """(regex, resolver) pairs for known video-embed hosts — built lazily so it
+    can reference resolvers defined later in the file."""
+    if _EMBED_RESOLVER_CACHE:
+        return _EMBED_RESOLVER_CACHE
+    for name in ("FILEMOON", "STREAMWISH", "VOE", "DOODSTREAM", "MIXDROP", "STREAMSB",
+                 "STREAMTAPE", "MP4UPLOAD", "SENDVID", "FEMBED", "UQLOAD", "VIDOZA",
+                 "UPSTREAM", "KWIK", "STREAMLARE", "VIDMOLY", "SUPERVIDEO", "NETU",
+                 "CLIPWATCHING", "EVOLOAD", "VIDLOX", "JETLOAD", "SIBNET"):
+        rx = globals().get(f"_{name}_RE")
+        fn = globals().get(f"_resolve_{name.lower()}")
+        if rx and fn:
+            _EMBED_RESOLVER_CACHE.append((rx, fn))
+    return _EMBED_RESOLVER_CACHE
+
+
+async def _deep_stream_from_html(html: str, base_url: str, c: "httpx.AsyncClient",
+                                 hdr: dict, depth: int = 2) -> Optional[tuple[str, str]]:
+    hit = _stream_in_text(html)
+    if hit:
+        u, k = hit
+        return (_abs_stream(u, base_url), k)
+    if depth <= 0:
+        return None
+
+    # Known embed hosts get handed to their dedicated resolver.
+    frames = re.findall(r'<iframe[^>]+(?:src|data-src)=["\']([^"\']+)["\']', html, re.I)
+    frames += re.findall(r'data-(?:embed|player|src|litespeed-src)=["\'](https?:[^"\']+)["\']', html, re.I)
+    seen: set[str] = set()
+    for fr in frames[:5]:
+        fr = _abs_stream(fr.strip(), base_url)
+        if fr in seen or not fr.startswith("http"):
             continue
-        if any(x in fr for x in ("disqus", "google", "facebook", "twitter", "ads")):
+        seen.add(fr)
+        if any(x in fr for x in ("disqus", "/ads", "adsco", "googletag", "facebook.com",
+                                 "twitter.com", "youtube.com/embed", "recaptcha")):
             continue
+        for rx, resolver in _embed_resolvers():
+            if rx.match(fr):
+                try:
+                    s = await resolver(fr)
+                    if s:
+                        return (s, "m3u8" if ".m3u8" in s else "mp4")
+                except Exception:
+                    pass
         try:
-            fr_r = await c.get(fr, headers={**hdr, "Referer": base_url})
-            inner = _extract_m3u8(fr_r.text)
+            fr_r = await c.get(fr, headers={**hdr, "Referer": base_url}, timeout=20)
+            inner = await _deep_stream_from_html(fr_r.text, fr, c, hdr, depth - 1)
             if inner:
-                return (inner, "m3u8")
-            inner = _extract_mp4(fr_r.text)
-            if inner:
-                return (inner, "mp4")
+                return inner
         except Exception:
             continue
     return None
 
 
 async def _analyze_jav_stream(url: str) -> dict:
-    title = "Video"
+    title = _url_title(url).replace("-", " ").replace("_", " ").strip() or "Video"
     poster = None
     try:
         async with httpx.AsyncClient(follow_redirects=True, timeout=20,
@@ -2704,16 +2841,23 @@ async def _analyze_jav_stream(url: str) -> dict:
                                      headers={"User-Agent": _ua()}) as c:
             r = await c.get(url)
             mt = re.search(r'<meta[^>]+property=["\']og:title["\'][^>]+content=["\']([^"\']+)', r.text, re.I) \
-                or re.search(r'<title[^>]*>([^<|]+)', r.text, re.I)
+                or re.search(r'<h1[^>]*>([^<]{3,150})</h1>', r.text, re.I) \
+                or re.search(r'<title[^>]*>([^<|–—-]{3,150})', r.text, re.I)
             if mt:
-                title = _safe(mt.group(1).strip())
-            mp = re.search(r'<meta[^>]+property=["\']og:image["\'][^>]+content=["\']([^"\']+)', r.text, re.I)
+                title = _safe(re.sub(r'\s+', ' ', mt.group(1)).strip())
+            mp = re.search(r'<meta[^>]+(?:property|name)=["\'](?:og:image|twitter:image)["\'][^>]+content=["\']([^"\']+)', r.text, re.I)
             if mp:
-                poster = mp.group(1)
+                poster = _abs_stream(mp.group(1), url)
     except Exception:
         pass
-    return {"type": "video", "title": title, "url": url, "extractor": "jav-stream",
-            "thumbnail": poster, "qualities": [], "video_formats": STREAM_FORMATS + AUDIO_FORMATS}
+    try:
+        host = re.sub(r"^www\d*\.", "", (urlparse(url).hostname or ""))
+        extractor = host.split(".")[0] or "stream-site"
+    except Exception:
+        extractor = "stream-site"
+    return {"type": "video", "title": title, "url": url, "extractor": extractor,
+            "thumbnail": poster, "qualities": [], "video_formats": STREAM_FORMATS + AUDIO_FORMATS,
+            "note": "Aggregator site — resolved via page scrape + headless capture."}
 
 
 async def _dl_jav_stream(req: DownloadReq, job_dir: Path):
@@ -5079,6 +5223,7 @@ async def _do_analyze(url: str) -> dict:
     if _HQPORNER_RE.match(url):      return await _analyze_hqporner(url)
     if _JAVBUS_RE.match(url):        return await _analyze_javbus(url)
     if _JAV_STREAM_RE.match(url):    return await _analyze_jav_stream(url)
+    if _STREAM_SITE_RE.match(url):   return await _analyze_jav_stream(url)
     # 0. Torrent / magnet
     if url.startswith("magnet:") or url.split("?")[0].lower().endswith(".torrent"):
         name = "torrent"
@@ -5799,6 +5944,16 @@ async def _universal_fallback(req: DownloadReq, job_dir: Path, cookie_file: Opti
             return
 
 
+def _rm_empty(job_dir: Path) -> None:
+    """Remove a job dir that produced nothing, so a failed download leaves no trace."""
+    try:
+        if job_dir.exists() and not any(f.is_file() and f.stat().st_size > 0
+                                        for f in job_dir.rglob("*")):
+            shutil.rmtree(job_dir, ignore_errors=True)
+    except Exception:
+        pass
+
+
 def _sweep_stale(max_age_min: int = 30) -> None:
     """Opportunistic (no background task): drop job dirs older than N minutes.
     A completed job whose files were never fetched would otherwise linger since
@@ -5887,6 +6042,7 @@ async def download(req: DownloadReq):
             elif _HQPORNER_RE.match(req.url):      await _dl_hqporner(req, job_dir)
             elif _JAVBUS_RE.match(req.url):        await _dl_javbus(req, job_dir)
             elif _JAV_STREAM_RE.match(req.url):    await _dl_jav_stream(req, job_dir)
+            elif _STREAM_SITE_RE.match(req.url):   await _dl_jav_stream(req, job_dir)
             elif req.capture and req.media_type == "video":
                 await _dl_capture(req, job_dir)
             elif req.media_type in ("playlist","profile"):
@@ -5921,11 +6077,11 @@ async def download(req: DownloadReq):
             except Exception: pass
             return {"success":True, "files":[f.name for f in saved]}
         except HTTPException:
+            _rm_empty(job_dir)
             raise
         except Exception as e:
             msg = str(e)[:600]
-            if job_dir.exists() and not any(job_dir.iterdir()):
-                shutil.rmtree(job_dir, ignore_errors=True)
+            _rm_empty(job_dir)
             await _prog(req.job_id, {"status":"failed","progress":0,"error":msg})
             raise HTTPException(500, msg)
         finally:
