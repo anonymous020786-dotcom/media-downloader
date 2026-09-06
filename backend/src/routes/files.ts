@@ -69,10 +69,13 @@ router.get('/:jobId', optionalAuth, async (req, res) => {
   if (!fs.existsSync(dir)) { res.status(404).json({ error: 'Not found' }); return }
   const files = fs.readdirSync(dir)
     .filter((f) => { try { return fs.statSync(path.join(dir, f)).isFile() } catch { return false } })
+    // Hide download leftovers — a half-written .part must never be delivered.
+    .filter((f) => !/\.(part|ytdl|temp|tmp|download|aria2|crdownload)$/i.test(f) && !/\.part-/i.test(f))
     .map((name) => {
       const stat = fs.statSync(path.join(dir, name))
       return { name, size: stat.size, mime: getMime(name) }
     })
+    .filter((f) => f.size > 0)
   res.json(files)
 })
 

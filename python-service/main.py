@@ -5931,8 +5931,41 @@ async def list_playlist_items(req: AnalyzeReq):
         raise HTTPException(400, str(e)[:300])
 
 
+_PARTIAL_SUFFIXES = (".part", ".ytdl", ".temp", ".tmp", ".download", ".aria2", ".crdownload")
+_MEDIA_EXTS = {".mp4",".mkv",".webm",".mov",".avi",".flv",".ts",".m4v",".mpg",".mpeg",".3gp",".m2ts",
+               ".mp3",".m4a",".opus",".ogg",".oga",".flac",".wav",".aac",".wma",".mka",
+               ".jpg",".jpeg",".png",".webp",".gif",".bmp",".tiff",".heic",".avif",
+               ".pdf",".zip",".cbz",".epub",".srt",".vtt",".ass"}
+
+def _is_partial(name: str) -> bool:
+    n = name.lower()
+    return n.endswith(_PARTIAL_SUFFIXES) or ".part-" in n or n.endswith(".part.mp4")
+
+def _clean_partials(job_dir: Path) -> None:
+    """Delete yt-dlp/httpx leftovers so a half-download never gets delivered."""
+    try:
+        for f in job_dir.iterdir():
+            if f.is_file() and (_is_partial(f.name) or f.stat().st_size == 0):
+                f.unlink(missing_ok=True)
+    except Exception:
+        pass
+
+def _real_files(job_dir: Path) -> list[str]:
+    """Completed output files only — no partials, no 0-byte stubs."""
+    if not job_dir.exists():
+        return []
+    return sorted(f.name for f in job_dir.iterdir()
+                  if f.is_file() and not _is_partial(f.name) and f.stat().st_size > 0)
+
+def _has_media(job_dir: Path, kinds=("video", "audio")) -> bool:
+    """True if a real video/audio file landed (a lone thumbnail .jpg doesn't count)."""
+    vid = {".mp4",".mkv",".webm",".mov",".avi",".flv",".ts",".m4v",".mpg",".mpeg",".3gp",".m2ts"}
+    aud = {".mp3",".m4a",".opus",".ogg",".oga",".flac",".wav",".aac",".wma",".mka"}
+    want = (vid if "video" in kinds else set()) | (aud if "audio" in kinds else set())
+    return any(Path(n).suffix.lower() in want for n in _real_files(job_dir))
+
 def _has_files(job_dir: Path) -> bool:
-    return job_dir.exists() and any(f.is_file() for f in job_dir.iterdir())
+    return len(_real_files(job_dir)) > 0
 
 
 async def _universal_fallback(req: DownloadReq, job_dir: Path, cookie_file: Optional[str]):
@@ -5954,14 +5987,16 @@ async def _universal_fallback(req: DownloadReq, job_dir: Path, cookie_file: Opti
         lambda: _dl_gallery_dl(req.url, req.job_id, job_dir, cookie_file, req.proxy, max_items=req.max_items),
         lambda: _dl_direct(req.url, req.job_id, job_dir, req.format, proxy=req.proxy),
     ]
+    want_media = req.media_type in ("video", "audio") or (req.format or "").lower() in AUDIO_FORMATS
     for attempt in chain:
         try:
             await attempt()
         except Exception:
             pass
-        if _has_files(job_dir):
-            files = [f.name for f in job_dir.iterdir() if f.is_file()]
-            await _prog(req.job_id, {"status": "completed", "progress": 100, "files": files})
+        _clean_partials(job_dir)
+        if _has_files(job_dir) and (not want_media or _has_media(job_dir)):
+            await _prog(req.job_id, {"status": "completed", "progress": 100,
+                                     "files": _real_files(job_dir)})
             return
 
 
@@ -6080,23 +6115,35 @@ async def download(req: DownloadReq):
                 await _dl_page(req, job_dir, cookie_file)
 
             # Universal safety net: whatever the declared media_type, if the
-            # primary path produced nothing, try every generic engine before
-            # giving up. This is what makes essentially any URL downloadable.
-            if not _has_files(job_dir) and not (req.capture and req.media_type == "video"):
+            # primary path produced nothing usable, try every generic engine
+            # before giving up. A half-written .part / lone thumbnail is NOT
+            # usable — _has_files / _has_media ignore those.
+            want_media = req.media_type in ("video", "audio") or \
+                (req.format or "").lower() in AUDIO_FORMATS
+            need_fallback = (
+                not _has_files(job_dir)
+                or (want_media and not _has_media(job_dir))
+            )
+            if need_fallback and not (req.capture and req.media_type == "video"):
                 await _universal_fallback(req, job_dir, cookie_file)
 
-            # Guard: if nothing actually landed on disk, this is a failure, not a success
-            saved = [f for f in job_dir.iterdir() if f.is_file()] if job_dir.exists() else []
-            if not saved:
-                shutil.rmtree(job_dir, ignore_errors=True)   # don't leave an empty dir behind
-                await _prog(req.job_id, {"status":"failed","progress":0,
-                    "error":"No file could be downloaded — the source may block direct "
-                            "downloads, require login (add cookies), or be DRM-protected."})
-                raise HTTPException(500, "No files downloaded")
+            # Drop yt-dlp/httpx leftovers, then decide success on what's REAL.
+            _clean_partials(job_dir)
+            saved = _real_files(job_dir)
+            media_ok = (not want_media) or _has_media(job_dir)
+            if not saved or not media_ok:
+                shutil.rmtree(job_dir, ignore_errors=True)   # don't leave a dir behind
+                err = ("The download was interrupted — the source stopped sending data "
+                       "before the file was complete. Try again."
+                       if saved else
+                       "No file could be downloaded — the source may block direct "
+                       "downloads, require login (add cookies), or be DRM-protected.")
+                await _prog(req.job_id, {"status":"failed","progress":0,"error":err})
+                raise HTTPException(502, err)
             # Mark complete so a re-delivered job won't re-download (idempotency).
             try: await _aredis.set(f"dl:done:{req.job_id}", "1", ex=7*86400)
             except Exception: pass
-            return {"success":True, "files":[f.name for f in saved]}
+            return {"success":True, "files":saved}
         except HTTPException:
             _rm_empty(job_dir)
             raise
@@ -6302,11 +6349,18 @@ async def _dl_file(req: DownloadReq, job_dir: Path):
                         _prog_s(req.job_id, {"status":"downloading","progress":min(95,int(done/total*95)),
                                               "downloaded":done,"total":total})
 
-    # Finalize: rename .part → unique final name
+    # Finalize — but only if the file is actually complete. A truncated stream
+    # (server closed early, CDN hiccup) must fail, not deliver a broken file.
+    got = part.stat().st_size if part.exists() else 0
+    if got == 0:
+        part.unlink(missing_ok=True)
+        raise RuntimeError("source sent no data")
+    if total and got < total * 0.999:
+        part.unlink(missing_ok=True)
+        raise RuntimeError(f"download truncated at {got}/{total} bytes — source closed the connection early")
     target = _uniq(job_dir, _safe(name))
     part.rename(target)
-    files = [f.name for f in job_dir.iterdir() if f.is_file()]
-    await _prog(req.job_id, {"status":"completed","progress":100,"files":files})
+    await _prog(req.job_id, {"status":"completed","progress":100,"files":_real_files(job_dir)})
 
 
 async def _dl_torrent(req: DownloadReq, job_dir: Path):
@@ -6955,7 +7009,10 @@ def _ytdlp_dl(
         else:
             raise
 
-    files = [f.name for f in job_dir.iterdir() if f.is_file()]
+    _clean_partials(job_dir)
+    files = _real_files(job_dir)
+    if not files:
+        raise RuntimeError("yt-dlp finished but left no complete file (download interrupted).")
     _prog_s(job_id,{"status":"completed","progress":100,"files":files,
                     "completed_files":downloaded[0],"total_files":total_items[0] or len(files)})
 

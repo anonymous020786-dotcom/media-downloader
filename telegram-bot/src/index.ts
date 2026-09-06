@@ -1,3 +1,6 @@
+import fs from 'fs'
+import path from 'path'
+import { fileURLToPath } from 'url'
 import { Telegraf } from 'telegraf'
 import type { BotContext } from './types.js'
 import { config, isAllowed } from './config.js'
@@ -130,7 +133,35 @@ bot.catch((err, ctx) => {
 })
 
 // ── Boot ────────────────────────────────────────────────────────────────────
+// ── Single-instance lock ────────────────────────────────────────────────────
+// Two bots polling one token → Telegram 409 Conflict → updates handled
+// erratically ("download never arrives"). Refuse to start if another is alive.
+const LOCK = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'data', 'bot.lock')
+function pidAlive(pid: number): boolean {
+  try { process.kill(pid, 0); return true } catch (e: any) { return e.code === 'EPERM' }
+}
+async function acquireLock() {
+  let prev = 0
+  try { prev = Number(fs.readFileSync(LOCK, 'utf8').trim()) } catch { /* none */ }
+  if (prev && prev !== process.pid && pidAlive(prev)) {
+    // Could be a `tsx watch` reload where the old child is still exiting —
+    // give it a moment before giving up.
+    for (let i = 0; i < 15 && pidAlive(prev); i++) await new Promise((r) => setTimeout(r, 200))
+    if (pidAlive(prev)) {
+      console.error(`[bot] another instance is already running (pid ${prev}). ` +
+        `Stop it first, or delete ${LOCK} if it's stale. Exiting.`)
+      process.exit(1)
+    }
+  }
+  fs.mkdirSync(path.dirname(LOCK), { recursive: true })
+  fs.writeFileSync(LOCK, String(process.pid))
+}
+function releaseLock() {
+  try { if (Number(fs.readFileSync(LOCK, 'utf8').trim()) === process.pid) fs.unlinkSync(LOCK) } catch { /* */ }
+}
+
 async function main() {
+  await acquireLock()
   try {
     const h = await api.health()
     console.log(`[bot] backend OK — v${h.version ?? '?'}`)
@@ -147,7 +178,8 @@ async function main() {
   console.log(`[bot] @${me.username} is live. Allowed users: ${config.allowAll ? 'ALL' : config.allowedUsers.join(', ') || '(NONE — message the bot to get your id)'}`)
 }
 
-process.once('SIGINT', () => { store.flush(); bot.stop('SIGINT') })
-process.once('SIGTERM', () => { store.flush(); bot.stop('SIGTERM') })
+process.once('SIGINT', () => { releaseLock(); store.flush(); bot.stop('SIGINT') })
+process.once('SIGTERM', () => { releaseLock(); store.flush(); bot.stop('SIGTERM') })
+process.once('exit', releaseLock)
 
-main().catch((e) => { console.error('[bot] fatal:', e); process.exit(1) })
+main().catch((e) => { console.error('[bot] fatal:', e); releaseLock(); process.exit(1) })
