@@ -65,10 +65,16 @@ def _find_bin(name: str, *extra_globs: str) -> Optional[str]:
 
 
 _WG = os.path.join(os.getenv("LOCALAPPDATA", ""), "Microsoft", "WinGet", "Packages")
-ARIA2C_BIN = _find_bin("aria2c", os.path.join(_WG, "aria2.aria2*", "**", "aria2c.exe"))
+# DISABLE_ARIA2C=1 forces the yt-dlp native downloader. aria2c is fast but on
+# some Windows setups it dies with 0xC0000142 (STATUS_DLL_INIT_FAILED) when
+# spawned under concurrency — a crashing downloader is worse than a slow one.
+if os.getenv("DISABLE_ARIA2C", "").strip() in ("1", "true", "yes"):
+    ARIA2C_BIN = None
+else:
+    ARIA2C_BIN = _find_bin("aria2c", os.path.join(_WG, "aria2.aria2*", "**", "aria2c.exe"))
 FFMPEG_BIN = _find_bin("ffmpeg", os.path.join(_WG, "*FFmpeg*", "**", "ffmpeg.exe"),
                                  os.path.join(_WG, "*ffmpeg*", "**", "ffmpeg.exe"))
-print(f"[startup] aria2c: {ARIA2C_BIN or 'not found — yt-dlp native downloader (slower)'}")
+print(f"[startup] aria2c: {ARIA2C_BIN or 'disabled — yt-dlp native downloader'}")
 print(f"[startup] ffmpeg: {FFMPEG_BIN or 'not found — merges/HLS/streaming will fail'}")
 
 # ── Output format catalogue (offered in the UI; ffmpeg does the conversion) ──

@@ -1,8 +1,9 @@
 // Run the project's Python — prefers the local venv (.venv), falls back to PATH.
 // Also makes sure ffmpeg is reachable (Windows winget installs it but only adds
 // it to PATH for new shells).
-import { existsSync, readdirSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { spawnSync, spawn } from 'node:child_process'
+import { fileURLToPath } from 'node:url'
 import path from 'node:path'
 import os from 'node:os'
 
@@ -10,8 +11,19 @@ const win = path.join('.venv', 'Scripts', 'python.exe')
 const nix = path.join('.venv', 'bin', 'python')
 const py = existsSync(win) ? win : existsSync(nix) ? nix : 'python'
 
-// ── ffmpeg on PATH? ──────────────────────────────────────────────────────────
+// ── .env → environment (the backend loads it via dotenv; Python needs it too:
+//    DOWNLOAD_DIR, MAX_CONCURRENT_DOWNLOADS, DISABLE_ARIA2C, VERIFY_SSL, …). ──
 const env = { ...process.env }
+try {
+  const envPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '.env')
+  for (const line of readFileSync(envPath, 'utf8').split(/\r?\n/)) {
+    const m = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/)
+    if (!m || line.trimStart().startsWith('#')) continue
+    const key = m[1]
+    let val = m[2].trim().replace(/^["']|["']$/g, '')
+    if (env[key] === undefined) env[key] = val   // real env wins over .env
+  }
+} catch { /* no .env — fine */ }
 const hasFfmpeg = spawnSync(process.platform === 'win32' ? 'where' : 'which', ['ffmpeg'], { stdio: 'ignore' }).status === 0
 if (!hasFfmpeg && process.platform === 'win32') {
   const roots = [
