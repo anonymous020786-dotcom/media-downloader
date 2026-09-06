@@ -78,16 +78,22 @@ async function run() {
     const d = await getJSON(`${API}/api/jobs/00000000-0000-0000-0000-000000000000/state`)
     assert(typeof d.status === 'string', `got ${JSON.stringify(d)}`)
   })
-  await test('stream: pipe a video with NO staging dir', async () => {
+  await test('stream: proxy a progressive video with NO staging dir', async () => {
     const hdr = { 'Content-Type': 'application/json', ...(INTERNAL_KEY ? { 'X-Internal-Key': INTERNAL_KEY } : {}) }
     const { url } = await getJSON(`${API}/api/stream`, { method: 'POST', headers: hdr,
-      body: JSON.stringify({ url: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ', quality: '360', format: 'mp4' }) })
+      body: JSON.stringify({ url: 'https://test-videos.co.uk/vids/bigbuckbunny/mp4/h264/360/Big_Buck_Bunny_360_10s_1MB.mp4', format: 'mp4' }) })
     assert(/\/api\/stream\/[0-9a-f-]{36}$/.test(url), `bad link ${url}`)
     const r = await fetch(url, { headers: { Range: 'bytes=0-1048575' } })
     assert(r.ok, `stream GET → ${r.status}`)
     const buf = Buffer.from(await r.arrayBuffer())
     assert(buf.length > 100_000, `only got ${buf.length} bytes`)
     assert(buf.subarray(4, 8).toString() === 'ftyp', 'not an MP4')
+  })
+  await test('stream: YouTube DASH quality rejects at POST (routed to queue)', async () => {
+    const hdr = { 'Content-Type': 'application/json', ...(INTERNAL_KEY ? { 'X-Internal-Key': INTERNAL_KEY } : {}) }
+    const r = await fetch(`${API}/api/stream`, { method: 'POST', headers: hdr,
+      body: JSON.stringify({ url: 'https://www.youtube.com/watch?v=aqz-KE-bpKQ', quality: '1080', format: 'mp4' }) })
+    assert(r.status === 422, `expected 422, got ${r.status}`)
   })
   await test('stream: playlist link rejects at POST (422 → caller falls back to queue)', async () => {
     const hdr = { 'Content-Type': 'application/json', ...(INTERNAL_KEY ? { 'X-Internal-Key': INTERNAL_KEY } : {}) }

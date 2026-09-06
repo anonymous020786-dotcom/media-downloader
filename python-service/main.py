@@ -942,38 +942,21 @@ async def _resolve_stream_plan(req: StreamReq) -> dict:
                 "mime": f"video/{'mp4' if ext in ('mp4','m4v','mov') else ext}",
                 "filename": f"{title}.{ext}", "size": best.get("filesize") or best.get("filesize_approx")}
 
-    # ── HLS master/variant → ffmpeg remux to fragmented mp4 ──────────────
+    # ── Anything that needs an ffmpeg video remux (HLS, or separate DASH
+    #    video+audio) → the download QUEUE, not a live pipe. A piped fragmented
+    #    mp4/webm has no moov index and no Content-Length, so any hiccup (a
+    #    dropped mobile connection, an expiring googlevideo URL) leaves a
+    #    truncated file that players report as "corrupt". The queue does a
+    #    proper merge + `+faststart` and serves a real, seekable file.
     hls = [f for f in fmts if _is_hls(f) and _has_v(f) and (cap is None or _h(f) <= cap)]
-    hls_url = (max(hls, key=_h)["url"] if hls
-              else (info["url"] if info.get("url") and ".m3u8" in info["url"] else None))
-    if hls_url:
-        cmd = [FFMPEG_BIN or "ffmpeg", "-hide_banner", "-loglevel", "error",
-               *_ff_headers(info.get("http_headers")), "-i", hls_url,
-               "-c", "copy", "-bsf:a", "aac_adtstoasc",
-               "-movflags", "frag_keyframe+empty_moov+default_base_moof", "-f", "mp4", "pipe:1"]
-        mid = _stash_mux(cmd, "video/mp4", f"{title}.mp4")
-        return {"mode": "mux", "mux_id": mid}
-
-    # ── Separate video + audio (DASH) → ffmpeg mux, copy when possible ───
+    has_hls = bool(hls) or bool(info.get("url") and ".m3u8" in (info.get("url") or ""))
     vids = [f for f in fmts if _has_v(f) and not _has_a(f) and (cap is None or _h(f) <= cap)]
     auds = [f for f in fmts if _has_a(f) and not _has_v(f)]
-    if vids and auds:
-        # prefer mp4-container-friendly (avc1 + m4a/aac); else webm (vp9/av01 + opus)
-        mp4v = [f for f in vids if (f.get("vcodec") or "").startswith(("avc1", "h264"))]
-        v = max(mp4v or vids, key=lambda f: (_h(f), f.get("tbr") or 0))
-        container = "mp4" if (v.get("vcodec") or "").startswith(("avc1", "h264")) else "webm"
-        a_pool = [f for f in auds if (f.get("ext") == ("m4a" if container == "mp4" else "webm"))] or auds
-        a = max(a_pool, key=lambda f: f.get("abr") or f.get("tbr") or 0)
-        cmd = [FFMPEG_BIN or "ffmpeg", "-hide_banner", "-loglevel", "error",
-               *_ff_headers(v.get("http_headers")), "-i", v["url"],
-               *_ff_headers(a.get("http_headers")), "-i", a["url"],
-               "-map", "0:v:0", "-map", "1:a:0", "-c", "copy",
-               "-movflags", "frag_keyframe+empty_moov+default_base_moof",
-               "-f", container, "pipe:1"]
-        mid = _stash_mux(cmd, f"video/{container}", f"{title}.{container}")
-        return {"mode": "mux", "mux_id": mid}
+    if has_hls or (vids and auds):
+        return {"mode": "unsupported",
+                "reason": "This quality needs an ffmpeg merge — routed to the download queue for a clean, seekable file."}
 
-    return {"mode": "unsupported", "reason": "This source can't be streamed at the chosen quality — try 'download' instead."}
+    return {"mode": "unsupported", "reason": "This source can't be streamed at the chosen quality — use the download queue instead."}
 
 def _stash_mux(cmd: list, mime: str, filename: str) -> str:
     import uuid as _uuid, time as _t
