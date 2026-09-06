@@ -4,8 +4,8 @@ import { api, type JobProgress } from './api.js'
 import { config, fileLink } from './config.js'
 import { bytes, esc, renderProgress, truncate } from './format.js'
 
-const POLL_MS = 2_000
-const EDIT_MS = 3_500 // Telegram allows ~1 edit/sec/chat; stay well under
+const POLL_MS = 1_500
+const EDIT_MS = 2_500 // Telegram allows ~1 edit/sec/chat; stay well under
 
 interface TrackOpts {
   header: string

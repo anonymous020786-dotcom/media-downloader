@@ -75,6 +75,27 @@ else:
 FFMPEG_BIN = _find_bin("ffmpeg", os.path.join(_WG, "*FFmpeg*", "**", "ffmpeg.exe"),
                                  os.path.join(_WG, "*ffmpeg*", "**", "ffmpeg.exe"))
 print(f"[startup] aria2c: {ARIA2C_BIN or 'disabled — yt-dlp native downloader'}")
+
+# aria2c self-heal: if it ever dies with 0xC0000142 (a Windows DLL-init crash
+# that strikes only under process-spawn pressure), stop handing downloads to it
+# for the rest of this run — the native downloader is slower but reliable.
+_ARIA2C_OK = True
+
+def _aria2c_enabled() -> bool:
+    return bool(ARIA2C_BIN) and _ARIA2C_OK
+
+class _YDLLog:
+    """Minimal yt-dlp logger that watches for the aria2c crash and trips the
+    self-heal flag so the retry (and every later job) skips aria2c."""
+    def debug(self, m=""):   self._scan(m)
+    def info(self, m=""):    self._scan(m)
+    def warning(self, m=""): self._scan(m)
+    def error(self, m=""):   self._scan(m);
+    def _scan(self, m):
+        global _ARIA2C_OK
+        if _ARIA2C_OK and isinstance(m, str) and "aria2c exited with code" in m:
+            _ARIA2C_OK = False
+            print("[aria2c] crashed — falling back to the native downloader for this session")
 print(f"[startup] ffmpeg: {FFMPEG_BIN or 'not found — merges/HLS/streaming will fail'}")
 
 # ── Output format catalogue (offered in the UI; ffmpeg does the conversion) ──
@@ -6811,11 +6832,12 @@ def _ytdlp_dl(
         "concurrent_fragment_downloads": max(1, min(16, concurrent_fragments)),
         "continuedl": True,             # resume interrupted downloads
         "http_chunk_size": 10485760,    # 10 MB chunks — beats per-request throttling
+        "logger": _YDLLog(),
 
         # Speed: aria2c multi-connection for plain HTTP(S) (YouTube progressive,
-        # direct files) — only when aria2c is actually installed. HLS/DASH stay on
-        # yt-dlp's native concurrent-fragment downloader.
-        **({"external_downloader": {"http": ARIA2C_BIN, "https": ARIA2C_BIN}} if ARIA2C_BIN else {}),
+        # direct files) — only when aria2c is installed AND hasn't crashed this
+        # run. HLS/DASH stay on yt-dlp's native concurrent-fragment downloader.
+        **({"external_downloader": {"http": ARIA2C_BIN, "https": ARIA2C_BIN}} if _aria2c_enabled() else {}),
 
         # Access: bypass geo-blocks, SSL issues, and age gates (adult/social sites)
         "geo_bypass": True,
@@ -6901,19 +6923,37 @@ def _ytdlp_dl(
         except Exception:
             pass
 
-    with yt_dlp.YoutubeDL(opts) as ydl:
-        # Pre-count playlist
-        if is_playlist:
-            try:
-                info = ydl.extract_info(url, download=False)
-                entries = list(info.get("entries") or [])
-                if max_items:
-                    entries = entries[:max_items]
-                total_items[0] = len(entries)
-                _prog_s(job_id,{"status":"downloading","progress":1,
-                                "total_files":total_items[0],"completed_files":0})
-            except Exception: pass
-        ydl.download([url])
+    def _run(o):
+        with yt_dlp.YoutubeDL(o) as ydl:
+            # Pre-count playlist
+            if is_playlist:
+                try:
+                    info = ydl.extract_info(url, download=False)
+                    entries = list(info.get("entries") or [])
+                    if max_items:
+                        entries = entries[:max_items]
+                    total_items[0] = len(entries)
+                    _prog_s(job_id,{"status":"downloading","progress":1,
+                                    "total_files":total_items[0],"completed_files":0})
+                except Exception: pass
+            ydl.download([url])
+
+    aria_was_on = bool(opts.get("external_downloader"))
+    try:
+        _run(opts)
+    except Exception:
+        # If aria2c crashed mid-download (flag just tripped), retry once on the
+        # native downloader before giving up.
+        if aria_was_on and not _ARIA2C_OK:
+            _prog_s(job_id,{"status":"downloading","progress":1,
+                            "note":"switching to the native downloader…"})
+            for k in list(job_dir.iterdir()):
+                try: k.unlink()
+                except Exception: pass
+            opts.pop("external_downloader", None)
+            _run(opts)
+        else:
+            raise
 
     files = [f.name for f in job_dir.iterdir() if f.is_file()]
     _prog_s(job_id,{"status":"completed","progress":100,"files":files,
