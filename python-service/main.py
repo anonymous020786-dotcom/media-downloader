@@ -2086,6 +2086,42 @@ def _unpack_packer(html: str) -> Optional[str]:
     return re.sub(r'\b\w+\b', _replace, p_code)
 
 
+_FFMPEG_TIME_RE = re.compile(r"time=(\d+):(\d{2}):(\d{2})")
+_FFMPEG_DURATION_RE = re.compile(r"Duration:\s*(\d+):(\d{2}):(\d{2})")
+
+def _hms_to_seconds(h: str, m: str, s: str) -> int:
+    return int(h) * 3600 + int(m) * 60 + int(s)
+
+async def _pump_ffmpeg_progress(
+    proc: "asyncio.subprocess.Process", job_id: str, tail: Optional[list] = None,
+) -> None:
+    """Reports real download percentage from ffmpeg's own 'Duration:' (total)
+    and 'time=' (elapsed) lines. Falls back to a fixed midpoint when the
+    input has no discoverable duration (e.g. some live HLS manifests) —
+    still better than the old behaviour of always reporting 50% regardless
+    of actual progress, which looked "stuck" for any download over a few
+    seconds long. `tail`, if given, collects the last lines for diagnostics
+    on failure.
+    """
+    assert proc.stdout
+    duration: Optional[int] = None
+    async for raw in proc.stdout:
+        line = raw.decode("utf-8", "ignore")
+        if tail is not None:
+            tail.append(line)
+            del tail[:-20]
+        if duration is None:
+            dm = _FFMPEG_DURATION_RE.search(line)
+            if dm:
+                duration = _hms_to_seconds(*dm.groups())
+        tm = _FFMPEG_TIME_RE.search(line)
+        if tm:
+            elapsed = _hms_to_seconds(*tm.groups())
+            pct = min(95, max(5, round(elapsed / duration * 100))) if duration else 50
+            _prog_s(job_id, {"status": "downloading", "progress": pct,
+                              "info": f"ffmpeg {tm.group(0)[5:]}"})
+
+
 async def _run_ffmpeg_hls(m3u8: str, out: Path, jid: str,
                           referer: str, proxy: Optional[str]) -> bool:
     """Download HLS stream via ffmpeg. Returns True on success."""
@@ -2098,15 +2134,8 @@ async def _run_ffmpeg_hls(m3u8: str, out: Path, jid: str,
     proc = await asyncio.create_subprocess_exec(
         *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
 
-    async def _pump():
-        assert proc.stdout
-        async for raw in proc.stdout:
-            mt = re.search(r"time=(\d+:\d+:\d+)", raw.decode("utf-8", "ignore"))
-            if mt:
-                _prog_s(jid, {"status": "downloading", "progress": 50,
-                               "info": f"ffmpeg {mt.group(1)}"})
     try:
-        await asyncio.wait_for(_pump(), timeout=7200)
+        await asyncio.wait_for(_pump_ffmpeg_progress(proc, jid), timeout=7200)
         await asyncio.wait_for(proc.wait(), timeout=60)
     except asyncio.TimeoutError:
         try: proc.kill()
@@ -4923,16 +4952,8 @@ async def _dl_pat_cdn(req: DownloadReq, job_dir: Path):
 
     proc = await asyncio.create_subprocess_exec(
         *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
-    async def _pump():
-        assert proc.stdout
-        async for raw in proc.stdout:
-            line = raw.decode("utf-8", "ignore")
-            mt = re.search(r"time=(\d+:\d+:\d+)", line)
-            if mt:
-                _prog_s(req.job_id, {"status": "downloading", "progress": 50,
-                                      "info": f"ffmpeg {mt.group(1)}"})
     try:
-        await asyncio.wait_for(_pump(), timeout=7200)
+        await asyncio.wait_for(_pump_ffmpeg_progress(proc, req.job_id), timeout=7200)
         await asyncio.wait_for(proc.wait(), timeout=60)
     except asyncio.TimeoutError:
         try: proc.kill()
@@ -5047,19 +5068,10 @@ async def _dl_pat_com(req: DownloadReq, job_dir: Path):
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
         )
-        ffmpeg_tail: list[str] = []
-        async def _pump_ffmpeg():
-            assert proc.stdout
-            async for raw in proc.stdout:
-                line = raw.decode("utf-8", "ignore")
-                ffmpeg_tail.append(line)
-                del ffmpeg_tail[:-20]
-                m_t = re.search(r"time=(\d+:\d+:\d+)", line)
-                if m_t:
-                    _prog_s(req.job_id, {"status": "downloading", "progress": 50,
-                                          "info": f"ffmpeg {m_t.group(1)}"})
+        ffmpeg_tail: list = []
         try:
-            await asyncio.wait_for(_pump_ffmpeg(), timeout=7200)
+            await asyncio.wait_for(
+                _pump_ffmpeg_progress(proc, req.job_id, tail=ffmpeg_tail), timeout=7200)
             await asyncio.wait_for(proc.wait(), timeout=60)
         except asyncio.TimeoutError:
             try: proc.kill()
