@@ -1,7 +1,6 @@
 [Unit]
 Description=MediaDL frontend (Next.js)
-After=network-online.target mediadl-api.service mediadl-web-fixup.service
-Requires=mediadl-web-fixup.service
+After=network-online.target mediadl-api.service
 Wants=network-online.target
 
 [Service]
