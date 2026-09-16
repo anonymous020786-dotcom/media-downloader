@@ -33,7 +33,8 @@ Send any link (video, image page, playlist, file host, torrent/magnet, HLS strea
 
 <b>Config</b>
 /settings — quality, format, subtitles, SponsorBlock, proxy, speed limit…
-/proxy · /cookies · /status · /sites · /engines · /whoami`
+/proxy · /cookies · /status · /sites · /engines · /whoami
+/adduser &lt;id&gt; — (admins) let another Telegram user use this bot`
 
 export function registerHelp(bot: Telegraf<BotContext>) {
   bot.help((ctx) => ctx.reply(HELP, { parse_mode: 'HTML', link_preview_options: { is_disabled: true } }))
@@ -67,5 +68,6 @@ export const COMMAND_LIST = [
   { command: 'sites', description: 'Supported sites' },
   { command: 'engines', description: 'Engine versions' },
   { command: 'whoami', description: 'Your id and access' },
+  { command: 'adduser', description: 'Admins: allow another user id' },
   { command: 'help', description: 'Full command list' },
 ]

@@ -1,0 +1,7 @@
+[Unit]
+Description=MediaDL idle-shutdown check
+After=network.target mediadl-api.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/bash @APP_DIR@/deploy/idle-shutdown.sh

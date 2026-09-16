@@ -1,4 +1,5 @@
 import 'dotenv/config'
+import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -8,8 +9,8 @@ import dotenv from 'dotenv'
 // `dotenv/config` above already loads the root `.env`. When it is started from
 // inside `telegram-bot/` instead, also pull in the repo-root file explicitly.
 const here = path.dirname(fileURLToPath(import.meta.url))
-dotenv.config({ path: path.resolve(here, '../../.env') })
-dotenv.config({ path: path.resolve(here, '../.env') })
+const ENV_PATHS = [path.resolve(here, '../../.env'), path.resolve(here, '../.env')]
+for (const p of ENV_PATHS) dotenv.config({ path: p })
 
 function bool(v: string | undefined, dflt = false): boolean {
   if (v == null || v === '') return dflt
@@ -114,6 +115,23 @@ export function isAdmin(userId: number | undefined): boolean {
   if (config.admins.length) return config.admins.includes(userId)
   // No explicit admin list → every allowed user is an admin (single-user local setup).
   return isAllowed(userId)
+}
+
+/** Adds a user id to the allow-list, in memory and in every .env file we loaded,
+ *  so it survives a bot restart. Returns false if the id was already allowed. */
+export function addAllowedUser(id: number): boolean {
+  if (config.allowedUsers.includes(id)) return false
+  config.allowedUsers.push(id)
+  const line = `TELEGRAM_ALLOWED_USERS=${config.allowedUsers.join(',')}`
+  for (const envPath of ENV_PATHS) {
+    if (!fs.existsSync(envPath)) continue
+    const content = fs.readFileSync(envPath, 'utf8')
+    const next = /^TELEGRAM_ALLOWED_USERS=.*$/m.test(content)
+      ? content.replace(/^TELEGRAM_ALLOWED_USERS=.*$/m, line)
+      : content.replace(/\s*$/, '\n') + line + '\n'
+    fs.writeFileSync(envPath, next)
+  }
+  return true
 }
 
 export function fileLink(jobId: string, filename?: string): string {

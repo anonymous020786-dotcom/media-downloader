@@ -1,7 +1,7 @@
 import { Telegraf } from 'telegraf'
 import type { BotContext } from '../types.js'
 import { api } from '../api.js'
-import { isAdmin } from '../config.js'
+import { addAllowedUser, isAdmin } from '../config.js'
 import { esc } from '../format.js'
 import { getSettings, resetSettings, saveSettings, setAwaiting, takeAwaiting } from '../session.js'
 import { settingsView } from '../ui.js'
@@ -30,6 +30,17 @@ export function registerManage(bot: Telegraf<BotContext>) {
       `handle: @${esc(u.username ?? '—')}\n` +
       `access: ${isAdmin(u.id) ? 'admin' : 'user'}\n` +
       `chat: <code>${ctx.chat?.id}</code> (${ctx.chat?.type})`,
+      { parse_mode: 'HTML' },
+    )
+  })
+
+  bot.command('adduser', async (ctx) => {
+    if (!isAdmin(ctx.from!.id)) return ctx.reply('⛔ Admins only.')
+    const id = Number(ctx.payload.trim().split(/\s+/)[0])
+    if (!Number.isFinite(id) || id <= 0) return ctx.reply('Usage: /adduser <telegram_id>')
+    const added = addAllowedUser(id)
+    return ctx.reply(
+      added ? `✅ <code>${id}</code> can now use this bot.` : `<code>${id}</code> was already allowed.`,
       { parse_mode: 'HTML' },
     )
   })

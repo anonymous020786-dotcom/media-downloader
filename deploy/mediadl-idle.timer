@@ -1,0 +1,10 @@
+[Unit]
+Description=Run MediaDL idle-shutdown check every 10 minutes
+
+[Timer]
+OnBootSec=10min
+OnUnitActiveSec=10min
+Unit=mediadl-idle.service
+
+[Install]
+WantedBy=timers.target
