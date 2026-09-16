@@ -108,6 +108,20 @@ const nextConfig: NextConfig = {
     ]
   },
 
+  // ── Proxy to the backend on the same origin ────────────────────────────────
+  // Keeps the browser's API/socket calls same-origin as the page (see the
+  // "Empty NEXT_PUBLIC_API_URL" comment in lib/socket.ts) — this is the role
+  // nginx plays in that comment's reference deployment; here it's this rewrite.
+  // Needed because app.* and api.* sit behind separate Cloudflare Access
+  // sessions: a background fetch() from the page can't complete Access's
+  // cross-hostname login redirect the way a full page navigation can.
+  async rewrites() {
+    return [
+      { source: '/api/:path*',      destination: 'http://127.0.0.1:4000/api/:path*' },
+      { source: '/socket.io/:path*', destination: 'http://127.0.0.1:4000/socket.io/:path*' },
+    ]
+  },
+
   // ── Experimental ──────────────────────────────────────────────────────────
   experimental: {
     optimizePackageImports: [
