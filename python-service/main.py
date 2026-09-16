@@ -5001,8 +5001,9 @@ async def _dl_pat_com(req: DownloadReq, job_dir: Path):
             elif videos:
                 # Generic video URL captured (maybe an embed or alt CDN)
                 stream_url = next(iter(videos))
-        except Exception:
-            pass
+            print(f"[pat.com] headless capture: {len(videos)} video(s), pat_cdn={len(pat_cdn)}, resolved={stream_url}")
+        except Exception as e:
+            print(f"[pat.com] headless render failed: {type(e).__name__}: {e}")
 
     if not stream_url:
         if token:
@@ -5046,10 +5047,13 @@ async def _dl_pat_com(req: DownloadReq, job_dir: Path):
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
         )
+        ffmpeg_tail: list[str] = []
         async def _pump_ffmpeg():
             assert proc.stdout
             async for raw in proc.stdout:
                 line = raw.decode("utf-8", "ignore")
+                ffmpeg_tail.append(line)
+                del ffmpeg_tail[:-20]
                 m_t = re.search(r"time=(\d+:\d+:\d+)", line)
                 if m_t:
                     _prog_s(req.job_id, {"status": "downloading", "progress": 50,
@@ -5064,6 +5068,7 @@ async def _dl_pat_com(req: DownloadReq, job_dir: Path):
 
         if proc.returncode != 0 or not out.exists() or out.stat().st_size < 1024:
             if out.exists(): out.unlink()
+            print(f"[pat.com] ffmpeg exit={proc.returncode} url={stream_url}\n" + "".join(ffmpeg_tail))
             raise HTTPException(500, "ffmpeg failed to download pat.com HLS stream")
     else:
         # Direct MP4 download
