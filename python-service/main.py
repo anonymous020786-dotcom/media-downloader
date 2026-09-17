@@ -901,7 +901,7 @@ async def _resolve_stream_plan(req: StreamReq) -> dict:
             or _COOMER_RE.match(url) or _KEMONO_RE.match(url) or _HQPORNER_RE.match(url)
             or _XHS_RE.match(url) or _TERABOX_RE.match(url) or _BUNKR_RE.match(url)
             or _EROME_RE.match(url) or _CYBERDROP_RE.match(url) or _FAPELLO_RE.match(url)
-            or _SIMPCITY_RE.match(url) or _THOTHUB_RE.match(url)):
+            or _SIMPCITY_RE.match(url) or _THOTHUB_RE.match(url) or _MASTODON_RE.match(url)):
         return {"mode": "unsupported",
                 "reason": "This site is fetched via page scrape — use the download queue, not direct stream."}
 
@@ -1357,6 +1357,17 @@ _XHS_RE = re.compile(
 # HQporner  https://hqporner.com/hdporn/{id}-{slug}.html  |  /watch/{id}
 _HQPORNER_RE = re.compile(
     r'^https?://(?:www\.)?hqporner\.com/(?:hdporn|watch)/([^/?\s]+)', re.I)
+
+# Mastodon — federated, so this matches on ANY domain by URL shape alone.
+# Unlike every other custom extractor above (each tied to one specific
+# domain), a URL matching this shape isn't guaranteed to actually be a
+# Mastodon instance, so the analyze/download functions verify via the
+# instance's own API and raise _NotMastodonError on anything that doesn't
+# look right — the dispatch call catches that and falls through to yt-dlp/
+# generic handling instead of hard-failing a non-Mastodon URL that happens
+# to share this path shape.
+_MASTODON_RE = re.compile(
+    r'^https?://([^/]+)/(?:@[\w.]+/|users/[\w.]+/statuses/)(\d+)/?(?:\?.*)?$', re.I)
 
 
 def _is_custom_site(url: str) -> bool:
@@ -2690,6 +2701,113 @@ async def _dl_hqporner(req: DownloadReq, job_dir: Path):
         raise HTTPException(502, "Could not extract the HQporner video URL")
     files = [f.name for f in job_dir.iterdir() if f.is_file()]
     await _prog(req.job_id, {"status": "completed", "progress": 100, "files": files})
+
+
+# ── Mastodon (any instance) ───────────────────────────────────────────────────
+# Federated: there's no single "mastodon.com" — every instance runs the same
+# open, versioned, unauthenticated-for-public-posts REST API
+# (https://docs.joinmastodon.org/methods/statuses/#get), so this works
+# against any instance without per-domain scraping.
+class _NotMastodonError(Exception):
+    """Raised when a URL matches Mastodon's status-URL shape but the host
+    doesn't actually answer like a Mastodon instance — signals the dispatch
+    call to fall through to yt-dlp/generic handling instead of erroring."""
+
+
+async def _mastodon_status(url: str) -> dict:
+    m = _MASTODON_RE.match(url)
+    if not m:
+        raise _NotMastodonError()
+    domain, status_id = m.group(1), m.group(2)
+    try:
+        async with _client() as c:
+            r = await c.get(f"https://{domain}/api/v1/statuses/{status_id}", timeout=10)
+    except Exception:
+        raise _NotMastodonError()
+    if r.status_code != 200:
+        raise _NotMastodonError()
+    try:
+        data = r.json()
+    except Exception:
+        raise _NotMastodonError()
+    if "media_attachments" not in data or "account" not in data:
+        raise _NotMastodonError()
+    return data
+
+
+async def _analyze_mastodon(url: str) -> dict:
+    data = await _mastodon_status(url)
+    media = [m for m in data["media_attachments"] if m.get("type") in ("video", "gifv", "audio")]
+    if not media:
+        raise HTTPException(404, "This Mastodon post has no video/audio attachment")
+    acct = data.get("account", {}).get("acct", "")
+    title = re.sub(r"<[^>]+>", "", data.get("content") or "").strip()[:120] or f"Post by @{acct}"
+    fmt = "mp3" if media[0].get("type") == "audio" else "mp4"
+    return {"type": "video", "title": title, "url": url, "extractor": "mastodon",
+            "uploader": acct, "qualities": [], "video_formats": [fmt]}
+
+
+async def _dl_mastodon(req: DownloadReq, job_dir: Path):
+    await _prog(req.job_id, {"status": "starting", "progress": 5, "info": "Reading Mastodon post…"})
+    data = await _mastodon_status(req.url)
+    media = [m for m in data["media_attachments"] if m.get("type") in ("video", "gifv", "audio")]
+    if not media:
+        raise HTTPException(404, "This Mastodon post has no video/audio attachment")
+    # Vanilla Mastodon allows one video OR one audio per post (never several),
+    # so there's exactly one attachment to fetch here.
+    ok = await _dl_direct(media[0]["url"], req.job_id, job_dir, req.format,
+                          referer=req.url, proxy=req.proxy)
+    if not ok:
+        raise HTTPException(502, "Could not download the Mastodon attachment")
+
+
+# ── Threads (Meta) ────────────────────────────────────────────────────────────
+# Not supported by yt-dlp. The existing generic image-page fallback already
+# handles photo-only Threads posts correctly (verified: analyze on a
+# photo post returns a proper "page" result) — it just never finds the
+# video on posts that have one, because that classifier only runs on
+# yt-dlp's own extracted info, which yt-dlp never produces for Threads at
+# all. Video is served from Instagram's shared CDN and only shows up in
+# page network traffic once the post's JS has run, so this reuses the
+# same headless-capture (_render_media) pat.com's headless fallback uses,
+# filtered to that CDN's video pattern (confirmed empirically — see commit).
+_THREADS_RE = re.compile(
+    r'^https?://(?:www\.)?threads\.(?:net|com)/@[\w.]+/post/[\w-]+/?(?:\?.*)?$', re.I)
+
+class _NoThreadsVideoError(Exception):
+    """Raised when a Threads post has no video (photo-only) — signals the
+    dispatch call to fall through to the existing generic image handling
+    rather than erroring on what is a perfectly normal, already-working case."""
+
+
+async def _threads_video_urls(url: str, proxy: Optional[str] = None) -> list:
+    try:
+        _, videos = await asyncio.wait_for(
+            _render_media(url, proxy=proxy, want_video=True, scroll=False, timeout_ms=35000),
+            timeout=50,
+        )
+    except Exception:
+        return []
+    return [v for v in videos if "fbcdn.net" in v and ".mp4" in v]
+
+
+async def _analyze_threads(url: str) -> dict:
+    vids = await _threads_video_urls(url)
+    if not vids:
+        raise _NoThreadsVideoError()
+    return {"type": "video", "title": _url_title(url), "url": url,
+            "extractor": "threads", "qualities": [], "video_formats": ["mp4"]}
+
+
+async def _dl_threads(req: DownloadReq, job_dir: Path):
+    await _prog(req.job_id, {"status": "starting", "progress": 5, "info": "Rendering Threads post…"})
+    vids = await _threads_video_urls(req.url, req.proxy)
+    if not vids:
+        raise _NoThreadsVideoError()
+    ok = await _dl_direct(vids[0], req.job_id, job_dir, req.format,
+                          referer="https://www.threads.com/", proxy=req.proxy)
+    if not ok:
+        raise HTTPException(502, "Could not download the Threads video")
 
 
 # ── JAV / Asian streaming aggregators ────────────────────────────────────────
@@ -5262,6 +5380,16 @@ async def _do_analyze(url: str) -> dict:
     if _JAVBUS_RE.match(url):        return await _analyze_javbus(url)
     if _JAV_STREAM_RE.match(url):    return await _analyze_jav_stream(url)
     if _STREAM_SITE_RE.match(url):   return await _analyze_jav_stream(url)
+    if _MASTODON_RE.match(url):
+        try:
+            return await _analyze_mastodon(url)
+        except _NotMastodonError:
+            pass  # not actually a Mastodon instance — fall through below
+    if _THREADS_RE.match(url):
+        try:
+            return await _analyze_threads(url)
+        except _NoThreadsVideoError:
+            pass  # photo-only post — the generic image fallback below already handles this
     # 0. Torrent / magnet
     if url.startswith("magnet:") or url.split("?")[0].lower().endswith(".torrent"):
         name = "torrent"
@@ -6116,6 +6244,16 @@ async def download(req: DownloadReq):
             elif _JAVBUS_RE.match(req.url):        await _dl_javbus(req, job_dir)
             elif _JAV_STREAM_RE.match(req.url):    await _dl_jav_stream(req, job_dir)
             elif _STREAM_SITE_RE.match(req.url):   await _dl_jav_stream(req, job_dir)
+            elif _MASTODON_RE.match(req.url):
+                try:
+                    await _dl_mastodon(req, job_dir)
+                except _NotMastodonError:
+                    pass  # not actually Mastodon — the safety net below retries generically
+            elif _THREADS_RE.match(req.url):
+                try:
+                    await _dl_threads(req, job_dir)
+                except _NoThreadsVideoError:
+                    pass  # photo-only post — falls through to the generic image path below
             elif req.capture and req.media_type == "video":
                 await _dl_capture(req, job_dir)
             elif req.media_type in ("playlist","profile"):
