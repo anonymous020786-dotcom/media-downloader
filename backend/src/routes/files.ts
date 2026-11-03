@@ -2,7 +2,7 @@ import { Router } from 'express'
 import path from 'path'
 import os from 'os'
 import fs from 'fs'
-import archiver from 'archiver'
+import { ZipArchive } from 'archiver'
 import { optionalAuth } from '../middleware/requireAuth.js'
 
 const router = Router()
@@ -94,7 +94,7 @@ router.get('/:jobId/zip', optionalAuth, async (req, res) => {
   res.setHeader('Content-Type', 'application/zip')
   res.setHeader('Content-Disposition', `attachment; filename="mediadl-${jobId.slice(0, 8)}.zip"`)
   res.setHeader('Cache-Control', 'no-store')
-  const archive = archiver('zip', { zlib: { level: 6 } })
+  const archive = new ZipArchive({ zlib: { level: 6 } })
   archive.on('error', (err) => { console.error('[zip]', err.message); try { res.status(500).end() } catch {} })
   archive.pipe(res)
   archive.directory(dir, false)
