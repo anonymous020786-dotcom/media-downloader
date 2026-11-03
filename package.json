@@ -19,8 +19,8 @@
     "start": "concurrently -k -n py,api,web -c magenta,cyan,green \"npm:start:py\" \"npm:start:api\" \"npm --prefix frontend run start\""
   },
   "devDependencies": {
-    "concurrently": "^9.1.0",
-    "cross-env": "^7.0.3",
-    "tsx": "^4.19.4"
+    "concurrently": "^10.0.6",
+    "cross-env": "^10.1.0",
+    "tsx": "^4.23.15"
   }
 }

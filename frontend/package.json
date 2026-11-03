@@ -9,15 +9,15 @@
     "lint": "next lint"
   },
   "dependencies": {
-    "next": "latest",
+    "clsx": "latest",
+    "hls.js": "^1.7.4",
+    "lucide-react": "latest",
+    "next": "^16.4.4",
+    "next-themes": "latest",
     "react": "latest",
     "react-dom": "latest",
-    "lucide-react": "latest",
-    "sonner": "latest",
-    "next-themes": "latest",
-    "clsx": "latest",
-    "socket.io-client": "^4.8.1",
-    "hls.js": "^1.5.15"
+    "socket.io-client": "^4.8.4",
+    "sonner": "latest"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "latest",

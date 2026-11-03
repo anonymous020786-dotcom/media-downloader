@@ -10,13 +10,13 @@
     "check": "tsc --noEmit"
   },
   "dependencies": {
-    "axios": "^1.9.0",
-    "dotenv": "^16.5.0",
+    "axios": "^1.21.0",
+    "dotenv": "^18.0.9",
     "telegraf": "^4.16.3"
   },
   "devDependencies": {
-    "@types/node": "^22.15.0",
-    "tsx": "^4.19.4",
-    "typescript": "^5.8.3"
+    "@types/node": "^26.6.6",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2"
   }
 }
