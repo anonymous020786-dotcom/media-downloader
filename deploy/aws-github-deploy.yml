@@ -1,0 +1,73 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  Lets GitHub Actions (this repo's "production" environment only) deploy to the
+  mediadl-bot EC2 instance: start it and push a 60-second Instance Connect SSH
+  key. No long-lived AWS keys are stored in GitHub.
+
+  Deploy (region ap-south-1):
+    aws cloudformation deploy --region ap-south-1 --stack-name mediadl-github-deploy \
+      --template-file deploy/aws-github-deploy.yml --capabilities CAPABILITY_NAMED_IAM
+  Then copy the RoleArn output into the repo variable AWS_DEPLOY_ROLE_ARN.
+
+Parameters:
+  GitHubRepo:
+    Type: String
+    Default: anonymous020786-dotcom/media-downloader
+  InstanceId:
+    Type: String
+    Default: i-0cc7df5f7270309ce
+  CreateOidcProvider:
+    Type: String
+    Default: "true"
+    AllowedValues: ["true", "false"]
+    Description: Set "false" if this account already has the token.actions.githubusercontent.com provider.
+
+Conditions:
+  MakeProvider: !Equals [!Ref CreateOidcProvider, "true"]
+
+Resources:
+  GitHubOidcProvider:
+    Type: AWS::IAM::OIDCProvider
+    Condition: MakeProvider
+    Properties:
+      Url: https://token.actions.githubusercontent.com
+      ClientIdList: [sts.amazonaws.com]
+
+  DeployRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: mediadl-github-deploy
+      MaxSessionDuration: 3600
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: !Sub arn:aws:iam::${AWS::AccountId}:oidc-provider/token.actions.githubusercontent.com
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                token.actions.githubusercontent.com:aud: sts.amazonaws.com
+                token.actions.githubusercontent.com:sub: !Sub repo:${GitHubRepo}:environment:production
+      Policies:
+        - PolicyName: deploy-mediadl-bot
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: ec2:DescribeInstances
+                Resource: "*"
+              - Effect: Allow
+                Action: ec2:StartInstances
+                Resource: !Sub arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:instance/${InstanceId}
+              - Effect: Allow
+                Action: ec2-instance-connect:SendSSHPublicKey
+                Resource: !Sub arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:instance/${InstanceId}
+                Condition:
+                  StringEquals:
+                    ec2:osuser: ubuntu
+
+Outputs:
+  RoleArn:
+    Description: Put this in GitHub → Settings → Secrets and variables → Actions → Variables → AWS_DEPLOY_ROLE_ARN
+    Value: !GetAtt DeployRole.Arn

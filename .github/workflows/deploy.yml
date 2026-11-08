@@ -1,23 +1,28 @@
 name: Deploy
 
-# Continuous deployment: after CI passes on master, SSH into the server
-# (any Ubuntu VPS or AWS EC2 instance set up per deploy/README.md), pull the
-# latest code, re-run install.sh and verify the backend health check.
+# Fully automatic deployment to the mediadl-bot EC2 instance.
 #
-# Required repository secrets (Settings → Secrets and variables → Actions):
-#   VPS_HOST     server IP or hostname (e.g. EC2 public DNS / Elastic IP)
-#   VPS_SSH_KEY  private key whose public half is in the server's authorized_keys
-# Optional:
-#   VPS_USER     SSH user (default: root; a non-root user needs passwordless sudo)
-#   VPS_PORT     SSH port (default: 22)
+# Runs when:
+#   - CI passes on a push to master (every merged PR, incl. Dependabot upgrades)
+#   - weekly (Mon 03:00 UTC) so yt-dlp & other Python deps stay current
+#   - manually (Actions → Deploy → Run workflow), or dispatched by CI's
+#     Dependabot auto-merge job
 #
-# Until VPS_HOST and VPS_SSH_KEY are set, the job is skipped with a notice.
+# How: GitHub OIDC → assumes the AWS role from deploy/aws-github-deploy.yml
+# (no stored AWS keys) → starts the instance if the idle timer stopped it →
+# pushes a throwaway SSH key with EC2 Instance Connect (valid 60 s) → uploads
+# the commit as a tarball → re-runs deploy/install.sh → checks /health.
+# The instance's own idle timer stops it again later.
+#
+# One-time setup: repository variable AWS_DEPLOY_ROLE_ARN (see deploy/README.md).
 
 on:
   workflow_run:
     workflows: [CI]
     types: [completed]
     branches: [master]
+  schedule:
+    - cron: "0 3 * * 1"
   workflow_dispatch:
 
 concurrency:
@@ -26,67 +31,102 @@ concurrency:
 
 permissions:
   contents: read
+  id-token: write
+
+env:
+  AWS_REGION: ap-south-1
+  INSTANCE_ID: i-0cc7df5f7270309ce
+  OS_USER: ubuntu
 
 jobs:
   deploy:
     if: >-
-      github.event_name == 'workflow_dispatch' ||
+      github.event_name != 'workflow_run' ||
       (github.event.workflow_run.conclusion == 'success' &&
        github.event.workflow_run.event == 'push')
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 40
     environment: production
-    env:
-      VPS_HOST: ${{ secrets.VPS_HOST }}
-      VPS_USER: ${{ secrets.VPS_USER || 'root' }}
-      VPS_PORT: ${{ secrets.VPS_PORT || '22' }}
-      VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
     steps:
-      - name: Check deploy secrets
+      - name: Check setup
         id: check
         run: |
-          if [ -z "$VPS_HOST" ] || [ -z "$VPS_SSH_KEY" ]; then
-            echo "::notice::Deploy skipped: set VPS_HOST and VPS_SSH_KEY repository secrets to enable."
+          if [ -z "${{ vars.AWS_DEPLOY_ROLE_ARN }}" ]; then
+            echo "::notice::Deploy skipped: set the AWS_DEPLOY_ROLE_ARN repository variable (deploy/README.md)."
             echo "ready=false" >> "$GITHUB_OUTPUT"
           else
             echo "ready=true" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Configure SSH
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         if: steps.check.outputs.ready == 'true'
-        run: |
-          install -m 700 -d ~/.ssh
-          printf '%s\n' "$VPS_SSH_KEY" > ~/.ssh/deploy_key
-          chmod 600 ~/.ssh/deploy_key
-          ssh-keyscan -p "$VPS_PORT" -H "$VPS_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+        with:
+          ref: master
 
-      - name: Deploy
+      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
         if: steps.check.outputs.ready == 'true'
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Start instance if stopped
+        if: steps.check.outputs.ready == 'true'
+        id: inst
         run: |
-          ssh -i ~/.ssh/deploy_key -p "$VPS_PORT" -o BatchMode=yes \
-            "$VPS_USER@$VPS_HOST" 'bash -s' <<'REMOTE'
-          set -euo pipefail
-          asroot() {
-            if [ "$(id -u)" -eq 0 ]; then "$@"
-            else sudo -n --preserve-env=GIT_SSH_COMMAND "$@"; fi
-          }
-          # Private repo: reuse the deploy key from deploy/README.md option B if present.
-          if asroot test -f /root/.ssh/id_deploy; then
-            export GIT_SSH_COMMAND='ssh -i /root/.ssh/id_deploy'
+          state=$(aws ec2 describe-instances --instance-ids "$INSTANCE_ID" \
+            --query 'Reservations[0].Instances[0].State.Name' --output text)
+          echo "state: $state"
+          if [ "$state" = "stopping" ]; then
+            aws ec2 wait instance-stopped --instance-ids "$INSTANCE_ID"; state=stopped
           fi
-          cd /opt/mediadl
-          asroot git pull --ff-only
-          echo "Deployed commit: $(git rev-parse --short HEAD)"
-          cd deploy
-          asroot bash install.sh
+          if [ "$state" = "stopped" ]; then
+            aws ec2 start-instances --instance-ids "$INSTANCE_ID" >/dev/null
+          fi
+          aws ec2 wait instance-running --instance-ids "$INSTANCE_ID"
+          ip=$(aws ec2 describe-instances --instance-ids "$INSTANCE_ID" \
+            --query 'Reservations[0].Instances[0].PublicIpAddress' --output text)
+          echo "ip=$ip" >> "$GITHUB_OUTPUT"
+          echo "instance running at $ip"
+
+      - name: Package commit
+        if: steps.check.outputs.ready == 'true'
+        run: git archive --format=tar.gz -o /tmp/mediadl.tgz HEAD && ls -la /tmp/mediadl.tgz
+
+      - name: Deploy over EC2 Instance Connect
+        if: steps.check.outputs.ready == 'true'
+        env:
+          IP: ${{ steps.inst.outputs.ip }}
+        run: |
+          ssh-keygen -q -t ed25519 -N '' -f /tmp/k
+          push_key() {
+            aws ec2-instance-connect send-ssh-public-key --instance-id "$INSTANCE_ID" \
+              --instance-os-user "$OS_USER" --ssh-public-key file:///tmp/k.pub >/dev/null
+          }
+          SSH_OPTS="-i /tmp/k -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=10 -o ServerAliveInterval=30"
+          # Wait for sshd (fresh boot can take a minute). Each key push is valid 60 s.
+          for i in $(seq 1 20); do
+            push_key
+            ssh $SSH_OPTS "$OS_USER@$IP" true 2>/dev/null && break
+            [ "$i" = 20 ] && { echo "ssh never came up"; exit 1; }
+            sleep 10
+          done
+          push_key
+          scp $SSH_OPTS /tmp/mediadl.tgz "$OS_USER@$IP:/tmp/mediadl.tgz"
+          push_key
+          ssh $SSH_OPTS "$OS_USER@$IP" 'sudo bash -s' <<'REMOTE'
+          set -euo pipefail
+          tar -C /opt/mediadl -xzf /tmp/mediadl.tgz
+          chown -R mediadl:mediadl /opt/mediadl
+          cd /opt/mediadl/deploy
+          bash install.sh
           for i in $(seq 1 20); do
             curl -sf localhost:4000/health >/dev/null && { echo "health: ok"; exit 0; }
             sleep 3
           done
-          echo "health check failed"; asroot journalctl -u mediadl-api -n 50 --no-pager || true
+          echo "health check failed"; journalctl -u mediadl-api -n 50 --no-pager || true
           exit 1
           REMOTE
 
       - name: Clean up key
         if: always()
-        run: rm -f ~/.ssh/deploy_key
+        run: rm -f /tmp/k /tmp/k.pub

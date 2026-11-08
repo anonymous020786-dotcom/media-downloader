@@ -1,0 +1,31 @@
+# Weekly upgrade PRs for every package manager in the repo. Each PR is merged
+# automatically once CI passes (ci.yml → automerge-dependabot) and then
+# deployed (deploy.yml). Updates per directory are grouped into one PR.
+# cooldown: a version must be 7 days old before it is proposed — a guard
+# against freshly published malicious releases, since merges are automatic.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directories: ["/", "/backend", "/frontend", "/telegram-bot"]
+    schedule: { interval: weekly, day: monday, time: "02:00" }
+    cooldown: { default-days: 7 }
+    open-pull-requests-limit: 10
+    groups:
+      all-npm:
+        patterns: ["*"]
+
+  - package-ecosystem: pip
+    directory: "/python-service"
+    schedule: { interval: weekly, day: monday, time: "02:00" }
+    cooldown: { default-days: 7 }
+    groups:
+      all-pip:
+        patterns: ["*"]
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule: { interval: weekly, day: monday, time: "02:00" }
+    cooldown: { default-days: 7 }
+    groups:
+      all-actions:
+        patterns: ["*"]
