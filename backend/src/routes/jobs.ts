@@ -3,6 +3,7 @@ import axios from 'axios'
 import { downloadQueue, redisConnection } from '../workers/downloadWorker.js'
 import type { JobProgress, JobView } from '../types.js'
 import { requireAuth, optionalAuth } from '../middleware/requireAuth.js'
+import { idleSeconds } from '../activity.js'
 
 const router = Router()
 const PYTHON = process.env.PYTHON_SERVICE_URL ?? 'http://localhost:8000'
@@ -138,7 +139,7 @@ router.get('/stats', async (_req, res) => {
       downloadQueue.getCompletedCount(),
       downloadQueue.getFailedCount(),
     ])
-    res.json({ waiting, active, completed, failed, total: waiting+active+completed+failed })
+    res.json({ waiting, active, completed, failed, total: waiting+active+completed+failed, idleSeconds: idleSeconds() })
   } catch (err: any) { res.status(500).json({ error: err.message }) }
 })
 
