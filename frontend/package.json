@@ -11,21 +11,21 @@
   "dependencies": {
     "clsx": "latest",
     "hls.js": "^1.7.4",
-    "lucide-react": "latest",
-    "next": "^16.4.4",
+    "lucide-react": "^1.70.0",
+    "next": "^16.4.5",
     "next-themes": "latest",
-    "react": "latest",
-    "react-dom": "latest",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
     "socket.io-client": "^4.8.4",
     "sonner": "latest"
   },
   "devDependencies": {
-    "@tailwindcss/postcss": "latest",
-    "@types/node": "latest",
-    "@types/react": "latest",
-    "@types/react-dom": "latest",
-    "postcss": "latest",
-    "tailwindcss": "latest",
+    "@tailwindcss/postcss": "^4.3.5",
+    "@types/node": "^26.6.6",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "postcss": "^8.5.32",
+    "tailwindcss": "^4.3.5",
     "typescript": "latest"
   }
 }
