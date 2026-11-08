@@ -1,0 +1,92 @@
+name: Deploy
+
+# Continuous deployment: after CI passes on master, SSH into the server
+# (any Ubuntu VPS or AWS EC2 instance set up per deploy/README.md), pull the
+# latest code, re-run install.sh and verify the backend health check.
+#
+# Required repository secrets (Settings → Secrets and variables → Actions):
+#   VPS_HOST     server IP or hostname (e.g. EC2 public DNS / Elastic IP)
+#   VPS_SSH_KEY  private key whose public half is in the server's authorized_keys
+# Optional:
+#   VPS_USER     SSH user (default: root; a non-root user needs passwordless sudo)
+#   VPS_PORT     SSH port (default: 22)
+#
+# Until VPS_HOST and VPS_SSH_KEY are set, the job is skipped with a notice.
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [master]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: production
+    env:
+      VPS_HOST: ${{ secrets.VPS_HOST }}
+      VPS_USER: ${{ secrets.VPS_USER || 'root' }}
+      VPS_PORT: ${{ secrets.VPS_PORT || '22' }}
+      VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+    steps:
+      - name: Check deploy secrets
+        id: check
+        run: |
+          if [ -z "$VPS_HOST" ] || [ -z "$VPS_SSH_KEY" ]; then
+            echo "::notice::Deploy skipped: set VPS_HOST and VPS_SSH_KEY repository secrets to enable."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Configure SSH
+        if: steps.check.outputs.ready == 'true'
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$VPS_SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -p "$VPS_PORT" -H "$VPS_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Deploy
+        if: steps.check.outputs.ready == 'true'
+        run: |
+          ssh -i ~/.ssh/deploy_key -p "$VPS_PORT" -o BatchMode=yes \
+            "$VPS_USER@$VPS_HOST" 'bash -s' <<'REMOTE'
+          set -euo pipefail
+          asroot() {
+            if [ "$(id -u)" -eq 0 ]; then "$@"
+            else sudo -n --preserve-env=GIT_SSH_COMMAND "$@"; fi
+          }
+          # Private repo: reuse the deploy key from deploy/README.md option B if present.
+          if asroot test -f /root/.ssh/id_deploy; then
+            export GIT_SSH_COMMAND='ssh -i /root/.ssh/id_deploy'
+          fi
+          cd /opt/mediadl
+          asroot git pull --ff-only
+          echo "Deployed commit: $(git rev-parse --short HEAD)"
+          cd deploy
+          asroot bash install.sh
+          for i in $(seq 1 20); do
+            curl -sf localhost:4000/health >/dev/null && { echo "health: ok"; exit 0; }
+            sleep 3
+          done
+          echo "health check failed"; asroot journalctl -u mediadl-api -n 50 --no-pager || true
+          exit 1
+          REMOTE
+
+      - name: Clean up key
+        if: always()
+        run: rm -f ~/.ssh/deploy_key
