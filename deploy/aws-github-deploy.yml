@@ -10,9 +10,12 @@ Description: >-
   Then copy the RoleArn output into the repo variable AWS_DEPLOY_ROLE_ARN.
 
 Parameters:
-  GitHubRepo:
+  GitHubSubjectPrefix:
     Type: String
-    Default: anonymous020786-dotcom/media-downloader
+    # GitHub's immutable OIDC subject (owner@id/repo@id) — survives renames and
+    # can't be claimed by a re-created repo of the same name. Look it up with:
+    #   gh api repos/OWNER/REPO/actions/oidc/customization/sub -q .sub_claim_prefix
+    Default: repo:anonymous020786-dotcom@322674851/media-downloader@1355491936
   InstanceId:
     Type: String
     Default: i-0cc7df5f7270309ce
@@ -48,7 +51,7 @@ Resources:
             Condition:
               StringEquals:
                 token.actions.githubusercontent.com:aud: sts.amazonaws.com
-                token.actions.githubusercontent.com:sub: !Sub repo:${GitHubRepo}:environment:production
+                token.actions.githubusercontent.com:sub: !Sub ${GitHubSubjectPrefix}:environment:production
       Policies:
         - PolicyName: deploy-mediadl-bot
           PolicyDocument:
