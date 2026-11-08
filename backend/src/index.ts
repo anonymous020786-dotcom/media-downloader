@@ -18,6 +18,7 @@ import usersRouter   from './routes/users.js'
 import proxyRouter   from './routes/proxy.js'
 import cookiesRouter from './routes/cookies.js'
 import statusRouter  from './routes/status.js'
+import { trackActivity } from './activity.js'
 
 const app  = express()
 const PORT = Number(process.env.PORT ?? 4000)
@@ -73,6 +74,7 @@ const analysisLimit = rateLimit({
   message: { error: 'Analysis rate limit exceeded — please wait a moment.' },
 })
 app.use('/api', stdLimit)
+app.use('/api', trackActivity)
 app.use('/api/analyze', analysisLimit)
 
 // ── Routes ────────────────────────────────────────────────────────────────────
