@@ -98,3 +98,30 @@ rm /etc/systemd/system/mediadl-*.service /etc/systemd/system/telegram-bot-api.se
 systemctl daemon-reload
 userdel mediadl; rm -rf /opt/mediadl
 ```
+
+## CI/CD — automatic deploys from GitHub
+
+`.github/workflows/deploy.yml` deploys automatically every time CI passes on
+`master` (and on demand from the **Actions → Deploy → Run workflow** button).
+It SSHes into the server, runs `git pull` + `install.sh`, and fails the run if
+`/health` doesn't come up. Works on any VPS, including an AWS EC2 instance.
+
+One-time setup:
+
+1. Make a key pair just for GitHub (on your PC):
+   `ssh-keygen -t ed25519 -f gh_deploy -N ''`
+2. Put the public key on the server:
+   `cat gh_deploy.pub >> /root/.ssh/authorized_keys` (as root on the server)
+3. In GitHub → repo **Settings → Secrets and variables → Actions**, add:
+   - `VPS_HOST` — server IP / EC2 public DNS or Elastic IP
+   - `VPS_SSH_KEY` — the full contents of `gh_deploy` (the private key)
+   - optional `VPS_USER` (default `root`; non-root needs passwordless sudo)
+     and `VPS_PORT` (default `22`)
+4. On EC2, allow inbound SSH (22) in the instance's security group. GitHub's
+   runner IPs change, so either allow 0.0.0.0/0 on 22 with key-only auth, or
+   keep it locked down and deploy with the manual `install.sh` instead.
+
+The server must already be installed once per the steps above, and must be
+able to `git pull` the private repo (token in the remote URL, or the
+`/root/.ssh/id_deploy` deploy key — the workflow picks that up automatically).
+Until the secrets exist, the Deploy job is skipped with a notice.
