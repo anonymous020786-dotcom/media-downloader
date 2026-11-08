@@ -99,29 +99,31 @@ systemctl daemon-reload
 userdel mediadl; rm -rf /opt/mediadl
 ```
 
-## CI/CD — automatic deploys from GitHub
+## CI/CD — fully automatic upgrades and deploys
 
-`.github/workflows/deploy.yml` deploys automatically every time CI passes on
-`master` (and on demand from the **Actions → Deploy → Run workflow** button).
-It SSHes into the server, runs `git pull` + `install.sh`, and fails the run if
-`/health` doesn't come up. Works on any VPS, including an AWS EC2 instance.
+Nothing here needs a manual trigger once set up:
 
-One-time setup:
+| what | when | how |
+|---|---|---|
+| **Upgrades** | weekly (Mon) | Dependabot opens grouped PRs for npm (root, backend, frontend, telegram-bot), pip and GitHub Actions. Versions must be ≥7 days old (cooldown). |
+| **Auto-merge** | when CI passes | `ci.yml` → `automerge-dependabot` merges the Dependabot PR and dispatches a deploy. A failing upgrade stays open for a human. |
+| **Deploy** | every green push to `master`, weekly, or on demand | `deploy.yml` assumes an AWS role via GitHub OIDC (no stored keys), starts the instance if the idle timer stopped it, pushes a 60-second EC2 Instance Connect key, uploads the commit, runs `install.sh` (which also `pip install --upgrade`s yt-dlp etc.) and checks `/health`. |
 
-1. Make a key pair just for GitHub (on your PC):
-   `ssh-keygen -t ed25519 -f gh_deploy -N ''`
-2. Put the public key on the server:
-   `cat gh_deploy.pub >> /root/.ssh/authorized_keys` (as root on the server)
-3. In GitHub → repo **Settings → Secrets and variables → Actions**, add:
-   - `VPS_HOST` — server IP / EC2 public DNS or Elastic IP
-   - `VPS_SSH_KEY` — the full contents of `gh_deploy` (the private key)
-   - optional `VPS_USER` (default `root`; non-root needs passwordless sudo)
-     and `VPS_PORT` (default `22`)
-4. On EC2, allow inbound SSH (22) in the instance's security group. GitHub's
-   runner IPs change, so either allow 0.0.0.0/0 on 22 with key-only auth, or
-   keep it locked down and deploy with the manual `install.sh` instead.
+The instance's idle timer still stops it after 60 idle minutes, so a deploy
+never leaves it running longer than usual. No Elastic IP or stored SSH key is
+needed — the workflow looks up the current IP each time.
 
-The server must already be installed once per the steps above, and must be
-able to `git pull` the private repo (token in the remote URL, or the
-`/root/.ssh/id_deploy` deploy key — the workflow picks that up automatically).
-Until the secrets exist, the Deploy job is skipped with a notice.
+### One-time setup
+
+1. Create the AWS role (CloudFormation, ap-south-1):
+   ```bash
+   aws cloudformation deploy --region ap-south-1 --stack-name mediadl-github-deploy      --template-file deploy/aws-github-deploy.yml --capabilities CAPABILITY_NAMED_IAM
+   aws cloudformation describe-stacks --region ap-south-1 --stack-name mediadl-github-deploy      --query "Stacks[0].Outputs[0].OutputValue" --output text
+   ```
+   (If the account already has a GitHub OIDC provider, add
+   `--parameter-overrides CreateOidcProvider=false`.)
+2. Save the printed role ARN as a repository **variable**:
+   `gh variable set AWS_DEPLOY_ROLE_ARN --body "arn:aws:iam::…:role/mediadl-github-deploy"`
+3. Run **Actions → Deploy → Run workflow** once to confirm.
+
+Until `AWS_DEPLOY_ROLE_ARN` exists, the Deploy job skips with a notice.

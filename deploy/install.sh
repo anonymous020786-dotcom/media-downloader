@@ -25,12 +25,16 @@ APP_USER="${APP_USER:-mediadl}"
 [[ -f "$APP_DIR/package.json" ]] || { echo "clone the repo to $APP_DIR first"; exit 1; }
 
 # ── ports: refuse to clobber something already listening ─────────────────────
-for p in 8000 4000; do
-  if ss -ltnH "sport = :$p" 2>/dev/null | grep -q .; then
-    echo "✗ port $p is already in use on this host — set PORT / PYTHON_SERVICE_URL"
-    echo "  in $APP_DIR/.env to free ports and re-run, or stop that service."
-    exit 1
-  fi
+# (A port held by our own unit is fine — that's a re-run/upgrade, which
+#  restarts those units further down.)
+for pu in 8000:mediadl-py 4000:mediadl-api; do
+  p=${pu%%:*}; unit=${pu#*:}
+  pid=$(ss -ltnpH "sport = :$p" 2>/dev/null | grep -o 'pid=[0-9]*' | head -1 | cut -d= -f2 || true)
+  [[ -z "$pid" ]] && continue
+  grep -q "/$unit.service" "/proc/$pid/cgroup" 2>/dev/null && continue
+  echo "✗ port $p is already in use on this host — set PORT / PYTHON_SERVICE_URL"
+  echo "  in $APP_DIR/.env to free ports and re-run, or stop that service."
+  exit 1
 done
 
 echo "▶ packages (additive only)"
@@ -75,7 +79,7 @@ as_app "$APP_DIR"              "npm ci --no-audit --no-fund || npm install --no-
 as_app "$APP_DIR/backend"      "npm ci --no-audit --no-fund || npm install --no-audit --no-fund"
 as_app "$APP_DIR/telegram-bot" "npm ci --no-audit --no-fund || npm install --no-audit --no-fund"
 as_app "$APP_DIR" "python3 -m venv .venv && ./.venv/bin/pip -q install --upgrade pip && \
-  ./.venv/bin/pip -q install -r python-service/requirements.txt && \
+  ./.venv/bin/pip -q install --upgrade -r python-service/requirements.txt && \
   ./.venv/bin/python -m playwright install chromium"
 "$APP_DIR/.venv/bin/python" -m playwright install-deps chromium 2>/dev/null || \
   apt-get install -y -qq libnss3 libnspr4 libatk1.0-0 libatk-bridge2.0-0 libcups2 \
