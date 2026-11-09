@@ -37,6 +37,8 @@ const ago = (t) => {
   if (s < 86400) return `${Math.floor(s / 3600)} h ago`
   return new Date(t).toLocaleDateString()
 }
+/** replaceChildren() turns null placeholders into the text "null" — skip them. */
+function fill(el, ...kids) { el.replaceChildren(...kids.flat().filter((k) => k != null && k !== false)) }
 function host(u) { try { return new URL(u).hostname.replace(/^www\./, '') } catch { return '' } }
 
 // ── download settings bar (shared by every picker) ──────────────────────────
@@ -338,7 +340,7 @@ async function fLoad() {
   const url = $('fUrl').value.trim(); if (!isHttpUrl(url)) return
   await guard($('fLoad'), 'Loading…', async () => {
     const r = await api('/api/download/feed', { method: 'POST', body: { url }, timeoutMs: 60_000 })
-    $('fHead').textContent = `${r.feed_title || host(url)} · ${r.type.toUpperCase()} · ${r.count} items`
+    $('fHead').textContent = `${r.feed_title || r.title || host(url)} · ${r.type.toUpperCase()} · ${r.count} items`
     if (r.items.some((i) => /^audio\//.test(i.enclosure_type || ''))) fBar.kind.value = 'audio', fBar.kind.dispatchEvent(new Event('change'))
     $('fList').replaceChildren(...r.items.map((it) => {
       const cb = h('input', { type: 'checkbox' }); cb._item = { url: it.url, title: it.title, thumbnail: it.thumbnail || undefined }
@@ -368,10 +370,10 @@ const STATUS = { queued: 'Waiting', starting: 'Starting', downloading: 'Download
 async function filesPanel(job, box) {
   const base = await serverBase()
   const files = await api(`/api/files/${job.jobId}`)
-  if (!files.length) { box.replaceChildren(h('div', { className: 'muted small' }, 'No files left on the server (already saved and cleaned up).')); return }
+  if (!files.length) { fill(box, h('div', { className: 'muted small' }, 'No files left on the server (already saved and cleaned up).')); return }
   const save = (f) => ext.downloads.download({ url: fileUrl(base, job.jobId, f.name), filename: `MediaDL/${f.name.replace(/[\\/:*?"<>|]+/g, '_')}`, conflictAction: 'uniquify' })
   const vids = files.filter((f) => /^video\//.test(f.mime)); const auds = files.filter((f) => /^audio\//.test(f.mime))
-  box.replaceChildren(
+  fill(box,
     ...files.map((f) => h('div', { className: 'line' },
       h('span', {}, `📄 ${f.name}`), h('span', { className: 'muted' }, fmtBytes(f.size)), h('span', { className: 'spacer' }),
       /^(video|audio)\//.test(f.mime) ? h('button', { className: 'mini', textContent: '▶ Play', on: { click: () => show('player', { job: job.jobId, file: f.name }) } }) : null,
@@ -518,7 +520,7 @@ loaders.status = () => guard(null, '', async () => {
   const [s, st] = await Promise.all([api('/api/status'), api('/api/jobs/stats').catch(() => null)])
   const badge = { operational: '✅ All systems working', degraded: '⚠️ Partly degraded', major_outage: '❌ Major outage' }[s.status] || s.status
   const kv = (k, v, cls = '') => h('div', { className: `msg ${cls}` }, h('span', {}, k), h('b', {}, v ?? '—'))
-  $('stBox').replaceChildren(
+  fill($('stBox'),
     h('p', { className: `msg ${s.status === 'operational' ? 'ok' : 'err'}` }, `${badge} · checked ${ago(s.updated_at)}`),
     s.incident?.active ? h('p', { className: 'msg err' }, `Incident: ${s.incident.message}`) : null,
     st ? h('h2', {}, 'Downloads') : null,

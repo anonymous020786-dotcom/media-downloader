@@ -165,10 +165,11 @@ with sync_playwright() as p:
     check("gallery: images downloaded", len(js) >= 3 and all(j.get("status") == "completed" for j in js), json.dumps([j.get("status") for j in js]))
 
     # feeds
-    for feed in ("list.m3u", "feed.xml"):
+    for feed, kind in (("list.m3u", "M3U"), ("feed.xml", "RSS")):
         app.evaluate("() => show('feed')")
         app.fill("#fUrl", f"{SITE}/{feed}"); app.click("#fLoad")
-        n = until(lambda: app.locator("#fList li").count(), 40)
+        until(lambda: kind in (app.text_content("#fHead") or ""), 40)
+        n = app.locator("#fList li").count()
         check(f"feed loads ({feed})", n == 2, f"{n} items · {app.text_content('#fHead')}")
 
     # delayed + recurring
@@ -194,10 +195,11 @@ with sync_playwright() as p:
 
     # queue + files + player
     app.evaluate("() => show('queue')")
-    n = until(lambda: app.locator("#qList li").count(), 15)
-    check("server queue lists jobs", n and n >= 3, n)
-    app.locator("#qList li button", has_text="Files").first.click()
+    n = until(lambda: app.locator("#qList li").count() >= 7 and app.locator("#qList li").count(), 15)
+    check("server queue lists every finished job", n and n >= 7, n)
+    app.locator("#qList li", has_text="video.mp4").first.locator("button", has_text="Files").click()
     check("queue: files of a finished job", until(lambda: app.locator("#qList .files .line").count(), 15))
+    check("no stray 'null' text in the queue", "null" not in app.text_content("#qList"))
     shot(app, "app-queue")
     play = app.locator("#qList .files button", has_text="Play")
     if play.count():
@@ -226,6 +228,7 @@ with sync_playwright() as p:
     # status
     app.evaluate("() => show('status')")
     check("status shows engines", until(lambda: "Download engines" in app.text_content("#stBox"), 20), app.text_content("#stBox")[:200])
+    check("no stray 'null' text on status", "null" not in app.text_content("#stBox"), app.text_content("#stBox")[:120])
     shot(app, "app-status")
 
     # options page
