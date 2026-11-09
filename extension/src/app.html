@@ -1,0 +1,201 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MediaDL</title>
+  <link rel="stylesheet" href="ui.css">
+  <link rel="stylesheet" href="app.css">
+</head>
+<body class="app">
+  <aside class="side">
+    <div class="brand"><img src="icons/icon-32.png" alt="" width="24" height="24"> <b>MediaDL</b> <span id="server" class="dot"></span></div>
+    <nav id="nav">
+      <a data-view="download">⬇ Download</a>
+      <a data-view="playlist">☑ Playlist picker</a>
+      <a data-view="gallery">🖼 Image gallery</a>
+      <a data-view="batch">📋 Batch links</a>
+      <a data-view="search">🔍 Search</a>
+      <a data-view="feed">📡 RSS / M3U feeds</a>
+      <hr>
+      <a data-view="queue">📥 Queue <span id="qCount" class="pill" hidden></span></a>
+      <a data-view="schedules">🔁 Schedules</a>
+      <a data-view="proxies">🛡 Proxies</a>
+      <a data-view="cookies">🍪 Cookies</a>
+      <a data-view="status">📊 Status</a>
+      <hr>
+      <a id="settings">⚙ Settings</a>
+    </nav>
+  </aside>
+
+  <main>
+    <p id="toast" class="msg" hidden></p>
+
+    <!-- Download ─────────────────────────────────────────────────────── -->
+    <section data-view="download" hidden>
+      <h1>Download</h1>
+      <div class="row">
+        <input id="dUrl" type="url" placeholder="Paste a link to a video, playlist, channel, image page or file…" spellcheck="false">
+        <button id="dCheck" class="secondary">Check</button>
+      </div>
+      <div id="dInfo" class="card big" hidden>
+        <img id="dThumb" alt="" hidden>
+        <div class="meta"><div id="dTitle" class="title"></div><div id="dSub" class="muted"></div></div>
+      </div>
+      <div id="dForm"></div>
+      <div class="row">
+        <label class="grow">Items to get <input id="dMax" type="number" min="1" placeholder="all"></label>
+        <label class="grow">Start at # <input id="dStart" type="number" min="1" value="1"></label>
+      </div>
+      <details open><summary>Advanced options</summary><div id="dAdv"></div></details>
+      <div class="row">
+        <button id="dGo" class="primary grow">⬇ Download</button>
+        <button id="dStream" class="secondary">▶ Save directly</button>
+        <button id="dAuto" class="secondary">✨ Auto-detect</button>
+      </div>
+    </section>
+
+    <!-- Playlist picker ──────────────────────────────────────────────── -->
+    <section data-view="playlist" hidden>
+      <h1>Playlist picker</h1>
+      <p class="hint">Load a playlist or channel, tick the videos you want, download only those.</p>
+      <div class="row"><input id="pUrl" type="url" placeholder="Playlist / channel link" spellcheck="false"><button id="pLoad" class="secondary">Load</button></div>
+      <div id="pHead" class="muted"></div>
+      <div class="row toolbar" id="pTools" hidden>
+        <button class="mini" data-sel="all">Select all</button><button class="mini" data-sel="none">None</button>
+        <span id="pSel" class="muted small"></span>
+      </div>
+      <ul id="pList" class="pick"></ul>
+      <div class="dlbar" id="pBar" hidden></div>
+    </section>
+
+    <!-- Image gallery ────────────────────────────────────────────────── -->
+    <section data-view="gallery" hidden>
+      <h1>Image gallery</h1>
+      <p class="hint">Every image on a page — choose which to download.</p>
+      <div class="row"><input id="gUrl" type="url" placeholder="Page link" spellcheck="false"><button id="gLoad" class="secondary">Load</button></div>
+      <div id="gHead" class="muted"></div>
+      <div class="row toolbar" id="gTools" hidden>
+        <button class="mini" data-sel="all">Select all</button><button class="mini" data-sel="none">None</button>
+        <span id="gSel" class="muted small"></span><span class="spacer"></span>
+        <button id="gDirect" class="secondary">Save directly</button>
+        <button id="gGo" class="primary">⬇ Download with MediaDL</button>
+      </div>
+      <div id="gGrid" class="grid"></div>
+    </section>
+
+    <!-- Batch ────────────────────────────────────────────────────────── -->
+    <section data-view="batch" hidden>
+      <h1>Batch links</h1>
+      <p class="hint">One link per line (up to 200). Each becomes its own download.</p>
+      <textarea id="bText" rows="10" placeholder="https://…&#10;https://…" spellcheck="false"></textarea>
+      <div class="row"><button id="bTabs" class="secondary">+ Add links of all open tabs</button><span id="bCount" class="muted small"></span></div>
+      <div class="dlbar" id="bBar"></div>
+    </section>
+
+    <!-- Search ───────────────────────────────────────────────────────── -->
+    <section data-view="search" hidden>
+      <h1>Search</h1>
+      <div class="row">
+        <input id="sQ" placeholder="What are you looking for?">
+        <select id="sKind">
+          <option value="video">Videos</option><option value="web">Web</option><option value="file">Files</option>
+          <option value="image">Images</option><option value="torrent">Torrents</option><option value="news">News</option>
+        </select>
+        <input id="sType" placeholder="pdf, mp3…" class="narrow" hidden>
+        <button id="sGo" class="primary">Search</button>
+      </div>
+      <label class="check"><input id="sSafe" type="checkbox" checked> Safe search</label>
+      <div class="row toolbar" id="sTools" hidden>
+        <button class="mini" data-sel="all">Select all</button><button class="mini" data-sel="none">None</button>
+        <span id="sSel" class="muted small"></span>
+      </div>
+      <ul id="sList" class="pick"></ul>
+      <div class="row"><button id="sMore" class="secondary" hidden>Load more</button></div>
+      <div class="dlbar" id="sBar" hidden></div>
+    </section>
+
+    <!-- Feeds ────────────────────────────────────────────────────────── -->
+    <section data-view="feed" hidden>
+      <h1>RSS / Atom / M3U feeds</h1>
+      <p class="hint">Podcasts, YouTube channel feeds, IPTV / M3U playlists…</p>
+      <div class="row"><input id="fUrl" type="url" placeholder="Feed link" spellcheck="false"><button id="fLoad" class="secondary">Load</button></div>
+      <div id="fHead" class="muted"></div>
+      <div class="row toolbar" id="fTools" hidden>
+        <button class="mini" data-sel="all">Select all</button><button class="mini" data-sel="none">None</button>
+        <span id="fSel" class="muted small"></span>
+      </div>
+      <ul id="fList" class="pick"></ul>
+      <div class="dlbar" id="fBar" hidden></div>
+    </section>
+
+    <!-- Queue ────────────────────────────────────────────────────────── -->
+    <section data-view="queue" hidden>
+      <h1>Server queue</h1>
+      <p class="hint">Everything on your MediaDL server — including downloads started from the website or the Telegram bot.</p>
+      <div class="row toolbar">
+        <span id="qStats" class="muted small"></span><span class="spacer"></span>
+        <button id="qClearDone" class="mini">Clear completed</button>
+        <button id="qClearFail" class="mini">Clear failed</button>
+        <button id="qStop" class="mini danger">Stop all</button>
+      </div>
+      <ul id="qList" class="list"></ul>
+      <p id="qEmpty" class="msg" hidden>The queue is empty.</p>
+    </section>
+
+    <!-- Schedules ────────────────────────────────────────────────────── -->
+    <section data-view="schedules" hidden>
+      <h1>Recurring schedules</h1>
+      <p class="hint">Downloads set to repeat (e.g. a channel every day). Create one with Advanced options → Repeat.</p>
+      <ul id="schList" class="list"></ul>
+      <p id="schEmpty" class="msg" hidden>No recurring downloads.</p>
+    </section>
+
+    <!-- Proxies ──────────────────────────────────────────────────────── -->
+    <section data-view="proxies" hidden>
+      <h1>Proxies &amp; VPN</h1>
+      <p class="hint">Route downloads through a proxy to get around blocks or region locks. Pick one per download in Advanced options; "Auto" uses the default (★) or rotates working ones.</p>
+      <div class="row">
+        <input id="xLabel" placeholder="Name (e.g. Home VPN)" class="narrow">
+        <input id="xUrl" placeholder="socks5://user:pass@host:1080  or  http://host:8080" spellcheck="false">
+        <button id="xTest" class="secondary">Test</button>
+        <button id="xAdd" class="primary">Save</button>
+      </div>
+      <h2>Saved</h2><ul id="xSaved" class="list"></ul>
+      <h2>Built-in</h2><ul id="xPresets" class="list"></ul>
+    </section>
+
+    <!-- Cookies ──────────────────────────────────────────────────────── -->
+    <section data-view="cookies" hidden>
+      <h1>Site logins (cookies)</h1>
+      <p class="hint">Saved per site on your server and used automatically for downloads from that site.</p>
+      <div class="row">
+        <input id="cDomain" placeholder="youtube.com" spellcheck="false">
+        <button id="cImport" class="primary">Import from this browser</button>
+      </div>
+      <details><summary>Paste cookies.txt instead</summary>
+        <textarea id="cText" rows="6" placeholder="# Netscape HTTP Cookie File…" spellcheck="false"></textarea>
+        <button id="cPaste" class="secondary">Save pasted cookies</button>
+      </details>
+      <ul id="cList" class="list"></ul>
+    </section>
+
+    <!-- Player ───────────────────────────────────────────────────────── -->
+    <section data-view="player" hidden>
+      <h1 id="plTitle">Player</h1>
+      <video id="plVideo" controls autoplay></video>
+      <div class="row"><button id="plSave" class="secondary">Save this file</button></div>
+    </section>
+
+    <!-- Status ───────────────────────────────────────────────────────── -->
+    <section data-view="status" hidden>
+      <h1>Status</h1>
+      <div id="stBox"></div>
+    </section>
+  </main>
+
+  <script src="lib/shared.js"></script>
+  <script src="lib/options.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

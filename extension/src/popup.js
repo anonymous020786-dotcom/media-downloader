@@ -1,5 +1,6 @@
 /* global ext, getSettings, api, buildDownload, isHttpUrl, fmtBytes, fmtDuration,
-          cleanDomain, toNetscapeCookies, readCookies, DEFAULT_SETTINGS */
+          cleanDomain, toNetscapeCookies, readCookies, DEFAULT_SETTINGS,
+          renderAdvanced, readAdvanced, advancedSummary, stickyAdv */
 const $ = (id) => document.getElementById(id)
 const VIDEO_FORMATS = ['mp4', 'webm', 'mkv']
 const AUDIO_FORMATS = ['mp3', 'm4a', 'opus', 'flac', 'wav', 'ogg']
@@ -45,6 +46,12 @@ function selectTab(name) {
 }
 for (const b of document.querySelectorAll('.tabs button')) b.addEventListener('click', () => selectTab(b.dataset.tab))
 $('openOptions').addEventListener('click', () => ext.runtime.openOptionsPage())
+function openApp(view, params = {}) {
+  const q = new URLSearchParams({ view, ...params }).toString()
+  ext.tabs.create({ url: ext.runtime.getURL(`app.html?${q}`) })
+  window.close()
+}
+$('openApp').addEventListener('click', () => openApp('download', isHttpUrl($('url').value) ? { url: $('url').value.trim() } : {}))
 
 // ── server status ───────────────────────────────────────────────────────────
 async function checkServer() {
@@ -68,7 +75,6 @@ function fillFormats() {
   const want = audio ? settings.audioFormat : settings.videoFormat
   $('format').replaceChildren(...list.map((f) => el('option', { value: f, textContent: f.toUpperCase(), selected: f === want })))
   $('quality').disabled = audio
-  $('subtitles').disabled = audio
 }
 
 function fillQualities(a) {
@@ -95,8 +101,10 @@ $('format').addEventListener('change', () => {
   remember(kind() === 'audio' ? { audioFormat: $('format').value } : { videoFormat: $('format').value })
 })
 $('quality').addEventListener('change', () => remember({ quality: $('quality').value }))
-for (const id of ['subtitles', 'embedThumbnail', 'sponsorBlock']) {
-  $(id).addEventListener('change', () => remember({ [id]: $(id).checked }))
+
+function onAdvChange(a) {
+  $('advSummary').textContent = advancedSummary(a) ? `· ${advancedSummary(a)}` : ''
+  remember({ adv: stickyAdv(a) })   // clip / delay / repeat are never remembered
 }
 
 // ── This page: analyze ──────────────────────────────────────────────────────
@@ -138,9 +146,16 @@ function setMode(a) {
   const direct = DIRECT_TYPES.has(type)
   document.querySelector('.seg').hidden = direct
   $('quality').closest('.grid2').hidden = direct
-  $('playlistBox').hidden = !(type === 'playlist' || type === 'profile' || a?.is_playlist)
-  $('download').textContent = direct ? `⬇ Download ${type}` : '⬇ Download'
+  const list = type === 'playlist' || type === 'profile' || !!a?.is_playlist
+  $('playlistBox').hidden = !list
+  $('pickItems').hidden = !list
+  $('pickImages').hidden = !(type === 'page' || type === 'image')
+  $('pickRow').hidden = $('pickItems').hidden && $('pickImages').hidden
+  $('stream').hidden = direct || list
+  $('download').textContent = direct ? `⬇ Download ${type}` : list ? '⬇ Download all' : '⬇ Download'
 }
+$('pickItems').addEventListener('click', () => openApp('playlist', { url: $('url').value.trim() }))
+$('pickImages').addEventListener('click', () => openApp('gallery', { url: $('url').value.trim() }))
 
 $('analyze').addEventListener('click', analyze)
 $('url').addEventListener('keydown', (e) => { if (e.key === 'Enter') analyze() })
@@ -149,8 +164,7 @@ $('url').addEventListener('keydown', (e) => { if (e.key === 'Enter') analyze() }
 $('download').addEventListener('click', async () => {
   const url = $('url').value.trim()
   if (!isHttpUrl(url) && !/^magnet:/i.test(url)) return show($('pageMsg'), 'Enter a link first.', 'err')
-  const s = { ...settings, kind: kind(), quality: $('quality').value, subtitles: $('subtitles').checked,
-              embedThumbnail: $('embedThumbnail').checked, sponsorBlock: $('sponsorBlock').checked }
+  const s = { ...settings, kind: kind(), quality: $('quality').value }
   s[s.kind === 'audio' ? 'audioFormat' : 'videoFormat'] = $('format').value
   const type = analysis?.type || 'video'
   const extra = { title: analysis?.title || analysis?.filename || tab?.title, thumbnail: analysis?.thumbnail }
@@ -160,22 +174,36 @@ $('download').addEventListener('click', async () => {
     if ($('maxItems').value) extra.maxItems = Number($('maxItems').value)
     extra.startIndex = Number($('startIndex').value) || 1
   }
-  if ($('startTime').value.trim()) extra.startTime = $('startTime').value.trim()
-  if ($('endTime').value.trim()) extra.endTime = $('endTime').value.trim()
   const done = busy($('download'), 'Sending…')
   try {
-    await send('queue', { payload: { url, title: extra.title, mode: 'custom', body: buildDownload(url, s, extra) } })
+    const body = buildDownload(url, s, extra, readAdvanced($('adv')))
+    const r = await send('queue', { payload: { url, title: extra.title, mode: 'custom', body } })
+    if (r.recurring) return show($('pageMsg'), `🔁 Scheduled to run ${r.recurring}. Manage it under Schedules in the full app (⤢).`, 'ok')
+    if (body.delaySeconds) show($('pageMsg'), `⏰ Queued — starts in ${Math.round(body.delaySeconds / 60)} min.`, 'ok')
     selectTab('jobs')
   } catch (e) { show($('pageMsg'), e.message, 'err') } finally { done() }
+})
+
+$('stream').addEventListener('click', async () => {
+  const url = $('url').value.trim()
+  if (!isHttpUrl(url)) return
+  const audio = kind() === 'audio'
+  const done = busy($('stream'), 'Starting…')
+  try {
+    await send('stream', { url, opts: { format: $('format').value, quality: audio ? 'best' : $('quality').value } })
+    show($('pageMsg'), '✅ Downloading straight from the site — watch your browser’s Downloads.', 'ok')
+  } catch (e) { show($('pageMsg'), `${e.message}
+Use ⬇ Download instead — it handles more sites.`, 'err') } finally { done() }
 })
 
 $('quick').addEventListener('click', async () => {
   const url = $('url').value.trim()
   if (!url) return
+  const done = busy($('quick'), 'Working…')
   try {
-    await send('queue', { payload: { url, title: analysis?.title || tab?.title, mode: 'auto' } })
+    await send('queueSmart', { url, opts: { audio: kind() === 'audio', title: analysis?.title || tab?.title } })
     selectTab('jobs')
-  } catch (e) { show($('pageMsg'), e.message, 'err') }
+  } catch (e) { show($('pageMsg'), e.message, 'err') } finally { done() }
 })
 
 // ── Found on page ───────────────────────────────────────────────────────────
@@ -255,7 +283,7 @@ async function renderFound() {
         el('span', { className: 'spacer' }),
         status,
         el('button', { className: 'mini', textContent: 'MediaDL', title: 'Send to your MediaDL server', on: { click: async () => {
-          try { await send('queue', { payload: { url: it.url, title: it.label && it.label !== 'from network' ? it.label : fileName(it.url), mode: 'auto' } }); status.textContent = 'queued ✓' }
+          try { await send('queueSmart', { url: it.url, opts: { title: it.label && it.label !== 'from network' ? it.label : fileName(it.url) } }); status.textContent = 'queued ✓' }
           catch (e) { status.textContent = e.message }
         } } }),
         isStream || it.kind === 'magnet' ? null : el('button', { className: 'mini', textContent: 'Save', title: 'Download the file directly in the browser', on: { click: async () => {
@@ -373,7 +401,8 @@ $('ckFile').addEventListener('click', async () => {
 ;(async () => {
   settings = await getSettings()
   document.querySelector(`input[name=kind][value=${settings.kind === 'audio' ? 'audio' : 'video'}]`).checked = true
-  for (const id of ['subtitles', 'embedThumbnail', 'sponsorBlock']) $(id).checked = !!settings[id]
+  renderAdvanced($('adv'), settings.adv, onAdvChange)
+  $('advSummary').textContent = advancedSummary(settings.adv) ? `· ${advancedSummary(settings.adv)}` : ''
   fillFormats()
   fillQualities(null)
 

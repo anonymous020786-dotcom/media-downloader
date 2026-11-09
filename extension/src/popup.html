@@ -10,7 +10,8 @@
     <img src="icons/icon-32.png" alt="" width="20" height="20">
     <strong>MediaDL</strong>
     <span id="server" class="dot" title="Checking server…"></span>
-    <button id="openOptions" class="icon" title="Settings" aria-label="Settings">⚙</button>
+    <button id="openApp" class="icon" title="Open the full MediaDL app" aria-label="Open full app">⤢</button>
+    <button id="openOptions" class="icon tight" title="Settings" aria-label="Settings">⚙</button>
   </header>
 
   <nav class="tabs" role="tablist">
@@ -53,18 +54,19 @@
         <label>Items to get <input id="maxItems" type="number" min="1" placeholder="all"></label>
         <label>Start at # <input id="startIndex" type="number" min="1" value="1"></label>
       </div>
-      <details>
-        <summary>More options</summary>
-        <label class="check"><input id="subtitles" type="checkbox"> Subtitles</label>
-        <label class="check"><input id="embedThumbnail" type="checkbox"> Embed thumbnail &amp; tags</label>
-        <label class="check"><input id="sponsorBlock" type="checkbox"> Skip sponsor segments (YouTube)</label>
-        <div class="grid2">
-          <label>Trim start <input id="startTime" placeholder="0:30"></label>
-          <label>Trim end <input id="endTime" placeholder="2:10"></label>
-        </div>
+      <div id="pickRow" class="row" hidden>
+        <button id="pickItems" class="secondary grow" hidden>☑ Choose items…</button>
+        <button id="pickImages" class="secondary grow" hidden>🖼 Pick images…</button>
+      </div>
+      <details id="advBox">
+        <summary>More options <span id="advSummary" class="muted small"></span></summary>
+        <div id="adv"></div>
       </details>
       <button id="download" class="primary">⬇ Download</button>
-      <button id="quick" class="link">Not sure? Let MediaDL auto-detect</button>
+      <div class="row">
+        <button id="stream" class="secondary grow" title="The server streams it straight from the site into your Downloads — nothing is stored on the server">▶ Save directly</button>
+        <button id="quick" class="secondary grow" title="Let MediaDL work out what this link is">✨ Auto-detect</button>
+      </div>
     </div>
   </section>
 
@@ -96,6 +98,7 @@
   </section>
 
   <script src="lib/shared.js"></script>
+  <script src="lib/options.js"></script>
   <script src="popup.js"></script>
 </body>
 </html>

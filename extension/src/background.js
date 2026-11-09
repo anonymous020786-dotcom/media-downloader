@@ -2,10 +2,12 @@
 // Owns: context menus, keyboard shortcuts, the job list + polling, auto-saving
 // finished files, notifications, the toolbar badge and network media sniffing.
 /* global ext, getSettings, serverBase, api, buildDownload, fileUrl, isHttpUrl */
-if (typeof importScripts === 'function') importScripts('lib/shared.js')
+if (typeof importScripts === 'function') importScripts('lib/shared.js', 'lib/options.js')
 
 const MAX_JOBS = 50
 const DONE = new Set(['completed', 'failed', 'cancelled'])
+const AUDIO_EXT = /^(mp3|m4a|aac|opus|ogg|flac|wav|alac)$/
+const DIRECT_TYPES = new Set(['image', 'page', 'file', 'torrent'])
 
 // ── Job store (storage.local "jobs": newest first) ──────────────────────────
 async function getJobs() { return (await ext.storage.local.get('jobs')).jobs || [] }
@@ -46,25 +48,67 @@ async function queue({ url, title, mode = 'auto', body }) {
   const res = mode === 'auto'
     ? await api('/api/download/auto', { method: 'POST', body: { url }, timeoutMs: 45_000 })
     : await api('/api/download', { method: 'POST', body, timeoutMs: 30_000 })
+  if (res.recurring) {
+    // A repeating schedule, not a single job — it lives in the Schedules list.
+    return { recurring: res.recurring, title: title || url }
+  }
   const job = {
     jobId: res.jobId, url, title: title || url, addedAt: Date.now(),
-    kind: body && /^(mp3|m4a|aac|opus|ogg|flac|wav|alac)$/.test(body.format) ? 'audio' : 'video',
+    kind: body && AUDIO_EXT.test(body.format) ? 'audio' : 'video',
     status: 'queued', progress: 0, saved: false,
+    startsAt: body?.delaySeconds ? Date.now() + body.delaySeconds * 1000 : undefined,
   }
+  await addJobs([job])
+  return job
+}
+
+async function addJobs(list) {
   const jobs = await getJobs()
-  jobs.unshift(job)
+  jobs.unshift(...list)
   await setJobs(jobs)
   ensurePolling()
-  return job
+}
+
+/** Many links at once (playlist picks, gallery, search results, feeds, pasted
+ *  list). items: [{url, title?, thumbnail?, mediaType?, format?}] */
+async function queueBatch(items, shared = {}) {
+  const res = await api('/api/download/batch', { method: 'POST', body: { items: items.slice(0, 200), ...shared }, timeoutMs: 60_000 })
+  const audio = AUDIO_EXT.test(shared.format || '')
+  const now = Date.now()
+  await addJobs(res.jobs.map((j, i) => ({
+    jobId: j.jobId, url: j.url, title: j.title || j.url, addedAt: now + i,
+    kind: audio ? 'audio' : 'video', status: 'queued', progress: 0, saved: false,
+  })))
+  return res
+}
+
+/** Pipe-through link: the server streams straight from the source (no copy is
+ *  kept). Opens the browser's own download of it. */
+async function streamDownload(url, { format, quality } = {}) {
+  const res = await api('/api/stream', { method: 'POST', body: { url, format, quality }, timeoutMs: 60_000 })
+  const link = `${await serverBase()}/api/stream/${res.token}`
+  await ext.downloads.download({ url: link, conflictAction: 'uniquify' })
+  return { url: link }
+}
+
+/** Analyze first so saved advanced options (proxy, speed limit, template…)
+ *  apply — /api/download/auto can't carry them. Falls back to auto-detect. */
+async function queueSmart(url, { audio = false, title } = {}) {
+  const s = await getSettings()
+  const settings = audio ? { ...s, kind: 'audio' } : s
+  let a = null
+  try { a = await api('/api/analyze', { method: 'POST', body: { url }, timeoutMs: 45_000 }) } catch { /* auto below */ }
+  if (!a) return queue({ url, title, mode: 'auto' })
+  const extra = { title: title || a.title || a.filename, thumbnail: a.thumbnail }
+  if (DIRECT_TYPES.has(a.type)) Object.assign(extra, { mediaType: a.type, format: 'original' })
+  else if (a.type === 'playlist' || a.type === 'profile' || a.is_playlist) extra.mediaType = a.type === 'profile' ? 'profile' : 'playlist'
+  return queue({ url, title: extra.title, mode: 'custom', body: buildDownload(url, settings, extra) })
 }
 
 async function queueWithDefaults(url, { audio = false, title } = {}) {
   try {
-    const s = await getSettings()
-    const job = (audio || s.kind === 'audio')
-      ? await queue({ url, title, mode: 'custom', body: buildDownload(url, { ...s, kind: 'audio' }, { title }) })
-      : await queue({ url, title, mode: 'auto' })
-    await notify('Queued in MediaDL', `${job.kind === 'audio' ? '🎵' : '🎬'} ${title || url}`)
+    const job = await queueSmart(url, { audio, title })
+    await notify('Queued in MediaDL', `${job.kind === 'audio' ? '🎵' : '🎬'} ${job.title || title || url}`)
   } catch (e) {
     await notify('MediaDL — could not queue', e.message)
   }
@@ -146,9 +190,17 @@ ext.notifications?.onClicked?.addListener((id) => {
 
 // ── Context menus ───────────────────────────────────────────────────────────
 const MENUS = [
-  { id: 'dl',       title: 'Download with MediaDL',            contexts: ['link', 'video', 'audio', 'image', 'page', 'selection'] },
-  { id: 'dl-audio', title: 'Download audio only (MP3/…) with MediaDL', contexts: ['link', 'video', 'audio', 'page', 'selection'] },
+  { id: 'dl',        title: 'Download with MediaDL',            contexts: ['link', 'video', 'audio', 'image', 'page', 'selection'] },
+  { id: 'dl-audio',  title: 'Download audio only (MP3/…) with MediaDL', contexts: ['link', 'video', 'audio', 'page', 'selection'] },
+  { id: 'dl-stream', title: 'Download directly (no copy on server)', contexts: ['link', 'video', 'audio', 'page'] },
+  { id: 'gallery',   title: 'Pick images on this page with MediaDL…', contexts: ['page', 'image'] },
+  { id: 'open-app',  title: 'Open MediaDL app', contexts: ['action'] },
 ]
+
+function openApp(view, params = {}) {
+  const q = new URLSearchParams({ view, ...params }).toString()
+  return ext.tabs.create({ url: ext.runtime.getURL(`app.html?${q}`) })
+}
 async function buildMenus() {
   await ext.contextMenus.removeAll()
   for (const m of MENUS) ext.contextMenus.create(m)
@@ -166,6 +218,11 @@ ext.contextMenus.onClicked.addListener((info, tab) => {
   const fromPage = !info.linkUrl && !info.srcUrl && !info.selectionText
   // A <video src="blob:…"> can't be fetched by the server; send the page instead.
   const url = /^blob:/i.test(raw) ? (info.pageUrl || tab?.url) : raw
+  if (info.menuItemId === 'open-app') return openApp('download')
+  if (info.menuItemId === 'gallery') return openApp('gallery', { url: info.pageUrl || tab?.url })
+  if (info.menuItemId === 'dl-stream') {
+    return streamDownload(url).catch((e) => notify('MediaDL — direct download failed', e.message))
+  }
   queueWithDefaults(url, { audio: info.menuItemId === 'dl-audio', title: fromPage ? tab?.title : undefined })
 })
 
@@ -214,6 +271,10 @@ ext.runtime.onMessage.addListener((msg, _sender, reply) => {
   const run = async () => {
     switch (msg?.type) {
       case 'queue':      return await queue(msg.payload)
+      case 'queueSmart': return await queueSmart(msg.url, msg.opts)
+      case 'batch':      return await queueBatch(msg.items, msg.shared)
+      case 'stream':     return await streamDownload(msg.url, msg.opts)
+      case 'track':      await addJobs(msg.jobs); return await getJobs()
       case 'poll':       return await pollJobs()
       case 'jobs':       return await getJobs()
       case 'save':       return await saveJobFiles(msg.jobId)

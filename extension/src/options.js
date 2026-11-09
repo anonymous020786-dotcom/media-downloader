@@ -1,8 +1,8 @@
-/* global ext, getSettings, DEFAULT_SETTINGS */
+/* global ext, getSettings, DEFAULT_SETTINGS, renderAdvanced, stickyAdv, ONE_SHOT_KEYS */
 const $ = (id) => document.getElementById(id)
 const TEXT = ['serverUrl', 'botUsername']
 const SELECT = ['kind', 'quality', 'videoFormat', 'audioFormat']
-const CHECK = ['autoSave', 'notify', 'subtitles', 'embedThumbnail', 'sponsorBlock']
+const CHECK = ['autoSave', 'notify']
 
 function msg(text, kind = '') { const m = $('testMsg'); m.hidden = !text; m.textContent = text; m.className = `msg ${kind}` }
 
@@ -25,6 +25,13 @@ async function grantServer(origin) {
   for (const id of [...TEXT, ...SELECT]) $(id).value = s[id] ?? ''
   for (const id of CHECK) $(id).checked = !!s[id]
   $('sniff').checked = await ext.permissions.contains({ origins: ['<all_urls>'] })
+
+  const adv = $('adv')
+  renderAdvanced(adv, s.adv, (a) => ext.storage.sync.set({ adv: stickyAdv(a) }))
+  for (const k of ONE_SHOT_KEYS) adv.querySelector(`[data-adv=${k}]`)?.closest('label').setAttribute('hidden', '')
+  for (const fs of adv.querySelectorAll('fieldset')) {
+    if (![...fs.querySelectorAll('label')].some((l) => !l.hidden)) fs.hidden = true
+  }
 
   for (const id of [...TEXT, ...SELECT]) $(id).addEventListener('change', () => ext.storage.sync.set({ [id]: $(id).value.trim() }))
   for (const id of CHECK) $(id).addEventListener('change', () => ext.storage.sync.set({ [id]: $(id).checked }))

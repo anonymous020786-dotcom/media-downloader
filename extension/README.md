@@ -47,6 +47,9 @@ MediaDL on this computer (`npm run dev` in the repo, default `http://localhost:4
 | **Cookies** | For sites that need your login (age-restricted YouTube, Instagram, X…): send this browser's cookies for one site to your MediaDL server, to the Telegram bot, or save a `cookies.txt`. Nothing is read until you allow that site. |
 | **Right-click** | On any link, video, image, page or selected URL: *Download with MediaDL* / *Download audio only*. |
 | **Shortcuts** | `Alt+Shift+D` download page · `Alt+Shift+A` download audio · `Alt+Shift+M` open MediaDL. |
+| **Full app** (⤢ in the popup, or right-click the icon → *Open MediaDL app*) | Everything MediaDL can do, in a tab: **Download** with every option · **Playlist picker** (tick the videos you want) · **Image gallery** (pick images from a page) · **Batch** (paste up to 200 links, or grab all open tabs) · **Search** (videos, web, files, images, torrents, news) · **RSS / Atom / M3U feeds** · **Queue** of everything on the server (also bot / website jobs): files, play, ZIP, merge video + audio, retry, stop all · **Schedules** (recurring downloads) · **Proxies / VPN** (add, test, default) · **Cookies** (per-site logins) · **Status** (services, engine versions). |
+| **Every download option** | Subtitles + language, clip start/end, embed thumbnail/tags, thumbnail file, filename template, SponsorBlock, split by chapters, normalize loudness, proxy, speed limit, parallel fragments, screen-capture fallback, priority, **start later**, **repeat hourly/daily/weekly**, completion webhook. Remembered as defaults — except clip, start-later and repeat, which are always per download. |
+| **Save directly** | Streams a video straight from the site into your Downloads with no copy kept on the server (popup ▶, right-click, or app). |
 | **Auto-save & notifications** | Finished files are saved to Downloads/MediaDL and you get a notification (both can be turned off). |
 
 ## Permissions, and why
@@ -66,4 +69,6 @@ MediaDL on this computer (`npm run dev` in the repo, default `http://localhost:4
 `src/` is plain JavaScript — no bundler. `node extension/build.mjs` syntax-checks every script,
 verifies every file the manifest and pages reference, then writes per-browser folders and zips
 (`EXT_VERSION=2.0.5` overrides the version). CI also runs Mozilla's `web-ext lint` on the
-Firefox build and publishes the zips to the release above on every merge to `master`.
+Firefox build, runs `test/e2e.py` — the built extension in real Chromium against a running MediaDL,
+with offline fixtures from `test/fixtures.py` — and publishes the zips to the release above on every
+merge to `master`.

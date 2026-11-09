@@ -43,9 +43,13 @@
     </div>
     <label class="check"><input id="autoSave" type="checkbox"> Save finished downloads into my <b>Downloads/MediaDL</b> folder automatically</label>
     <label class="check"><input id="notify" type="checkbox"> Show a notification when a download is queued, finished or failed</label>
-    <label class="check"><input id="subtitles" type="checkbox"> Include subtitles</label>
-    <label class="check"><input id="embedThumbnail" type="checkbox"> Embed thumbnail &amp; tags</label>
-    <label class="check"><input id="sponsorBlock" type="checkbox"> Skip sponsor segments (YouTube, via SponsorBlock)</label>
+  </section>
+
+  <h2>Default download options</h2>
+  <section>
+    <p class="hint">Used for right-click, shortcuts and as the starting point in the popup. Clip times,
+      "start later" and "repeat" are always chosen per download, never saved here.</p>
+    <div id="adv"></div>
   </section>
 
   <h2>Finding media on pages</h2>
@@ -73,6 +77,7 @@
   </section>
 
   <script src="lib/shared.js"></script>
+  <script src="lib/options.js"></script>
   <script src="options.js"></script>
 </body>
 </html>

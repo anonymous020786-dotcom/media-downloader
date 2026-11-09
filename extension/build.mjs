@@ -27,7 +27,7 @@ const TARGETS = {
   }),
   firefox: (m) => ({
     ...m,
-    background: { scripts: ['lib/shared.js', 'background.js'] },
+    background: { scripts: ['lib/shared.js', 'lib/options.js', 'background.js'] },
     browser_specific_settings: {
       gecko: {
         id: 'mediadl@mediadl.extension',

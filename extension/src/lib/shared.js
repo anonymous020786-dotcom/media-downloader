@@ -13,9 +13,7 @@ var DEFAULT_SETTINGS = {
   videoFormat:    'mp4',
   audioFormat:    'mp3',
   quality:        'best',
-  subtitles:      false,
-  embedThumbnail: true,
-  sponsorBlock:   false,
+  adv:            {},        // remembered advanced options (see lib/options.js)
   autoSave:       true,      // save finished files into the browser's Downloads folder
   notify:         true,
   botUsername:    'Dwnldr276bot',
@@ -59,18 +57,27 @@ function fileUrl(base, jobId, name) {
   return `${base}/api/files/${jobId}/${encodeURIComponent(name)}`
 }
 
-/** Build the POST /api/download body from a URL + settings (+ overrides). */
-function buildDownload(url, s, extra = {}) {
+// Per-download choices that must never become remembered defaults — otherwise
+// one right-click could silently create a recurring or delayed download.
+var ONE_SHOT_KEYS = ['startTime', 'endTime', 'delayMinutes', 'repeatEvery']
+
+function stickyAdv(a) {
+  const out = { ...(a || {}) }
+  for (const k of ONE_SHOT_KEYS) delete out[k]
+  return out
+}
+
+/** Build the POST /api/download body from a URL + settings (+ overrides).
+ *  `adv` = advanced options for this download (defaults: remembered ones). */
+function buildDownload(url, s, extra = {}, adv = s.adv) {
   const audio = s.kind === 'audio'
+  const advanced = typeof advancedPayload === 'function' ? advancedPayload(adv || {}, { audio }) : {}
   return {
     url,
     mediaType:      'video',
     format:         audio ? s.audioFormat : s.videoFormat,
     quality:        audio ? 'best' : s.quality,
-    subtitles:      !audio && !!s.subtitles,
-    embedThumbnail: !!s.embedThumbnail,
-    embedMetadata:  true,
-    sponsorBlock:   !!s.sponsorBlock,
+    ...advanced,
     ...extra,
   }
 }
