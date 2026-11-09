@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MediaDL settings</title>
+  <link rel="stylesheet" href="ui.css">
+</head>
+<body class="page">
+  <h1>MediaDL settings</h1>
+  <p class="hint">Changes save automatically.</p>
+
+  <h2>Your MediaDL server</h2>
+  <section>
+    <p class="hint">The extension sends links to MediaDL running on your computer (<code>npm run dev</code> in the
+      media-downloader folder). Only change this if MediaDL runs on another machine on your network.</p>
+    <label>Server address <input id="serverUrl" type="url" placeholder="http://localhost:4000" spellcheck="false"></label>
+    <div class="row">
+      <button id="test" class="primary">Connect &amp; test</button>
+    </div>
+    <p id="testMsg" class="msg" hidden></p>
+  </section>
+
+  <h2>Downloads</h2>
+  <section>
+    <div class="grid2">
+      <label>Default type
+        <select id="kind"><option value="video">Video</option><option value="audio">Audio only</option></select>
+      </label>
+      <label>Video quality
+        <select id="quality">
+          <option value="best">Best available</option><option value="2160">4K (2160p)</option>
+          <option value="1440">1440p</option><option value="1080">1080p</option><option value="720">720p</option>
+          <option value="480">480p</option><option value="360">360p</option>
+        </select>
+      </label>
+      <label>Video format
+        <select id="videoFormat"><option>mp4</option><option>webm</option><option>mkv</option></select>
+      </label>
+      <label>Audio format
+        <select id="audioFormat"><option>mp3</option><option>m4a</option><option>opus</option><option>flac</option><option>wav</option><option>ogg</option></select>
+      </label>
+    </div>
+    <label class="check"><input id="autoSave" type="checkbox"> Save finished downloads into my <b>Downloads/MediaDL</b> folder automatically</label>
+    <label class="check"><input id="notify" type="checkbox"> Show a notification when a download is queued, finished or failed</label>
+    <label class="check"><input id="subtitles" type="checkbox"> Include subtitles</label>
+    <label class="check"><input id="embedThumbnail" type="checkbox"> Embed thumbnail &amp; tags</label>
+    <label class="check"><input id="sponsorBlock" type="checkbox"> Skip sponsor segments (YouTube, via SponsorBlock)</label>
+  </section>
+
+  <h2>Finding media on pages</h2>
+  <section>
+    <p class="hint">The <b>Found</b> tab always lists videos, audio and file links on the page you are viewing.
+      To also catch streams that only appear in network traffic (HLS/DASH, e.g. on many video players), the
+      extension needs to observe requests on all sites. It only records media URLs, only per tab, and forgets
+      them when the tab navigates or closes.</p>
+    <label class="check"><input id="sniff" type="checkbox"> Detect streaming media from network traffic</label>
+  </section>
+
+  <h2>Telegram bot</h2>
+  <section>
+    <label>Bot username (for "Send cookies to Telegram bot") <input id="botUsername" placeholder="Dwnldr276bot" spellcheck="false"></label>
+  </section>
+
+  <h2>Shortcuts</h2>
+  <section>
+    <p class="hint"><kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>D</kbd> download the current page ·
+      <kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>A</kbd> download its audio ·
+      <kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>M</kbd> open MediaDL.<br>
+      Right-click any link, video, image, page or selected URL for “Download with MediaDL”.<br>
+      Change keys in <code>chrome://extensions/shortcuts</code> (Chrome, Edge, Brave, Opera) or
+      <i>Add-ons → ⚙ → Manage Extension Shortcuts</i> (Firefox).</p>
+  </section>
+
+  <script src="lib/shared.js"></script>
+  <script src="options.js"></script>
+</body>
+</html>

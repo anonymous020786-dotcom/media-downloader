@@ -46,6 +46,9 @@ app.use(cors({
     if (!origin) return cb(null, true)
     // In dev allow all; in prod check allowlist
     if (process.env.NODE_ENV !== 'production') return cb(null, true)
+    // The MediaDL browser extension (Chrome/Edge/Brave/Opera, Firefox, Safari).
+    // Only extensions the user installed can send these origins.
+    if (/^(chrome|moz|safari-web)-extension:\/\/[\w.-]+$/.test(origin)) return cb(null, true)
     if (ALLOWED_ORIGINS.length === 0 || ALLOWED_ORIGINS.includes(origin)) return cb(null, true)
     cb(new Error(`CORS: ${origin} not allowed`))
   },

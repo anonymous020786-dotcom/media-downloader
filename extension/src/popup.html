@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>MediaDL</title>
+  <link rel="stylesheet" href="ui.css">
+</head>
+<body class="popup">
+  <header class="bar">
+    <img src="icons/icon-32.png" alt="" width="20" height="20">
+    <strong>MediaDL</strong>
+    <span id="server" class="dot" title="Checking server…"></span>
+    <button id="openOptions" class="icon" title="Settings" aria-label="Settings">⚙</button>
+  </header>
+
+  <nav class="tabs" role="tablist">
+    <button role="tab" data-tab="page" aria-selected="true">This page</button>
+    <button role="tab" data-tab="found">Found <span id="foundCount" class="pill" hidden></span></button>
+    <button role="tab" data-tab="jobs">Downloads <span id="jobCount" class="pill" hidden></span></button>
+    <button role="tab" data-tab="cookies">Cookies</button>
+  </nav>
+
+  <!-- ── This page ─────────────────────────────────────────────── -->
+  <section id="tab-page" class="panel">
+    <div class="row">
+      <input id="url" type="url" placeholder="Paste a link, or open a page with media" spellcheck="false">
+      <button id="analyze" class="secondary" title="Look up formats">Check</button>
+    </div>
+
+    <div id="info" class="card" hidden>
+      <img id="thumb" alt="" hidden>
+      <div class="meta">
+        <div id="title" class="title"></div>
+        <div id="sub" class="muted"></div>
+      </div>
+    </div>
+    <p id="pageMsg" class="msg" hidden></p>
+
+    <div id="opts">
+      <div class="seg" role="radiogroup" aria-label="Type">
+        <label><input type="radio" name="kind" value="video" checked> 🎬 Video</label>
+        <label><input type="radio" name="kind" value="audio"> 🎵 Audio only</label>
+      </div>
+      <div class="grid2">
+        <label>Quality
+          <select id="quality"><option value="best">Best available</option></select>
+        </label>
+        <label>Format
+          <select id="format"></select>
+        </label>
+      </div>
+      <div id="playlistBox" class="grid2" hidden>
+        <label>Items to get <input id="maxItems" type="number" min="1" placeholder="all"></label>
+        <label>Start at # <input id="startIndex" type="number" min="1" value="1"></label>
+      </div>
+      <details>
+        <summary>More options</summary>
+        <label class="check"><input id="subtitles" type="checkbox"> Subtitles</label>
+        <label class="check"><input id="embedThumbnail" type="checkbox"> Embed thumbnail &amp; tags</label>
+        <label class="check"><input id="sponsorBlock" type="checkbox"> Skip sponsor segments (YouTube)</label>
+        <div class="grid2">
+          <label>Trim start <input id="startTime" placeholder="0:30"></label>
+          <label>Trim end <input id="endTime" placeholder="2:10"></label>
+        </div>
+      </details>
+      <button id="download" class="primary">⬇ Download</button>
+      <button id="quick" class="link">Not sure? Let MediaDL auto-detect</button>
+    </div>
+  </section>
+
+  <!-- ── Found on page ─────────────────────────────────────────── -->
+  <section id="tab-found" class="panel" hidden>
+    <p class="muted small">Media files on this page. <b>MediaDL</b> sends it to your server (merging, converting);
+      <b>Save</b> downloads the raw file straight from the site.</p>
+    <ul id="foundList" class="list"></ul>
+    <p id="foundEmpty" class="msg" hidden></p>
+    <button id="enableSniff" class="link" hidden>Also catch streams (HLS/DASH) from network traffic…</button>
+  </section>
+
+  <!-- ── Downloads ─────────────────────────────────────────────── -->
+  <section id="tab-jobs" class="panel" hidden>
+    <ul id="jobList" class="list"></ul>
+    <p id="jobsEmpty" class="msg">Nothing yet — downloads you start appear here.</p>
+    <div class="row end"><button id="clearDone" class="link">Clear finished</button></div>
+  </section>
+
+  <!-- ── Cookies ───────────────────────────────────────────────── -->
+  <section id="tab-cookies" class="panel" hidden>
+    <p class="muted small">Some sites (YouTube age-gated, Instagram, X…) only work with your login.
+      Share this browser's cookies for one site — nothing is read until you allow that site.</p>
+    <label>Site <input id="domain" placeholder="youtube.com" spellcheck="false"></label>
+    <button id="ckServer" class="primary">Use for downloads on my MediaDL server</button>
+    <button id="ckBot" class="secondary">Send to Telegram bot</button>
+    <button id="ckFile" class="secondary">Save as cookies.txt</button>
+    <p id="ckMsg" class="msg" hidden></p>
+  </section>
+
+  <script src="lib/shared.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>

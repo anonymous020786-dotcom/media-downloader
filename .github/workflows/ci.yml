@@ -61,11 +61,60 @@ jobs:
           python-version: "3.12"
       - run: python -m compileall -q python-service
 
+  extension:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+      - name: Build (Chromium + Firefox)
+        run: node extension/build.mjs
+        env:
+          EXT_VERSION: 2.0.${{ github.run_number }}
+      - name: Lint Firefox build (Mozilla add-ons linter)
+        run: npx --yes web-ext@8 lint --source-dir extension/dist/firefox --warnings-as-errors
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: mediadl-extension-2.0.${{ github.run_number }}
+          path: extension/dist/*.zip
+
+  # Every green build on master is published to the rolling "extension-latest"
+  # GitHub release, so the newest .zip files are always one click away.
+  extension-release:
+    needs: extension
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+      - run: node extension/build.mjs
+        env:
+          EXT_VERSION: 2.0.${{ github.run_number }}
+      - name: Publish to the extension-latest release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: 2.0.${{ github.run_number }}
+        run: |
+          notes="MediaDL browser extension $VERSION (built from ${GITHUB_SHA::7}).
+          - mediadl-chromium-*.zip: Chrome, Edge, Brave, Opera, Vivaldi
+          - mediadl-firefox-*.zip: Firefox
+          Install steps: extension/README.md"
+          gh release view extension-latest >/dev/null 2>&1 ||             gh release create extension-latest --title "Browser extension (latest)" --notes "$notes" --latest=false
+          gh release edit extension-latest --notes "$notes"
+          old=$(gh release view extension-latest --json assets -q '.assets[].name')
+          for a in $old; do gh release delete-asset extension-latest "$a" -y; done
+          gh release upload extension-latest extension/dist/*.zip --clobber
+
   # Dependabot upgrades merge themselves once every check above passes, then
   # trigger a deploy. (A merge made with GITHUB_TOKEN doesn't fire push-based
   # workflows, so the deploy is dispatched explicitly.)
   automerge-dependabot:
-    needs: [backend, frontend, telegram-bot, python-service]
+    needs: [backend, frontend, telegram-bot, python-service, extension]
     if: github.event_name == 'pull_request' && github.event.pull_request.user.login == 'dependabot[bot]'
     runs-on: ubuntu-latest
     permissions:
