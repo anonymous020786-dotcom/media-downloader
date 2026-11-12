@@ -22,6 +22,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, field_validator
 import yt_dlp
+import errors as _errors
 import httpx
 from PIL import Image
 from bs4 import BeautifulSoup
@@ -689,8 +690,8 @@ async def analyze(req: AnalyzeReq):
         cached["_cached"] = True
         return cached
     result = await _do_analyze(url)
-    # Cache everything except the cheap 'page' fallback (we want fresh image scrapes)
-    if result.get("type") != "page":
+    # Cache only real answers — never an error, a login guess or a page fallback.
+    if _errors.should_cache(result):
         await _cache_set(ck, result)
     return result
 
@@ -5262,6 +5263,27 @@ def _normalize_url(url: str) -> str:
     return u
 
 
+def _audio_options(info: dict) -> list:
+    """Audio-only renditions (best first) for sources with no video track —
+    SoundCloud, Bandcamp, Mixcloud, JioSaavn, podcasts. One entry per distinct
+    codec+bitrate so the UI can offer real choices instead of empty qualities."""
+    out, seen = [], set()
+    duration = info.get("duration") or 0
+    for f in info.get("formats") or []:
+        if f.get("acodec", "none") in ("none", None) or f.get("vcodec", "none") not in ("none", None):
+            continue
+        abr = int(f.get("abr") or f.get("tbr") or 0)
+        key = ((f.get("acodec") or "").split(".")[0], abr)
+        if key in seen:
+            continue
+        seen.add(key)
+        size = f.get("filesize") or f.get("filesize_approx") or (int(abr * 125 * duration) if abr and duration else None)
+        out.append({"format_id": f.get("format_id"), "ext": f.get("ext"), "acodec": f.get("acodec"),
+                    "abr": abr or None, "size": size, "protocol": f.get("protocol")})
+    out.sort(key=lambda o: o["abr"] or 0, reverse=True)
+    return out[:8]
+
+
 def _quality_options(info: dict) -> list:
     """Build a per-resolution picker list from a yt-dlp info dict so the UI can
        show size + codec for each quality instead of a bare height number.
@@ -5418,6 +5440,7 @@ async def _do_analyze(url: str) -> dict:
         except Exception: pass
         return {"type":"file","url":url,"filename":_safe(name),"content_type":ct,"size":size}
     # 2. yt-dlp extractor
+    ytdlp_err: Optional[str] = None
     try:
         info = await asyncio.wait_for(
             asyncio.get_event_loop().run_in_executor(None, _ytdlp_info, url, False), 35)
@@ -5460,7 +5483,9 @@ async def _do_analyze(url: str) -> dict:
 
             heights = sorted({f.get("height") for f in fmts
                               if f.get("height") and f.get("vcodec","none") != "none"}, reverse=True)
+            audio_opts = _audio_options(info) if not heights else []
             return {
+                **({"audio_only": True, "audio_options": audio_opts} if audio_opts else {}),
                 "type": "video",
                 "title": info.get("title") or _url_title(url),
                 "thumbnail": info.get("thumbnail"),
@@ -5474,7 +5499,11 @@ async def _do_analyze(url: str) -> dict:
                 "is_playlist": bool(info.get("_type") in ("playlist","multi_video")),
                 "playlist_count": info.get("playlist_count"),
             }
-    except Exception: pass
+    except asyncio.TimeoutError:
+        ytdlp_err = "yt-dlp timed out"
+    except Exception as e:
+        ytdlp_err = str(e)
+    err = _errors.error_info(ytdlp_err) if ytdlp_err else None
     # 3. HEAD probe
     try:
         async with _client() as c:
@@ -5523,10 +5552,12 @@ async def _do_analyze(url: str) -> dict:
             return {"type":"video","title":_url_title(url),"thumbnail":(imgs[0] if imgs else None),
                     "duration":None,"uploader":"","extractor":"rendered",
                     "qualities":[],"video_formats":STREAM_FORMATS,"is_stream":True,
-                    "rendered_images": len(imgs)}
+                    "rendered_images": len(imgs),
+                    **({"extract_error": err} if err else {})}
         if imgs and not video_url_hint:
             return {"type":"page","url":url,"image_formats":IMAGE_FORMATS,
-                    "rendered_images": len(imgs)}
+                    "rendered_images": len(imgs),
+                    **({"extract_error": err} if err else {})}
         # Nothing usable — fall through.
     except Exception:
         pass
@@ -5534,7 +5565,7 @@ async def _do_analyze(url: str) -> dict:
     #    Instagram reel/tv, TikTok, an X status, a YT short). Offer it as a video
     #    anyway so the download path can still try yt-dlp + gallery-dl (which work
     #    once the site's cookies are saved in the Cookie manager).
-    if re.search(
+    if (err is None or err["reason"] == "login") and re.search(
         r'instagram\.com/(?:[^/]+/)?(?:reel|tv)/[\w-]+'
         r'|tiktok\.com/.+/video/\d|(?:x|twitter)\.com/[^/]+/status/\d'
         r'|youtube\.com/shorts/[\w-]+|facebook\.com/(?:watch/?\?|reel/\d|[^/]+/videos/\d)',
@@ -5544,8 +5575,12 @@ async def _do_analyze(url: str) -> dict:
                 "qualities":[],"video_formats":STREAM_FORMATS,"is_stream":True,
                 "note":"Couldn't read this without logging in — save the site's "
                        "cookies in the Cookie manager for full quality."}
-    # 6. HTML page fallback (image scraping; preview-page renders if needed)
-    return {"type":"page","url":url,"image_formats":IMAGE_FORMATS}
+    # 6. HTML page fallback (image scraping; preview-page renders if needed).
+    #    Carry the real reason so the UI / bot can say *why* nothing was found.
+    out = {"type":"page","url":url,"image_formats":IMAGE_FORMATS}
+    if err and err["reason"] != "unsupported":
+        out["error"] = err
+    return out
 
 
 class SearchReq(BaseModel):
