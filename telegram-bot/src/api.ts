@@ -106,6 +106,8 @@ export interface DownloadOptions {
   proxy?: string
   capture?: boolean
   captureSeconds?: number
+  /** Live streams: stop recording after this many seconds. */
+  recordSeconds?: number
   startTime?: string
   endTime?: string
   speedLimit?: string

@@ -2,9 +2,13 @@ import { Telegraf, Markup } from 'telegraf'
 import type { InlineKeyboardButton } from 'telegraf/types'
 import type { BotContext } from '../types.js'
 import { api, type SearchResult } from '../api.js'
-import { searchTokens, setAwaiting, takeAwaiting, type PendingSearch } from '../session.js'
+import { getSettings, searchTokens, setAwaiting, takeAwaiting, type PendingSearch } from '../session.js'
 import { esc, truncate } from '../format.js'
 import { analyzeAndReply } from './media.js'
+import { isAdultUrl } from '../adult.js'
+
+const filterAdult = (results: SearchResult[], safe: boolean) =>
+  safe ? results.filter((r) => !isAdultUrl(String((r as { url?: unknown }).url ?? ''))) : results
 
 const PAGE_SIZE = 8
 
@@ -45,13 +49,15 @@ export async function consumeAwaitingSearch(ctx: BotContext, text: string): Prom
 async function doSearch(ctx: BotContext, query: string, kind: string, filetype?: string) {
   if (!query.trim()) return ctx.reply('Give me something to search for.')
   const wait = await ctx.reply('🔎 Searching…')
+  // Adult content off → SafeSearch on, and drop any adult-site results that slip through.
+  const safe = !getSettings(ctx.from!.id).adult
   let res
   try {
-    res = await api.search(query, kind, 1, { filetype, limit: PAGE_SIZE, safe: false })
+    res = await api.search(query, kind, 1, { filetype, limit: PAGE_SIZE, safe })
   } catch (e: any) {
     return ctx.telegram.editMessageText(wait.chat.id, wait.message_id, undefined, `❌ ${esc(e.message)}`, { parse_mode: 'HTML' })
   }
-  const pending: PendingSearch = { query, kind, page: 1, filetype, safe: false, results: res.results.slice(0, PAGE_SIZE), token: '' }
+  const pending: PendingSearch = { query, kind, page: 1, filetype, safe, results: filterAdult(res.results, safe).slice(0, PAGE_SIZE), token: '' }
   pending.token = searchTokens.put(pending)
   const { text, keyboard } = render(pending)
   await ctx.telegram.editMessageText(wait.chat.id, wait.message_id, undefined, text, {
@@ -80,7 +86,7 @@ export function registerSearch(bot: Telegraf<BotContext>) {
     try {
       const res = await api.search(p.query, p.kind, page, { filetype: p.filetype, limit: PAGE_SIZE, safe: p.safe })
       p.page = page
-      p.results = res.results.slice(0, PAGE_SIZE)
+      p.results = filterAdult(res.results, p.safe).slice(0, PAGE_SIZE)
     } catch (e: any) { await ctx.answerCbQuery(e.message, { show_alert: true }); return }
     const { text, keyboard } = render(p)
     await ctx.editMessageText(text, { parse_mode: 'HTML', link_preview_options: { is_disabled: true }, reply_markup: { inline_keyboard: keyboard } }).catch(() => {})

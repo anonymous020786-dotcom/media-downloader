@@ -6,6 +6,7 @@ import { getSettings, mediaTokens, setAwaiting, takeAwaiting, type PendingMedia 
 import { bytes, duration, esc, extractUrl, truncate } from '../format.js'
 import { reachable } from '../config.js'
 import { trackJob } from '../jobs.js'
+import { isAdultUrl } from '../adult.js'
 
 /** Turn the user's saved settings into the option bag every download shares. */
 function baseOptions(userId: number): Partial<DownloadOptions> {
@@ -71,7 +72,11 @@ export function mediaCard(token: string, a: AnalyzeResult, userId: number): { te
       ? a.format_options.map((f) => ({ label: `${f.height}p${f.size ? ` · ${bytes(f.size)}` : ''}`, q: String(f.height) }))
       : (a.qualities ?? []).map((h) => ({ label: `${h}p`, q: String(h) }))
 
-    if (a.is_stream || a.is_live || opts.length === 0) {
+    if (a.is_live) {
+      // A live stream never ends on its own — record a fixed length.
+      lines.push('\n🔴 Live now. Pick how long to record:')
+      kb.push([5, 15, 30, 60].map((m) => Markup.button.callback(`⏺ ${m} min`, `rec:${token}:${m * 60}`)))
+    } else if (a.is_stream || opts.length === 0) {
       lines.push('\nNo fixed qualities — will grab the best available stream.')
       kb.push([Markup.button.callback(`⬇️ Best (${s.videoFormat})`, `dl:${token}:q:best`)])
     } else {
@@ -111,6 +116,10 @@ export function mediaCard(token: string, a: AnalyzeResult, userId: number): { te
 
 export async function analyzeAndReply(ctx: BotContext, url: string) {
   const userId = ctx.from!.id
+  if (!getSettings(userId).adult && isAdultUrl(url)) {
+    await ctx.reply('🔞 That looks like an adult site, and adult content is off for you. Turn it on in /settings → 🔞 Adult content.')
+    return
+  }
   const wait = await ctx.reply('🔎 Analyzing…')
   let a: AnalyzeResult
   try {
@@ -198,7 +207,7 @@ export async function startDownload(ctx: BotContext, pending: PendingMedia, choi
 
   // ── Fast path: pipe the file straight to the user's device, no server disk.
   // Only for a single item that isn't scheduled, captured, clipped or scraped.
-  const canStream = !scheduled && !isPlaylist && !isPageScrape && !opts.capture && !opts.startTime
+  const canStream = !scheduled && !isPlaylist && !isPageScrape && !opts.capture && !opts.startTime && !opts.recordSeconds
   if (canStream) {
     try {
       const s = await api.stream({ url, format: opts.format, quality: opts.quality, cookies: opts.cookies, proxy: opts.proxy })
@@ -283,6 +292,17 @@ export function registerMedia(bot: Telegraf<BotContext>) {
     await ctx.answerCbQuery('Queued ✅')
     await ctx.editMessageReplyMarkup(undefined).catch(() => {})
     await startDownload(ctx, pending, { kind: kind as Choice['kind'], value })
+  })
+
+  // ── Callback: record a live stream for N seconds ───────────────────────────
+  bot.action(/^rec:([0-9a-f]{8}):(\d{2,5})$/, async (ctx) => {
+    const [, token, secs] = ctx.match
+    const pending = mediaTokens.get(token)
+    if (!pending) { await ctx.answerCbQuery('This card expired — send the link again.', { show_alert: true }); return }
+    const seconds = Math.min(Number(secs), 3600)
+    await ctx.answerCbQuery(`Recording ${Math.round(seconds / 60)} min ⏺`)
+    await ctx.editMessageReplyMarkup(undefined).catch(() => {})
+    await startDownload(ctx, pending, { kind: 'q', value: 'best' }, { recordSeconds: seconds })
   })
 
   bot.action(/^preview:([0-9a-f]{8})$/, async (ctx) => {

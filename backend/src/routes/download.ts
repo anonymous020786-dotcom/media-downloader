@@ -69,6 +69,7 @@ router.post('/', verifyTurnstile, async (req, res) => {
     proxy:          resolvedProxy,
     capture:        body.capture         ?? false,
     captureSeconds: body.captureSeconds,
+    recordSeconds:  body.recordSeconds,
     startTime:          body.startTime,
     endTime:            body.endTime,
     subtitleLangs:      body.subtitleLangs,

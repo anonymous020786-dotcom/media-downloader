@@ -22,6 +22,7 @@ export interface DownloadJob {
   proxy?:         string
   capture?:       boolean
   captureSeconds?: number
+  recordSeconds?:  number   // live streams: stop recording after N seconds
   startTime?:          string
   endTime?:            string
   subtitleLangs?:      string[]
