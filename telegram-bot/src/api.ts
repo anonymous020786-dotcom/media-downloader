@@ -28,7 +28,19 @@ export interface AnalyzeResult {
   playlist_count?: number | null
   item_count?: number
   note?: string
+  /** Audio-only source (SoundCloud, Bandcamp, podcasts…) — offer audio, not video qualities. */
+  audio_only?: boolean
+  audio_options?: Array<{ format_id?: string; ext?: string; acodec?: string; abr?: number | null; size?: number | null }>
+  /** Why nothing (or only part) was found — set by the engine's error classifier. */
+  error?: AnalyzeError
+  extract_error?: AnalyzeError
   _cached?: boolean
+}
+
+export interface AnalyzeError {
+  reason: 'network' | 'blocked' | 'login' | 'geo' | 'drm' | 'removed' | 'extractor_broken' | 'unsupported' | 'piracy' | 'unknown'
+  hint: string
+  detail?: string
 }
 
 export interface JobProgress {

@@ -41,6 +41,8 @@ export function mediaCard(token: string, a: AnalyzeResult, userId: number): { te
   if (a._cached) meta.push('(cached)')
   lines.push(`<i>${esc(meta.join('  ·  '))}</i>`)
   if (a.note) lines.push(esc(a.note))
+  const why = a.error ?? a.extract_error
+  if (why) lines.push(`⚠️ ${esc(why.hint)}`)
 
   const kb: InlineKeyboardButton[][] = []
   const isPlaylist = a.type === 'playlist' || a.is_playlist
@@ -56,6 +58,14 @@ export function mediaCard(token: string, a: AnalyzeResult, userId: number): { te
       Markup.button.callback('First 50', `dl:${token}:pl:50`),
       Markup.button.callback(`🎵 Audio ×all (${s.audioFormat})`, `dl:${token}:pla:0`),
     ])
+  } else if (a.type === 'video' && a.audio_only) {
+    const best = a.audio_options?.[0]
+    lines.push(`\n🎵 Audio-only source${best?.abr ? ` · up to ${best.abr} kbps` : ''}${best?.size ? ` · ~${bytes(best.size)}` : ''}. Pick a format:`)
+    const fmts = Array.from(new Set([s.audioFormat, 'mp3', 'm4a', 'opus', 'flac']))
+    for (let i = 0; i < fmts.length; i += 3) {
+      kb.push(fmts.slice(i, i + 3).map((f) => Markup.button.callback(`🎵 ${f.toUpperCase()}`, `dl:${token}:a:${f}`)))
+    }
+    kb.push([Markup.button.callback('✂️ Clip', `clip:${token}`), Markup.button.callback('⚙️ Options', 'settings:open')])
   } else if (a.type === 'video') {
     const opts = a.format_options?.length
       ? a.format_options.map((f) => ({ label: `${f.height}p${f.size ? ` · ${bytes(f.size)}` : ''}`, q: String(f.height) }))
@@ -81,6 +91,13 @@ export function mediaCard(token: string, a: AnalyzeResult, userId: number): { te
       Markup.button.callback('✂️ Clip', `clip:${token}`),
       Markup.button.callback('⚙️ Options', 'settings:open'),
     ])
+  } else if (a.type === 'page' && a.error) {
+    // Nothing found — say why, and offer the one action that can fix it.
+    if (a.error.reason === 'login') kb.push([Markup.button.callback('🍪 Add cookies', 'menu:cookies')])
+    else if (a.error.reason === 'network' || a.error.reason === 'blocked') {
+      kb.push([Markup.button.callback('🌐 Proxy settings', 'menu:proxy')])
+    }
+    kb.push([Markup.button.callback('🖼 Try scraping images anyway', `dl:${token}:img:original`)])
   } else if (a.type === 'image' || a.type === 'page') {
     lines.push('\nScrape and download every image on the page.')
     kb.push([Markup.button.callback('🖼 Download images', `dl:${token}:img:original`)])
