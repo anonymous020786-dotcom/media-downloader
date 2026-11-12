@@ -24,6 +24,7 @@ from pydantic import BaseModel, field_validator
 import yt_dlp
 import errors as _errors
 import kvs_patch as _kvs_patch
+import hls as _hls
 import httpx
 from PIL import Image
 from bs4 import BeautifulSoup
@@ -5429,7 +5430,12 @@ async def _do_analyze(url: str) -> dict:
         return {"type":"torrent","url":url,"title":_safe(name),"extractor":"aria2"}
     # 1. Direct stream detection (m3u8 / mpd / ts)
     s = _detect_stream(url)
-    if s: return s
+    if s:
+        if s.get("extractor") == "hls":
+            async with _client() as c:
+                if await _hls.is_live(url, c):
+                    s["is_live"] = True   # → bot offers "Record N min" and caps the recording
+        return s
     # 1b. Known non-media file extension (pdf, zip, apk, docs, exe…) → universal file
     base = url.split("?")[0].lower()
     if base.endswith(_FILE_EXT):

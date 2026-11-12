@@ -94,6 +94,7 @@ export function settingsView(s: UserSettings): { text: string; keyboard: KB } {
     [B(`${on(s.sponsorBlock)} SponsorBlock`, 'set:sponsorBlock'), B(`${on(s.splitChapters)} Split chapters`, 'set:splitChapters')],
     [B(`${on(s.normalizeAudio)} Normalize audio`, 'set:normalizeAudio'), B(`${on(s.writeThumbnail)} Save thumb file`, 'set:writeThumbnail')],
     [B(`${on(s.autoDownloadBest)} Skip quality menu`, 'set:autoDownloadBest'), B('🐌 Speed limit', 'set:speedlimit')],
+    [B(`${on(s.adult)} 🔞 Adult content`, 'set:adult')],
     [B('🌐 Direct', 'set:proxy:'), B('🔁 Auto-proxy', 'set:proxy:auto'), B('↔️ Fragments', 'set:fragments')],
     [B('♻️ Reset', 'set:reset')],
     backRow(),

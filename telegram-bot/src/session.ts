@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { config } from './config.js'
+import { config, isAdmin } from './config.js'
 import { store } from './store.js'
 import type { AnalyzeResult, SearchResult } from './api.js'
 
@@ -24,6 +24,7 @@ export interface UserSettings {
   proxy: string              // '' | 'auto' | preset:0 | <saved id> | raw url
   concurrentFragments: number
   autoDownloadBest: boolean   // skip the quality menu, grab default quality immediately
+  adult: boolean              // allow adult sites + unfiltered search (default: admins only)
 }
 
 function defaultSettings(): UserSettings {
@@ -42,8 +43,12 @@ function defaultSettings(): UserSettings {
     proxy: '',
     concurrentFragments: 16,
     autoDownloadBest: false,
+    adult: false,
   }
 }
+
+/** New users get adult content only if they're an admin; they can change it in /settings. */
+const defaultsFor = (userId: number): UserSettings => ({ ...defaultSettings(), adult: isAdmin(userId) })
 
 const settings = new Map<number, UserSettings>()
 
@@ -51,7 +56,7 @@ export function getSettings(userId: number): UserSettings {
   let s = settings.get(userId)
   if (!s) {
     const saved = store.getSettings(userId)
-    s = { ...defaultSettings(), ...(saved as Partial<UserSettings> | undefined) }
+    s = { ...defaultsFor(userId), ...(saved as Partial<UserSettings> | undefined) }
     settings.set(userId, s)
   }
   return s
@@ -64,7 +69,7 @@ export function saveSettings(userId: number): void {
 }
 
 export function resetSettings(userId: number): UserSettings {
-  const s = defaultSettings()
+  const s = defaultsFor(userId)
   settings.set(userId, s)
   store.saveSettings(userId, s as unknown as Record<string, unknown>)
   return s

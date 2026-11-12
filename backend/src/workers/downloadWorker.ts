@@ -62,6 +62,7 @@ async function processJob(job: MemJob<DownloadJob>) {
       proxy,
       capture:          d.capture  ?? false,
       capture_seconds:  d.captureSeconds ?? null,
+      record_seconds:   d.recordSeconds  ?? null,
       start_time:           d.startTime           ?? null,
       end_time:             d.endTime             ?? null,
       subtitle_langs:       d.subtitleLangs        ?? null,
