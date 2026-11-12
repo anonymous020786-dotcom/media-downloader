@@ -23,6 +23,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, field_validator
 import yt_dlp
 import errors as _errors
+import kvs_patch as _kvs_patch
 import httpx
 from PIL import Image
 from bs4 import BeautifulSoup
@@ -210,6 +211,7 @@ async def lifespan(app: FastAPI):
     _sredis = _SyncView(_aredis)
     DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
     _patch_xhamster_mirrors()
+    _kvs_patch.apply()
     yield
     await _aredis.aclose()
     _sredis.close()
@@ -257,6 +259,8 @@ class DownloadReq(BaseModel):
     # Screen-capture (record playback) — for blob:/MSE streams with no downloadable URL
     capture:         bool           = False
     capture_seconds: Optional[int]  = None   # cap recording length (default: video duration)
+    # Live streams (cams, live TV): stop recording after this many seconds
+    record_seconds:  Optional[int]  = None
     # Clip extraction — download a time range only
     start_time:          Optional[str]  = None   # HH:MM:SS or MM:SS
     end_time:            Optional[str]  = None   # HH:MM:SS or MM:SS
@@ -6831,7 +6835,7 @@ async def _dl_video(req: DownloadReq, job_dir: Path, cookie_file: Optional[str])
             req.sponsor_block, req.split_chapters, req.normalize_audio,
             req.write_thumbnail, req.output_template,
             req.speed_limit, req.concurrent_fragments,
-            req.format_id,
+            req.format_id, req.record_seconds,
         )
         return
     except Exception: pass
@@ -6961,6 +6965,7 @@ def _ytdlp_dl(
     speed_limit: Optional[str] = None,
     concurrent_fragments: int = 16,
     format_id: Optional[str] = None,
+    record_seconds: Optional[int] = None,
 ):
     fmt = (fmt or "mp4").lower()
     # "best" defaults to a sane cap (1080p) so downloads aren't huge 4K/8K files by
@@ -7145,6 +7150,16 @@ def _ytdlp_dl(
         opts["cookiefile"] = cookie_file
     if proxy:
         opts["proxy"] = proxy
+
+    # Live recording cap. yt-dlp records live HLS through ffmpeg, so an input
+    # duration limit stops the recording cleanly after N seconds (capped by
+    # RECORD_MAX_SECONDS so a live stream can never fill the disk).
+    if record_seconds:
+        cap = int(os.getenv("RECORD_MAX_SECONDS", "3600"))
+        secs = max(10, min(int(record_seconds), cap))
+        opts["external_downloader"] = {"m3u8": "ffmpeg"}
+        opts["external_downloader_args"] = {"ffmpeg_i": ["-t", str(secs)]}
+        opts["hls_use_mpegts"] = True   # a cut-off recording stays playable
 
     # Clip extraction — download only a time range
     if start_time or end_time:
