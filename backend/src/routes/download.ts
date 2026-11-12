@@ -118,6 +118,9 @@ router.post('/batch', verifyTurnstile, async (req, res) => {
     cookies?: string; proxy?: string; sponsorBlock?: boolean; normalizeAudio?: boolean
     speedLimit?: string; concurrentFragments?: number; maxItems?: number
     delaySeconds?: number
+    subtitleLangs?: string[]; writeThumbnail?: boolean; splitChapters?: boolean
+    outputTemplate?: string; webhookUrl?: string; startTime?: string; endTime?: string
+    capture?: boolean
   }
 
   if (!Array.isArray(items) || items.length === 0) {
@@ -127,10 +130,17 @@ router.post('/batch', verifyTurnstile, async (req, res) => {
     res.status(400).json({ error: 'Maximum 200 items per batch' }); return
   }
 
+  const userId = req.authUser!.id
+  // Same resolution as a single download: "auto" / preset / saved-id → a real
+  // proxy URL, and each site's saved cookies unless cookies were given.
+  const proxy = await resolveProxy(sharedOpts.proxy, userId)
   const jobs: Array<{ jobId: string; url: string; title?: string }> = []
   for (const item of items) {
     if (!item.url) continue
     const jobId = uuidv4()
+    const cookies = sharedOpts.cookies && sharedOpts.cookies.trim()
+      ? sharedOpts.cookies
+      : await resolveCookies(item.url, userId)
     const job: DownloadJob = {
       url:            item.url,
       jobId,
@@ -140,18 +150,27 @@ router.post('/batch', verifyTurnstile, async (req, res) => {
       title:          item.title,
       thumbnail:      item.thumbnail,
       addedAt:        Date.now(),
+      userId,
       priority:       sharedOpts.priority        ?? 5,
       maxItems:       sharedOpts.maxItems,
       startIndex:     1,
       subtitles:      sharedOpts.subtitles       ?? false,
       embedThumbnail: sharedOpts.embedThumbnail  ?? false,
       embedMetadata:  sharedOpts.embedMetadata   ?? true,
-      cookies:        sharedOpts.cookies,
-      proxy:          sharedOpts.proxy,
+      cookies,
+      proxy,
       sponsorBlock:   sharedOpts.sponsorBlock    ?? false,
       normalizeAudio: sharedOpts.normalizeAudio  ?? false,
       speedLimit:     sharedOpts.speedLimit,
       concurrentFragments: sharedOpts.concurrentFragments ?? 16,
+      subtitleLangs:  sharedOpts.subtitleLangs,
+      writeThumbnail: sharedOpts.writeThumbnail  ?? false,
+      splitChapters:  sharedOpts.splitChapters   ?? false,
+      outputTemplate: sharedOpts.outputTemplate,
+      webhookUrl:     sharedOpts.webhookUrl,
+      startTime:      sharedOpts.startTime,
+      endTime:        sharedOpts.endTime,
+      capture:        sharedOpts.capture         ?? false,
     }
     await enqueue(job, sharedOpts.delaySeconds)
     jobs.push({ jobId, url: item.url, title: item.title })
