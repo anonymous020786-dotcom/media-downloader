@@ -105,6 +105,9 @@ PL18_SITES: list[tuple[str, str, str]] = [
     ("WetMummy", "wetmummy.com", "tube"), ("Xnalgas", "xnalgas.com", "tube"),
     ("XPaja", "xpaja.net", "tube"), ("XXXFollow", "xxxfollow.com", "tube"),
     ("YourLesbians", "yourlesbians.com", "tube"), ("Pornozmo", "pornozmo.com", "tube"),
+    # Actions "Site probe" run 44719297142 (2026-11-20)
+    ("LechePussy", "lechepussy.com", "tube"), ("ModPorn", "modporn.com", "tube"),
+    ("TonicPorn", "porn2all.com", "tube"), ("PornAnn", "pornann.com", "tube"),
 ]
 
 # Free sites from the same lists that couldn't be live-probed yet (DNS-blocked
@@ -119,25 +122,21 @@ PL18_UNPROBED: list[tuple[str, str, str]] = [
     ("ClicPorn", "clicporn.com", "tube"), ("ElMundoPorno", "elmundoporno.com", "tube"),
     ("Fliporno", "fliporno.net", "tube"), ("Fuqqt", "fuqqt.com", "tube"),
     ("GermanFuckTube", "germanfucktube.com", "tube"), ("GetTranny", "gettranny.com", "tube"),
-    ("IGPorn", "igporn.com", "tube"), ("LechePussy", "lechepussy.com", "tube"),
+    ("IGPorn", "igporn.com", "tube"),
     ("ManySex", "manysex.com", "tube"), ("MatureLarge", "maturelarge.com", "tube"),
-    ("ModPorn", "modporn.com", "tube"), ("NurXXX", "nurxxx.com", "tube"),
-    ("NurXXX Mobile", "nurxxx.mobi", "tube"), ("Petardas", "petardas.xxx", "tube"),
-    ("PornAnn", "pornann.com", "tube"),
-    ("TonicPorn", "porn2all.com", "tube"),
+    ("NurXXX", "nurxxx.com", "tube"), ("Petardas", "petardas.xxx", "tube"),
     ("RussianGranny", "russian-granny.com", "tube"),
     ("SheFlix", "sheflix.com", "tube"),
     ("ShemaleZ", "shemalez.com", "tube"), ("SpitzeTitten", "spitzetitten.com", "tube"),
-    ("TeatroDelPorno", "teatrodelporno.com", "tube"), ("TeatroPorno", "teatroporno.com", "tube"),
+    ("TeatroDelPorno", "teatrodelporno.com", "tube"),
     ("TeensBabes", "teensbabes.com", "tube"), ("VoilaPorno", "voilaporno.com", "tube"),
     ("VideoSexeGratuite", "videosexegratuite.com", "tube"),
-    ("XZorra", "xzorra.net", "tube"),
     ("PornoAmica", "pornoamica.com", "tube"), ("PornoCategorie", "pornocategorie.com", "tube"),
     ("PornoCulazos", "pornoculazos.com", "tube"), ("PornoCuli", "pornoculi.com", "tube"),
     ("PornoEspaniol", "pornoespaniol.com", "tube"), ("PornoFakings", "pornofakings.com", "tube"),
     ("PornoJour", "pornojour.com", "tube"), ("PornoOrgasme", "pornoorgasme.com", "tube"),
     ("PornoSauna", "pornosauna.com", "tube"), ("PornoTreno", "pornotreno.com", "tube"),
-    ("RueNu", "ruenu.com", "tube"), ("SessoRomantico", "sessoromantico.com", "tube"),
+    ("SessoRomantico", "sessoromantico.com", "tube"),
     ("SexoOral", "sexooral.org", "tube"),
     # aggregators (tag / out-link pages only; the source tube is what downloads)
     ("AmorePorno", "amoreporno.com", "aggregator"), ("CategoriePorno", "categorieporno.com", "aggregator"),
@@ -146,6 +145,9 @@ PL18_UNPROBED: list[tuple[str, str, str]] = [
     ("FilmXAdulte", "filmxadulte.com", "aggregator"), ("PasionChicas", "pasionchicas.com", "aggregator"),
     ("ArabXN", "arabxn.com", "aggregator"), ("NudeVista", "nudevista.com", "aggregator"),
     ("WankMap", "wankmap.com", "aggregator"),
+    # "best tubes for <tag>" list pages (probe 44719297142), not hosts
+    ("RueNu", "ruenu.com", "aggregator"), ("TeatroPorno", "teatroporno.com", "aggregator"),
+    ("NurXXX Mobile", "nurxxx.mobi", "aggregator"),
     # live cams (free public shows)
     ("AsianCams", "asiancams.com", "cam"), ("EbonyCams", "ebonycams.com", "cam"),
     ("FruityCams", "fruitycams.com", "cam"), ("LatinaCams", "latinacams.com", "cam"),
@@ -173,6 +175,7 @@ EXCLUDED: dict[str, str] = {
     "leaktubenet.com": "ncii", "totoleak.com": "ncii", "xrares.com": "ncii",
     "sexycandidgirls.com": "ncii", "teenager365.com": "ncii", "teenager365.to": "ncii",
     "malayporner.com": "ncii",
+    "xzorra.net": "ncii",  # leaked "video íntimo" of public figures (probe 44719297142)
 }
 
 _BY_DOMAIN = {d: (rank, name, group) for rank, name, d, group in SITES}
