@@ -1,0 +1,53 @@
+name: Site probe
+
+# Manual live probe of the site pack (Actions → Site probe → Run workflow).
+# GitHub's runners aren't behind the dev network's ISP DNS blocks, so this is
+# where `scripts/site-probe.py` can actually reach the sites. Results land in
+# the job summary ("Ready to promote" lists PL18_UNPROBED entries that passed)
+# and as a JSON artifact. Read-only: it never edits the repo or touches the server.
+
+on:
+  workflow_dispatch:
+    inputs:
+      scope:
+        description: "Which sites to probe"
+        type: choice
+        options: [unprobed, all, domains]
+        default: unprobed
+      domains:
+        description: "Space-separated pack domains (scope = domains)"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+      - run: python -m pip install -q "yt-dlp>=2026.10.26" "curl_cffi>=0.17.0"
+      - name: Probe
+        env:
+          SCOPE: ${{ inputs.scope }}
+          DOMAINS: ${{ inputs.domains }}
+        run: |
+          args=(--json probe.json --markdown "$GITHUB_STEP_SUMMARY")
+          case "$SCOPE" in
+            all) args+=(--all) ;;
+            domains)
+              [ -n "$DOMAINS" ] || { echo "::error::scope=domains needs the domains input"; exit 1; }
+              read -ra ds <<< "$DOMAINS"; args+=("${ds[@]}") ;;
+          esac
+          python scripts/site-probe.py "${args[@]}"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: site-probe-${{ github.run_id }}
+          path: probe.json
+          if-no-files-found: ignore

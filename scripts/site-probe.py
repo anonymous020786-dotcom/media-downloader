@@ -4,7 +4,7 @@ Run on the server (dev networks DNS-block most of these):
     python scripts/site-probe.py                 # PL18_UNPROBED
     python scripts/site-probe.py --all           # PL18_SITES + PL18_UNPROBED
     python scripts/site-probe.py txxx.com ...    # specific pack domains
-    python scripts/site-probe.py --json out.json
+    python scripts/site-probe.py --json out.json --markdown summary.md
 
 `pass` means a playable format URL resolved; move those entries to PL18_SITES.
 Cams only pass while a public show is live; aggregators are checked for
@@ -114,6 +114,7 @@ def main() -> int:
     ap.add_argument("domains", nargs="*")
     ap.add_argument("--all", action="store_true")
     ap.add_argument("--json")
+    ap.add_argument("--markdown", help="append a results table (e.g. $GITHUB_STEP_SUMMARY)")
     ap.add_argument("--workers", type=int, default=4)
     a = ap.parse_args()
 
@@ -136,7 +137,24 @@ def main() -> int:
     for x in res:
         counts[x["status"]] = counts.get(x["status"], 0) + 1
     print(counts)
+    if a.markdown:
+        with open(a.markdown, "a", encoding="utf-8") as f:
+            f.write(write_markdown(res, counts))
     return 0
+
+
+def write_markdown(res: list[dict], counts: dict[str, int]) -> str:
+    unprobed = {d for _, d, _ in sites_pack.PL18_UNPROBED}
+    promote = sorted(x["domain"] for x in res if x["status"] == "pass" and x["domain"] in unprobed)
+    out = ["## Site probe", "", " · ".join(f"**{k}** {v}" for k, v in sorted(counts.items())), ""]
+    if promote:
+        out += [f"**Ready to promote to `PL18_SITES` ({len(promote)}):** " + ", ".join(promote), ""]
+    out += ["| status | group | domain | detail |", "|---|---|---|---|"]
+    for x in sorted(res, key=lambda x: (x["status"], x["domain"])):
+        detail = x.get("error") or x.get("redirected_to") or f"{x.get('extractor', '')} {x.get('best_h') or ''}"
+        detail = detail.replace("|", "\\|")[:140]
+        out.append(f"| {x['status']} | {x['group']} | {x['domain']} | {detail} |")
+    return "\n".join(out) + "\n"
 
 
 if __name__ == "__main__":
