@@ -40,6 +40,8 @@ def test_excluded_sites_are_refused():
     assert sites_pack.excluded_reason("https://xmaal.in/double-dhamaka/") == "piracy"
     assert sites_pack.excluded_reason("https://cdn.boldmaal.com/videos/x.mp4") == "piracy"
     assert sites_pack.excluded_reason("https://www.desihub.sh/v/1") == "ncii"
+    assert sites_pack.excluded_reason("https://xzorra.net/x/") == "ncii"
+    assert sites_pack.lookup("https://xzorra.net/x/") is None
     assert sites_pack.excluded_reason("https://sxyprn.com/post/1") == "piracy"
     assert sites_pack.excluded_reason("https://upornia.com/videos/1/") is None
     assert sites_pack.is_adult("https://xmaal.in/double-dhamaka/")

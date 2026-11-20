@@ -7,8 +7,8 @@ Run on the server (dev networks DNS-block most of these):
     python scripts/site-probe.py --json out.json --markdown summary.md
 
 `pass` means a playable format URL resolved; move those entries to PL18_SITES.
-Cams only pass while a public show is live; aggregators are checked for
-reachability only (the source tube is what downloads).
+Cams and aggregators are checked for reachability only: a cam streams from a
+live room URL (not the homepage), and an aggregator's source tube is what downloads.
 """
 from __future__ import annotations
 
@@ -30,7 +30,7 @@ UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/130 Sa
 VIDEO_PATH = re.compile(r"/(videos?|v|watch|embed|movies?|porn-video|vid|clip)/[^\"'#?\s]+"
                         r"|/\d{4,}/[a-z0-9-]{6,}|/[a-z0-9-]{12,}-\d{3,}/?$", re.I)
 SLUG_PATH = re.compile(r"^/[a-z0-9]+(?:-[a-z0-9]+){3,}/?$", re.I)
-SKIP_PATH = re.compile(r"/(categor|tags?|models?|pornstars?|channels?|search|login|signup|page|top|latest|new)\b", re.I)
+SKIP_PATH = re.compile(r"/(categor\w*|tags?|models?|pornstars?|channels?|search|login|signup|page|top|latest|new)\b", re.I)
 
 
 def _extractor_samples() -> dict[str, str]:
@@ -87,11 +87,11 @@ def probe(entry: tuple[str, str, str]) -> dict:
     home = str(resp.url)
     if (urlparse(home).hostname or "").removeprefix("www.") != domain:
         r["redirected_to"] = home
-    if group == "aggregator":
+    # Aggregators host nothing; cams only stream from a live room URL, never the
+    # homepage. Both are checked for reachability only.
+    if group in ("aggregator", "cam"):
         return {**r, "status": "reachable"}
-    if group == "cam":
-        cands = [home]
-    elif domain in SAMPLES:
+    if domain in SAMPLES:
         cands = [SAMPLES[domain]]
     else:
         cands = video_links(home, resp.text)[:3]
