@@ -7,9 +7,19 @@ theyarehuge, hqporn, shameless, …). yt-dlp detects the player but then looks f
 so every modern KVS site fails with "Unable to extract flashvars".
 
 `apply()` replaces GenericIE._extract_kvs with a version that finds the config
-object via the kt_player(...) call (falling back to the legacy name), and
-tolerates a missing preview_url. URL de-obfuscation (function/0/ + license_code)
-is still yt-dlp's own `_kvs_get_real_url`.
+object via the kt_player(...) call (falling back to the legacy name), tolerates
+a missing preview_url, and collapses JS `+` string concatenation before handing
+the source to js_to_json. Some KVS builds compute a flashvars value (an ad/
+tracking query string, not anything we read) by concatenating a literal with a
+bare JS variable, e.g. `adv_pre_vast: '/frk/?r=1&keywords=' + current_keyword`.
+js_to_json's JS->JSON token rewriter doesn't evaluate `+`, so that stray
+operator breaks json.loads ("Unable to extract flashvars - Failed to parse
+JSON ... Expecting ',' delimiter") even though the fields we actually need
+(video_url etc.) are themselves plain literals elsewhere in the same object.
+Since we never read these ad fields, an unresolvable `literal + identifier` is
+collapsed to just the literal (the identifier is dropped, not evaluated);
+`literal + literal` is concatenated for real. URL de-obfuscation
+(function/0/ + license_code) is still yt-dlp's own `_kvs_get_real_url`.
 """
 from __future__ import annotations
 
@@ -19,6 +29,33 @@ from typing import Optional
 _KT_CALL_RE = re.compile(
     r"kt_player\s*\(\s*(['\"])[^'\"]*\1\s*,\s*(['\"])[^'\"]*\2\s*,\s*(['\"])[^'\"]*\3\s*,"
     r"\s*(['\"])[^'\"]*\4\s*,\s*(?P<var>[A-Za-z_$][\w$]*)\s*\)")
+
+# A "term" on either side of `+`: a quoted string literal (each quote style
+# spelled out so no backreference is needed — one would renumber wrongly once
+# duplicated into _CONCAT_RE below), or a bare JS identifier/number (anything
+# else — calls, brackets — is left alone).
+_STR_LIT = r'"(?:\\.|[^"\\])*"' + r"|'(?:\\.|[^'\\])*'"
+_TERM = rf'(?:{_STR_LIT})|[A-Za-z_$][\w$]*'
+_CONCAT_RE = re.compile(rf'({_TERM})\s*\+\s*({_TERM})')
+
+
+def _collapse_str_concat(src: str) -> str:
+    def repl(m: "re.Match") -> str:
+        a, b = m.group(1), m.group(2)
+        a_lit, b_lit = a[:1] in "\"'", b[:1] in "\"'"
+        if a_lit and b_lit:
+            return a[:1] + a[1:-1] + b[1:-1] + a[:1]   # "x" + "y" -> "xy"
+        if a_lit:
+            return a                                    # "x" + ident -> "x"
+        if b_lit:
+            return b                                    # ident + "x" -> "x"
+        return m.group(0)                                # ident + ident -> leave
+
+    prev = None
+    while prev != src:
+        prev = src
+        src = _CONCAT_RE.sub(repl, src)
+    return src
 
 
 def find_flashvars_name(webpage: str) -> Optional[str]:
@@ -46,7 +83,8 @@ def apply() -> bool:
         name = find_flashvars_name(webpage) or "flashvars"
         flashvars = self._search_json(
             rf"(?s:<script\b[^>]*>.*?var\s+{re.escape(name)}\s*=)",
-            webpage, "flashvars", video_id, transform_source=js_to_json)
+            webpage, "flashvars", video_id,
+            transform_source=lambda s: js_to_json(_collapse_str_concat(s)))
 
         display_id = self._search_regex(
             r'(?:<link href="https?://[^"]+/(.+?)/?" rel="canonical"\s*/?>'
