@@ -27,9 +27,13 @@ def test_pl18_sites_are_looked_up_and_adult():
     e = sites_pack.lookup("https://www.upornia.com/videos/123/x/")
     assert e == {"rank": None, "name": "Upornia", "domain": "upornia.com", "group": "native"}
     assert sites_pack.is_adult("https://homemoviestube.com/videos/1/x.html")
-    domains = [d for _, d, _ in sites_pack.PL18_SITES]
+    assert sites_pack.lookup("https://myfreecams.com/#x")["group"] == "cam"
+    assert sites_pack.lookup("https://www.porntube.com/videos/x_1")["group"] == "native"
+    domains = [d for _, d, _ in sites_pack.PL18_SITES + sites_pack.PL18_UNPROBED]
     assert len(domains) == len(set(domains))
     assert not set(domains) & {d for _, _, d, _ in sites_pack.SITES}
+    assert not set(domains) & set(sites_pack.EXCLUDED)
+    assert {g for *_, g in sites_pack.PL18_UNPROBED} <= {"native", "tube", "aggregator", "cam"}
 
 
 def test_excluded_sites_are_refused():
