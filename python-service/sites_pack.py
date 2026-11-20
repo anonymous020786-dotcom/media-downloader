@@ -12,9 +12,10 @@ Each site is tagged with how MediaDL handles it:
               time cap (DownloadReq.record_seconds)
   excluded    on yt-dlp's piracy blocklist; deliberately not supported
 
-PL18_SITES adds pornlist18.com category lists (captured 2026-11-20). Only sites
-that resolved a playable format in a live probe, or that yt-dlp has a dedicated
-extractor for, are listed. EXCLUDED holds domains MediaDL refuses outright:
+PL18_SITES adds pornlist18.com category lists (captured 2026-11-20): sites that
+resolved a playable format in a live probe, or that yt-dlp has a dedicated
+extractor for. PL18_UNPROBED holds the rest of the free sites from those lists,
+not yet live-probed. EXCLUDED holds domains MediaDL refuses outright:
 `piracy` (re-hosts paid / studio content) and `ncii` (built around leaked or
 non-consensual intimate media). /analyze and /download reject them before any
 extractor or the headless fallback runs.
@@ -96,6 +97,57 @@ PL18_SITES: list[tuple[str, str, str]] = [
     ("VXXX", "vxxx.com", "native"),
 ]
 
+# Free sites from the same lists that couldn't be live-probed yet (DNS-blocked
+# on the dev network, or a JS-only homepage). Same groups and dispatch as above;
+# promote an entry to PL18_SITES once scripts/site-probe.py passes it.
+PL18_UNPROBED: list[tuple[str, str, str]] = [
+    ("PornTop", "porntop.com", "native"), ("PornTube", "porntube.com", "native"),
+    # tubes
+    ("01Tube", "01tube.com", "tube"), ("Babes34", "babes34.me", "tube"),
+    ("ClicPorn", "clicporn.com", "tube"), ("ElMundoPorno", "elmundoporno.com", "tube"),
+    ("Fliporno", "fliporno.net", "tube"), ("Fuqqt", "fuqqt.com", "tube"),
+    ("GermanFuckTube", "germanfucktube.com", "tube"), ("GetTranny", "gettranny.com", "tube"),
+    ("IGPorn", "igporn.com", "tube"), ("LechePussy", "lechepussy.com", "tube"),
+    ("ManySex", "manysex.com", "tube"), ("MatureLarge", "maturelarge.com", "tube"),
+    ("ModPorn", "modporn.com", "tube"), ("NurXXX", "nurxxx.com", "tube"),
+    ("NurXXX Mobile", "nurxxx.mobi", "tube"), ("Petardas", "petardas.xxx", "tube"),
+    ("PornAnn", "pornann.com", "tube"), ("PornHD.sex", "pornhd.sex", "tube"),
+    ("Pornozmo", "pornozmo.com", "tube"), ("PornWorld", "pornworld.com", "tube"),
+    ("TonicPorn", "porn2all.com", "tube"), ("RelaxSex", "relax-sex.com", "tube"),
+    ("RussianGranny", "russian-granny.com", "tube"), ("SenePornoBabi", "senepornobabi.com", "tube"),
+    ("SexVid.me", "sexvid.me", "tube"), ("SheFlix", "sheflix.com", "tube"),
+    ("ShemaleZ", "shemalez.com", "tube"), ("SpitzeTitten", "spitzetitten.com", "tube"),
+    ("TeatroDelPorno", "teatrodelporno.com", "tube"), ("TeatroPorno", "teatroporno.com", "tube"),
+    ("TeensBabes", "teensbabes.com", "tube"), ("VoilaPorno", "voilaporno.com", "tube"),
+    ("VideoSexeGratuite", "videosexegratuite.com", "tube"), ("WetMummy", "wetmummy.com", "tube"),
+    ("Xnalgas", "xnalgas.com", "tube"), ("XPaja", "xpaja.net", "tube"),
+    ("XTube", "xtube.com", "tube"), ("XZorra", "xzorra.net", "tube"),
+    ("YourLesbians", "yourlesbians.com", "tube"), ("XXXFollow", "xxxfollow.com", "tube"),
+    ("PornoAfricain", "pornoafricain.com", "tube"), ("PornoAfricano", "pornoafricano.net", "tube"),
+    ("PornoAmica", "pornoamica.com", "tube"), ("PornoCategorie", "pornocategorie.com", "tube"),
+    ("PornoCulazos", "pornoculazos.com", "tube"), ("PornoCuli", "pornoculi.com", "tube"),
+    ("PornoEspaniol", "pornoespaniol.com", "tube"), ("PornoFakings", "pornofakings.com", "tube"),
+    ("PornoJour", "pornojour.com", "tube"), ("PornoOrgasme", "pornoorgasme.com", "tube"),
+    ("PornoSauna", "pornosauna.com", "tube"), ("PornoTreno", "pornotreno.com", "tube"),
+    ("RueNu", "ruenu.com", "tube"), ("SessoRomantico", "sessoromantico.com", "tube"),
+    ("SexoOral", "sexooral.org", "tube"),
+    # aggregators (tag / out-link pages only; the source tube is what downloads)
+    ("AmorePorno", "amoreporno.com", "aggregator"), ("CategoriePorno", "categorieporno.com", "aggregator"),
+    ("CouplesNus", "couplesnus.com", "aggregator"), ("CulNue", "culnue.com", "aggregator"),
+    ("CuloNudo", "culonudo.com", "aggregator"), ("FakingPorno", "fakingporno.com", "aggregator"),
+    ("FilmXAdulte", "filmxadulte.com", "aggregator"), ("PasionChicas", "pasionchicas.com", "aggregator"),
+    ("ArabXN", "arabxn.com", "aggregator"), ("NudeVista", "nudevista.com", "aggregator"),
+    ("WankMap", "wankmap.com", "aggregator"),
+    # live cams (free public shows)
+    ("AsianCams", "asiancams.com", "cam"), ("EbonyCams", "ebonycams.com", "cam"),
+    ("FruityCams", "fruitycams.com", "cam"), ("LatinaCams", "latinacams.com", "cam"),
+    ("MatureCams", "maturecams.com", "cam"), ("MILF.com", "milf.com", "cam"),
+    ("MistressLive", "mistresslive.cam", "cam"), ("MyFreeCams", "myfreecams.com", "cam"),
+    ("PornLive", "pornlive.com", "cam"), ("PrivateHDCams", "privatehdcams.net", "cam"),
+    ("StraponLive", "straponlive.cam", "cam"), ("UnCams", "uncams.com", "cam"),
+    ("WebcamGirls", "webcamgirls.chat", "cam"), ("Gilfs.cam", "gilfs.cam", "cam"),
+]
+
 EXCLUDED: dict[str, str] = {
     "sxyprn.com": "piracy",
     # paid Indian OTT (Ullu etc.) re-hosted for free
@@ -116,9 +168,10 @@ EXCLUDED: dict[str, str] = {
 }
 
 _BY_DOMAIN = {d: (rank, name, group) for rank, name, d, group in SITES}
-_BY_DOMAIN.update({d: (None, name, group) for name, d, group in PL18_SITES})
+_BY_DOMAIN.update({d: (None, name, group) for name, d, group in PL18_SITES + PL18_UNPROBED})
 ADULT_DOMAINS = tuple(sorted(
-    {d for _, _, d, _ in SITES} | {d for _, d, _ in PL18_SITES} | set(EXCLUDED) | set(EXTRA_ADULT)))
+    {d for _, _, d, _ in SITES} | {d for _, d, _ in PL18_SITES + PL18_UNPROBED}
+    | set(EXCLUDED) | set(EXTRA_ADULT)))
 
 
 def host_of(url: str) -> str:
@@ -194,7 +247,8 @@ def summary() -> dict:
         "proxy_configured": bool((os.getenv("SITEPACK_PROXY") or "").strip()),
         "sites": [{"rank": r, "name": n, "domain": d, "group": g} for r, n, d, g in SITES],
         "pl18": {"source": "pornlist18.com category lists, captured 2026-11-20",
-                 "sites": [{"name": n, "domain": d, "group": g} for n, d, g in PL18_SITES]},
+                 "sites": [{"name": n, "domain": d, "group": g} for n, d, g in PL18_SITES],
+                 "unprobed": [{"name": n, "domain": d, "group": g} for n, d, g in PL18_UNPROBED]},
         "excluded": dict(EXCLUDED),
         "adult_domains": list(ADULT_DOMAINS),
     }
