@@ -12,6 +12,13 @@ Each site is tagged with how MediaDL handles it:
               time cap (DownloadReq.record_seconds)
   excluded    on yt-dlp's piracy blocklist; deliberately not supported
 
+PL18_SITES adds pornlist18.com category lists (captured 2026-11-20). Only sites
+that resolved a playable format in a live probe, or that yt-dlp has a dedicated
+extractor for, are listed. EXCLUDED holds domains MediaDL refuses outright:
+`piracy` (re-hosts paid / studio content) and `ncii` (built around leaked or
+non-consensual intimate media). /analyze and /download reject them before any
+extractor or the headless fallback runs.
+
 `SITEPACK_PROXY` (optional, e.g. socks5://host:1080) routes these domains
 through that proxy when the request has no explicit proxy of its own.
 """
@@ -74,8 +81,44 @@ EXTRA_ADULT = (
     "xhaccess.com", "pornhubpremium.com", "motherless.com", "onlyfans.com", "fansly.com",
 )
 
+# pornlist18.com category lists (tube, amateur, anal, black, mature, shemale, …),
+# captured 2026-11-20. name, domain, group
+PL18_SITES: list[tuple[str, str, str]] = [
+    # live-probed 2026-11-20: a video page resolved to a playable format
+    ("AmaPorn", "amaporn.com", "tube"), ("AmateurPorn", "amateurporn.me", "tube"),
+    ("AnalVids", "analvids.com", "tube"), ("BeMyHole", "bemyhole.com", "tube"),
+    ("GrannyMommy", "grannymommy.com", "tube"), ("HDPussy", "hdpussy.xxx", "tube"),
+    ("HomeMoviesTube", "homemoviestube.com", "tube"),
+    # yt-dlp TxxxIE (dedicated extractor)
+    ("HClips", "hclips.com", "native"), ("HDZog", "hdzog.com", "native"),
+    ("HotMovs", "hotmovs.com", "native"), ("InPorn", "inporn.com", "native"),
+    ("TXXX", "txxx.com", "native"), ("Upornia", "upornia.com", "native"),
+    ("VXXX", "vxxx.com", "native"),
+]
+
+EXCLUDED: dict[str, str] = {
+    "sxyprn.com": "piracy",
+    # paid Indian OTT (Ullu etc.) re-hosted for free
+    "xmaal.in": "piracy", "boldmaal.com": "piracy", "webxseries.hot": "piracy",
+    "desivdo.club": "piracy",
+    # JAV studio re-hosts, cam-show re-hosts, full-movie rips
+    "javdino.com": "piracy", "javlust.net": "piracy", "sexjav.tv": "piracy",
+    "18avx.com": "piracy", "ikisoda.com": "piracy", "zhornyhub.com": "piracy",
+    "recordbate.com": "piracy", "beeg.porn": "piracy",
+    # "leaked" / "scandal" / MMS / candid / OnlyFans-leak sites
+    "desiporn.tube": "ncii", "desihub.sh": "ncii", "desijerk.com": "ncii",
+    "desiporn.one": "ncii", "thegandubaba.com": "ncii", "mykamababa.com": "ncii",
+    "nangiphotos.com": "ncii", "nangivideo.com": "ncii",
+    "fuktxxx.com": "ncii", "ghanatok.com": "ncii", "mzansitok.com": "ncii",
+    "leaktubenet.com": "ncii", "totoleak.com": "ncii", "xrares.com": "ncii",
+    "sexycandidgirls.com": "ncii", "teenager365.com": "ncii", "teenager365.to": "ncii",
+    "malayporner.com": "ncii",
+}
+
 _BY_DOMAIN = {d: (rank, name, group) for rank, name, d, group in SITES}
-ADULT_DOMAINS = tuple(sorted({d for _, _, d, _ in SITES} | set(EXTRA_ADULT)))
+_BY_DOMAIN.update({d: (None, name, group) for name, d, group in PL18_SITES})
+ADULT_DOMAINS = tuple(sorted(
+    {d for _, _, d, _ in SITES} | {d for _, d, _ in PL18_SITES} | set(EXCLUDED) | set(EXTRA_ADULT)))
 
 
 def host_of(url: str) -> str:
@@ -104,6 +147,12 @@ def lookup(url: str) -> Optional[dict]:
 
 def is_adult(url: str) -> bool:
     return _match(host_of(url), ADULT_DOMAINS) is not None
+
+
+def excluded_reason(url: str) -> Optional[str]:
+    """'piracy' / 'ncii' when MediaDL refuses this URL's site, else None."""
+    d = _match(host_of(url), EXCLUDED)
+    return EXCLUDED[d] if d else None
 
 
 def group_of(url: str) -> Optional[str]:
@@ -144,5 +193,8 @@ def summary() -> dict:
         "groups": groups,
         "proxy_configured": bool((os.getenv("SITEPACK_PROXY") or "").strip()),
         "sites": [{"rank": r, "name": n, "domain": d, "group": g} for r, n, d, g in SITES],
+        "pl18": {"source": "pornlist18.com category lists, captured 2026-11-20",
+                 "sites": [{"name": n, "domain": d, "group": g} for n, d, g in PL18_SITES]},
+        "excluded": dict(EXCLUDED),
         "adult_domains": list(ADULT_DOMAINS),
     }

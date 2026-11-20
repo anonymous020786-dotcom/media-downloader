@@ -45,6 +45,12 @@ def test_none_is_unknown():
     assert errors.error_info(None)["reason"] == "unknown"
 
 
+def test_reason_info_for_excluded_sites():
+    for reason in ("piracy", "ncii"):
+        info = errors.reason_info(reason)
+        assert info["reason"] == reason and info["hint"] and info["detail"] == ""
+
+
 def test_error_info_strips_boilerplate():
     info = errors.error_info("[NDTV] 468818: Unable to extract video filename; please report this issue on  https://x")
     assert info["detail"] == "[NDTV] 468818: Unable to extract video filename"

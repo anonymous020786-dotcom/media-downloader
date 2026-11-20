@@ -12,7 +12,7 @@ from typing import Optional, TypedDict
 
 REASONS = (
     "network", "blocked", "login", "geo", "drm", "removed",
-    "extractor_broken", "unsupported", "piracy", "unknown",
+    "extractor_broken", "unsupported", "piracy", "ncii", "unknown",
 )
 
 
@@ -64,6 +64,7 @@ _HINTS = {
     "extractor_broken": "The site changed and its extractor is broken. It usually gets fixed in the next engine update (/engines).",
     "unsupported": "No extractor recognises this link, and no media was found on the page.",
     "piracy": "This site is on the engine's piracy blocklist and isn't supported.",
+    "ncii": "This site is built around leaked or non-consensual intimate media and isn't supported.",
     "unknown": "Couldn't find downloadable media on this page.",
 }
 
@@ -83,6 +84,11 @@ def error_info(err: Optional[str]) -> ErrorInfo:
     detail = re.sub(r"\s+", " ", (err or "")).strip()
     # Drop the yt-dlp boilerplate tail, which tells the user nothing.
     detail = re.split(r";? ?please report this issue|\. See https?://", detail)[0][:300]
+    return {"reason": reason, "hint": _HINTS[reason], "detail": detail}
+
+
+def reason_info(reason: str, detail: str = "") -> ErrorInfo:
+    """ErrorInfo for a reason decided up front (e.g. an excluded site), not from error text."""
     return {"reason": reason, "hint": _HINTS[reason], "detail": detail}
 
 

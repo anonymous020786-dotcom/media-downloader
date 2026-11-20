@@ -24,6 +24,7 @@ from pydantic import BaseModel, field_validator
 import yt_dlp
 import errors as _errors
 import kvs_patch as _kvs_patch
+import sites_pack as _sitepack
 import hls as _hls
 import httpx
 from PIL import Image
@@ -221,6 +222,11 @@ app = FastAPI(lifespan=lifespan, title="MediaDL", version="3.0.0")
 _raw_origins = os.getenv("ALLOWED_ORIGINS", "*")
 _cors_origins = ["*"] if _raw_origins == "*" else [o.strip() for o in _raw_origins.split(",") if o.strip()]
 app.add_middleware(CORSMiddleware, allow_origins=_cors_origins, allow_methods=["POST", "GET"], allow_headers=["*"])
+
+def _refuse_excluded(url: str) -> None:
+    """451 for excluded sites (piracy / NCII) on routes without a richer error shape."""
+    if why := _sitepack.excluded_reason(url):
+        raise HTTPException(451, _errors.reason_info(why)["hint"])
 
 # ── Models ────────────────────────────────────────────────────────────────────
 class AnalyzeReq(BaseModel):
@@ -793,6 +799,7 @@ async def stream_url_endpoint(req: AnalyzeReq):
     url = _normalize_url(req.url)
     if not url:
         raise HTTPException(status_code=400, detail="url is required")
+    _refuse_excluded(url)
 
     ck = _cache_key("stream-url", url)
     cached = await _cache_get(ck)
@@ -894,6 +901,8 @@ async def _resolve_stream_plan(req: StreamReq) -> dict:
        | {mode:'mux', mux_id}
        | {mode:'unsupported', reason}"""
     url = _normalize_url(req.url)
+    if why := _sitepack.excluded_reason(url):
+        return {"mode": "unsupported", "reason": _errors.reason_info(why)["hint"]}
     want_audio = (req.format or "").lower() in AUDIO_FORMATS
     afmt = (req.format or "mp3").lower() if want_audio else "mp3"
 
@@ -5349,6 +5358,9 @@ def _quality_options(info: dict) -> list:
 
 async def _do_analyze(url: str) -> dict:
     url = _normalize_url(url)
+    # 0. Excluded sites (piracy / NCII) — refused before any extractor or fallback
+    if why := _sitepack.excluded_reason(url):
+        return {"type": "page", "url": url, "error": _errors.reason_info(why)}
     # 0a. Custom site extractors (no yt-dlp support)
     if _PAT_CDN_RE.match(url):       return await _analyze_pat_cdn(url)
     if _PAT_COM_RE.match(url):       return await _analyze_pat_com(url)
@@ -5984,6 +5996,7 @@ async def social_platforms():
 @app.post("/analyze-playlist")
 async def analyze_playlist(req: AnalyzeReq):
     """Analyse a playlist / channel / profile — returns item count without downloading."""
+    _refuse_excluded(req.url)
     ck = _cache_key("playlist", req.url)
     cached = await _cache_get(ck)
     if cached:
@@ -6026,6 +6039,7 @@ async def analyze_playlist(req: AnalyzeReq):
 @app.post("/preview-page")
 async def preview_page(req: AnalyzeReq):
     """Scrape all image URLs from a page (no download) — for user preview before selecting."""
+    _refuse_excluded(req.url)
     try:
         async with _client() as c:
             r = await c.get(req.url, timeout=30)
@@ -6083,6 +6097,7 @@ async def preview_page(req: AnalyzeReq):
 @app.post("/list-playlist")
 async def list_playlist_items(req: AnalyzeReq):
     """List playlist/profile items with thumbnails for user preview before selecting."""
+    _refuse_excluded(req.url)
     try:
         info = await asyncio.wait_for(
             asyncio.get_event_loop().run_in_executor(None, _ytdlp_info, req.url, True),
@@ -6216,6 +6231,10 @@ def _sweep_stale(max_age_min: int = 30) -> None:
 @app.post("/download")
 async def download(req: DownloadReq):
     req.url = _normalize_url(req.url)            # accept bare domains (pat.com → https://pat.com)
+    if why := _sitepack.excluded_reason(req.url):
+        hint = _errors.reason_info(why)["hint"]
+        await _prog(req.job_id, {"status": "failed", "progress": 0, "error": hint})
+        raise HTTPException(451, hint)
     _sweep_stale()
     job_dir = DOWNLOAD_DIR / req.job_id
     job_dir.mkdir(parents=True, exist_ok=True)
@@ -7574,6 +7593,10 @@ async def batch_download(req: BatchReq):
         raise HTTPException(400, "Maximum 50 items per batch request")
 
     async def _run_one(item: BatchItem) -> dict:
+        if why := _sitepack.excluded_reason(item.url):
+            msg = _errors.reason_info(why)["hint"]
+            await _prog(item.job_id, {"status": "failed", "progress": 0, "error": msg})
+            return {"job_id": item.job_id, "url": item.url, "success": False, "error": msg}
         dr = DownloadReq(
             url=item.url, job_id=item.job_id, media_type=item.media_type,
             format=item.format, quality=item.quality, max_items=item.max_items,
