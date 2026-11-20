@@ -23,6 +23,26 @@ def test_lookup_matches_subdomains():
     assert not sites_pack.is_adult("https://notpornhub.com.evil.example/")
 
 
+def test_pl18_sites_are_looked_up_and_adult():
+    e = sites_pack.lookup("https://www.upornia.com/videos/123/x/")
+    assert e == {"rank": None, "name": "Upornia", "domain": "upornia.com", "group": "native"}
+    assert sites_pack.is_adult("https://homemoviestube.com/videos/1/x.html")
+    domains = [d for _, d, _ in sites_pack.PL18_SITES]
+    assert len(domains) == len(set(domains))
+    assert not set(domains) & {d for _, _, d, _ in sites_pack.SITES}
+
+
+def test_excluded_sites_are_refused():
+    assert sites_pack.excluded_reason("https://xmaal.in/double-dhamaka/") == "piracy"
+    assert sites_pack.excluded_reason("https://cdn.boldmaal.com/videos/x.mp4") == "piracy"
+    assert sites_pack.excluded_reason("https://www.desihub.sh/v/1") == "ncii"
+    assert sites_pack.excluded_reason("https://sxyprn.com/post/1") == "piracy"
+    assert sites_pack.excluded_reason("https://upornia.com/videos/1/") is None
+    assert sites_pack.is_adult("https://xmaal.in/double-dhamaka/")
+    # an excluded site is never also listed as supported
+    assert not set(sites_pack.EXCLUDED) & {d for _, d, _ in sites_pack.PL18_SITES}
+
+
 def test_proxy_only_for_pack_domains(monkeypatch):
     monkeypatch.setenv("SITEPACK_PROXY", "socks5://10.0.0.5:1080")
     assert sites_pack.proxy_for("https://zbporn.com/v/1") == "socks5://10.0.0.5:1080"
