@@ -95,15 +95,27 @@ PL18_SITES: list[tuple[str, str, str]] = [
     ("HotMovs", "hotmovs.com", "native"), ("InPorn", "inporn.com", "native"),
     ("TXXX", "txxx.com", "native"), ("Upornia", "upornia.com", "native"),
     ("VXXX", "vxxx.com", "native"),
+    # live-probed 2026-11-20 round 2, after the kvs_patch concat-collapse fix
+    # (generic KVS flashvars with `'literal' + jsVar` ad fields now parse)
+    ("PornTop", "porntop.com", "native"),
+    ("Babes34", "babes34.me", "tube"), ("PornHD.sex", "pornhd.sex", "tube"),
+    ("PornoAfricain", "pornoafricain.com", "tube"), ("PornoAfricano", "pornoafricano.net", "tube"),
+    ("PornWorld", "pornworld.com", "tube"), ("RelaxSex", "relax-sex.com", "tube"),
+    ("SenePornoBabi", "senepornobabi.com", "tube"), ("SexVid.me", "sexvid.me", "tube"),
+    ("WetMummy", "wetmummy.com", "tube"), ("Xnalgas", "xnalgas.com", "tube"),
+    ("XPaja", "xpaja.net", "tube"), ("XXXFollow", "xxxfollow.com", "tube"),
+    ("YourLesbians", "yourlesbians.com", "tube"), ("Pornozmo", "pornozmo.com", "tube"),
 ]
 
 # Free sites from the same lists that couldn't be live-probed yet (DNS-blocked
 # on the dev network, or a JS-only homepage). Same groups and dispatch as above;
 # promote an entry to PL18_SITES once scripts/site-probe.py passes it.
+# (XTube/xtube.com dropped 2026-11-20: MindGeek dissolved it in 2021, confirmed
+# still dead — not worth carrying as "unprobed".)
 PL18_UNPROBED: list[tuple[str, str, str]] = [
-    ("PornTop", "porntop.com", "native"), ("PornTube", "porntube.com", "native"),
+    ("PornTube", "porntube.com", "native"),
     # tubes
-    ("01Tube", "01tube.com", "tube"), ("Babes34", "babes34.me", "tube"),
+    ("01Tube", "01tube.com", "tube"),
     ("ClicPorn", "clicporn.com", "tube"), ("ElMundoPorno", "elmundoporno.com", "tube"),
     ("Fliporno", "fliporno.net", "tube"), ("Fuqqt", "fuqqt.com", "tube"),
     ("GermanFuckTube", "germanfucktube.com", "tube"), ("GetTranny", "gettranny.com", "tube"),
@@ -111,19 +123,15 @@ PL18_UNPROBED: list[tuple[str, str, str]] = [
     ("ManySex", "manysex.com", "tube"), ("MatureLarge", "maturelarge.com", "tube"),
     ("ModPorn", "modporn.com", "tube"), ("NurXXX", "nurxxx.com", "tube"),
     ("NurXXX Mobile", "nurxxx.mobi", "tube"), ("Petardas", "petardas.xxx", "tube"),
-    ("PornAnn", "pornann.com", "tube"), ("PornHD.sex", "pornhd.sex", "tube"),
-    ("Pornozmo", "pornozmo.com", "tube"), ("PornWorld", "pornworld.com", "tube"),
-    ("TonicPorn", "porn2all.com", "tube"), ("RelaxSex", "relax-sex.com", "tube"),
-    ("RussianGranny", "russian-granny.com", "tube"), ("SenePornoBabi", "senepornobabi.com", "tube"),
-    ("SexVid.me", "sexvid.me", "tube"), ("SheFlix", "sheflix.com", "tube"),
+    ("PornAnn", "pornann.com", "tube"),
+    ("TonicPorn", "porn2all.com", "tube"),
+    ("RussianGranny", "russian-granny.com", "tube"),
+    ("SheFlix", "sheflix.com", "tube"),
     ("ShemaleZ", "shemalez.com", "tube"), ("SpitzeTitten", "spitzetitten.com", "tube"),
     ("TeatroDelPorno", "teatrodelporno.com", "tube"), ("TeatroPorno", "teatroporno.com", "tube"),
     ("TeensBabes", "teensbabes.com", "tube"), ("VoilaPorno", "voilaporno.com", "tube"),
-    ("VideoSexeGratuite", "videosexegratuite.com", "tube"), ("WetMummy", "wetmummy.com", "tube"),
-    ("Xnalgas", "xnalgas.com", "tube"), ("XPaja", "xpaja.net", "tube"),
-    ("XTube", "xtube.com", "tube"), ("XZorra", "xzorra.net", "tube"),
-    ("YourLesbians", "yourlesbians.com", "tube"), ("XXXFollow", "xxxfollow.com", "tube"),
-    ("PornoAfricain", "pornoafricain.com", "tube"), ("PornoAfricano", "pornoafricano.net", "tube"),
+    ("VideoSexeGratuite", "videosexegratuite.com", "tube"),
+    ("XZorra", "xzorra.net", "tube"),
     ("PornoAmica", "pornoamica.com", "tube"), ("PornoCategorie", "pornocategorie.com", "tube"),
     ("PornoCulazos", "pornoculazos.com", "tube"), ("PornoCuli", "pornoculi.com", "tube"),
     ("PornoEspaniol", "pornoespaniol.com", "tube"), ("PornoFakings", "pornofakings.com", "tube"),

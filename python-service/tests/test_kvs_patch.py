@@ -23,6 +23,27 @@ def test_none_without_player():
     assert kvs_patch.find_flashvars_name("<html><video src='x.mp4'></video></html>") is None
 
 
+def test_collapse_str_concat():
+    c = kvs_patch._collapse_str_concat
+    assert c("{a: '/frk/?k=' + current_keyword, b: 'x'}") == "{a: '/frk/?k=', b: 'x'}"
+    assert c("{a: kw + \"/tail\"}") == '{a: "/tail"}'
+    assert c("{a: 'x' + 'y' + 'z'}") == "{a: 'xyz'}"
+    assert c("{a: one + two}") == "{a: one + two}"          # nothing literal: untouched
+    assert c("{a: 'foo + bar'}") == "{a: 'foo + bar'}"      # `+` inside a literal: untouched
+
+
+def test_extract_with_concatenated_ad_field():
+    """Real KVS builds (zbporn, rat.xxx, shameless…) put `'literal' + jsVar` in ad fields."""
+    import yt_dlp
+    from yt_dlp.extractor.generic import GenericIE
+
+    assert kvs_patch.apply()
+    html = FIX.read_text(encoding="utf-8").replace(
+        "video_id: '105'", "adv_pre_vast: '/frk/?r=1&keywords=' + current_keyword, video_id: '105'", 1)
+    info = GenericIE(yt_dlp.YoutubeDL({"quiet": True}))._extract_kvs(URL, html, "105")
+    assert sorted(f["height"] for f in info["formats"]) == [480, 720]
+
+
 def test_extract_formats_from_fixture():
     import yt_dlp
     from yt_dlp.extractor.generic import GenericIE
