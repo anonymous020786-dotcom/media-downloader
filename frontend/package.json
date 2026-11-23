@@ -11,8 +11,8 @@
   "dependencies": {
     "clsx": "latest",
     "hls.js": "^1.7.4",
-    "lucide-react": "^1.70.0",
-    "next": "^16.4.5",
+    "lucide-react": "^1.73.0",
+    "next": "^16.4.6",
     "next-themes": "latest",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
@@ -24,7 +24,7 @@
     "@types/node": "^26.6.6",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
-    "postcss": "^8.5.32",
+    "postcss": "^8.5.33",
     "tailwindcss": "^4.3.5",
     "typescript": "latest"
   }
