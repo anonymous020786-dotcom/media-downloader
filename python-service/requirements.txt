@@ -2,7 +2,7 @@
 # Loose upper pins so wheels keep resolving on newer Python.
 
 # ── Core: the download pipeline (yt-dlp + ffmpeg + httpx) ────────────────────
-fastapi>=0.162.2
+fastapi>=0.163.1
 uvicorn[standard]>=0.54.0
 yt-dlp>=2026.10.26
 httpx[http2,socks]>=0.28.1
@@ -17,8 +17,8 @@ brotli>=1.2.1
 curl_cffi>=0.17.0
 
 # ── Extra extractor engines & JS render ─────────────────────────────────────
-playwright>=1.64.1
-gallery-dl>=1.32.19
+playwright>=1.65.2
+gallery-dl>=1.32.20
 streamlink>=8.6.3
 you-get>=0.4.1743
 ddgs>=9.16.1
