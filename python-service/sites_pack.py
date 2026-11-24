@@ -108,6 +108,8 @@ PL18_SITES: list[tuple[str, str, str]] = [
     # Actions "Site probe" run 44719297142 (2026-11-20)
     ("LechePussy", "lechepussy.com", "tube"), ("ModPorn", "modporn.com", "tube"),
     ("TonicPorn", "porn2all.com", "tube"), ("PornAnn", "pornann.com", "tube"),
+    # Actions "Site probe" run 45418706963 (2026-11-24)
+    ("ClicPorn", "clicporn.com", "tube"), ("SheFlix", "sheflix.com", "tube"),
 ]
 
 # Free sites from the same lists that couldn't be live-probed yet (DNS-blocked
@@ -119,14 +121,13 @@ PL18_UNPROBED: list[tuple[str, str, str]] = [
     ("PornTube", "porntube.com", "native"),
     # tubes
     ("01Tube", "01tube.com", "tube"),
-    ("ClicPorn", "clicporn.com", "tube"), ("ElMundoPorno", "elmundoporno.com", "tube"),
+    ("ElMundoPorno", "elmundoporno.com", "tube"),
     ("Fliporno", "fliporno.net", "tube"), ("Fuqqt", "fuqqt.com", "tube"),
     ("GermanFuckTube", "germanfucktube.com", "tube"), ("GetTranny", "gettranny.com", "tube"),
     ("IGPorn", "igporn.com", "tube"),
     ("ManySex", "manysex.com", "tube"), ("MatureLarge", "maturelarge.com", "tube"),
     ("NurXXX", "nurxxx.com", "tube"), ("Petardas", "petardas.xxx", "tube"),
     ("RussianGranny", "russian-granny.com", "tube"),
-    ("SheFlix", "sheflix.com", "tube"),
     ("ShemaleZ", "shemalez.com", "tube"), ("SpitzeTitten", "spitzetitten.com", "tube"),
     ("TeatroDelPorno", "teatrodelporno.com", "tube"),
     ("TeensBabes", "teensbabes.com", "tube"), ("VoilaPorno", "voilaporno.com", "tube"),
